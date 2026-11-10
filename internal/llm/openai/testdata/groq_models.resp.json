@@ -1,0 +1,10 @@
+{
+  "data": [
+    {
+      "id": "fixture-model",
+      "object": "model",
+      "owned_by": "synthetic",
+      "context_window": 4096
+    }
+  ]
+}

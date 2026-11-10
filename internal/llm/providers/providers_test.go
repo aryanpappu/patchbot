@@ -21,11 +21,32 @@ func TestConstructors(t *testing.T) {
 		t.Fatal("Options.Fake did not register the fake provider")
 	}
 
-	// Until M7 to M9 land, the real kinds have no adapter. When one is
+	if _, ok := c[config.KindOpenAI]; !ok {
+		t.Error("the OpenAI-compatible adapter is not registered")
+	}
+
+	// Until M7 and M9 land, these real kinds have no adapter. When one is
 	// added, move its kind out of this list.
-	for _, kind := range []string{config.KindAnthropic, config.KindGemini, config.KindOpenAI} {
+	for _, kind := range []string{config.KindAnthropic, config.KindGemini} {
 		if _, ok := c[kind]; ok {
 			t.Errorf("kind %q has an adapter; update this test and the registry wiring notes", kind)
+		}
+	}
+}
+
+func TestOpenAIInstances(t *testing.T) {
+	t.Parallel()
+	reg, err := llm.NewRegistry(providers.Constructors(providers.Options{}), []llm.ProviderConfig{
+		{Name: "local", Kind: config.KindOpenAI, BaseURL: "http://localhost:11434/v1"},
+		{Name: "router", Kind: config.KindOpenAI, BaseURL: "https://openrouter.ai/api/v1"},
+	}, llm.RegistryOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"local", "router"} {
+		p, err := reg.Provider(name)
+		if err != nil || p.Name() != name {
+			t.Fatalf("provider %q: %v", name, err)
 		}
 	}
 }

@@ -6,6 +6,7 @@ package providers
 import (
 	"github.com/aryanpappu/patchbot/internal/llm"
 	"github.com/aryanpappu/patchbot/internal/llm/fake"
+	"github.com/aryanpappu/patchbot/internal/llm/openai"
 )
 
 // Options select which adapters Constructors returns.
@@ -24,7 +25,7 @@ type Options struct {
 func Constructors(opts Options) llm.Constructors {
 	c := llm.Constructors{
 		// M7: "anthropic": anthropic.New,
-		// M8: "openai":    openai.New,
+		openai.Kind: openai.New,
 		// M9: "gemini":    gemini.New,
 	}
 	if opts.Fake {

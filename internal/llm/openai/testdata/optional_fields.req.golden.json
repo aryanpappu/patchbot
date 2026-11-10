@@ -1,0 +1,18 @@
+{
+  "max_tokens": 128,
+  "messages": [
+    {
+      "content": "Inspect a.txt and b.txt.",
+      "role": "user"
+    },
+    {
+      "content": "Hello.",
+      "role": "assistant"
+    },
+    {
+      "content": "Continue.",
+      "role": "user"
+    }
+  ],
+  "model": "fixture-model"
+}

@@ -1,0 +1,25 @@
+{
+  "id": "chatcmpl_synthetic",
+  "model": "fixture-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "refusal": "I cannot help with that."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 20,
+    "completion_tokens": 5,
+    "prompt_tokens_details": {
+      "cached_tokens": 4
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 2
+    }
+  }
+}

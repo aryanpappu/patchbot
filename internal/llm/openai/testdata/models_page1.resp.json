@@ -1,0 +1,11 @@
+{
+  "data": [
+    {
+      "id": "first",
+      "name": "First",
+      "context_length": 4096
+    }
+  ],
+  "has_more": true,
+  "last_id": "first"
+}

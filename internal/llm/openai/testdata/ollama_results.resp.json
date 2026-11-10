@@ -1,0 +1,14 @@
+{
+  "id": "chatcmpl_synthetic",
+  "model": "fixture-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Finished reading."
+      },
+      "finish_reason": "stop"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "context_length_exceeded",
+    "message": "Synthetic context overflow"
+  }
+}

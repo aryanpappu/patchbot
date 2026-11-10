@@ -1,0 +1,11 @@
+{
+  "data": [
+    {
+      "id": "fixture-model",
+      "object": "model",
+      "owned_by": "synthetic",
+      "name": "Fixture Model",
+      "context_length": 8192
+    }
+  ]
+}
