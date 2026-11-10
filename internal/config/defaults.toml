@@ -1,0 +1,51 @@
+# Built-in defaults for patchbot. Every key here can be overridden by a config
+# file, a PATCHBOT_* environment variable or a command-line flag.
+#
+# No prices are shipped. Add them to your own config from the provider's
+# official pricing page, with the date you checked them.
+
+[defaults]
+provider = "anthropic"
+mode = "fix"
+refine_model = ""            # empty: the provider's default_model
+code_model = ""              # empty: the provider's default_model
+max_cost_usd = 2.0
+approvers = []               # GitHub logins allowed to approve; you must set this
+
+[limits]
+max_turns = 40
+refine_max_turns = 20
+max_output_tokens = 8192
+max_total_tokens = 2000000
+hard_max_cost_usd = 10.0
+max_test_attempts = 3
+run_timeout = "30m"
+cmd_timeout = "2m"
+test_timeout = "10m"
+cmd_output_bytes = 8192
+cmd_store_bytes = 262144
+baseline_tests = true
+
+[approval]
+local_actor = "local"
+poll_interval = "60s"
+ttl = "336h"
+max_revisions = 5
+
+[log]
+level = "info"
+format = "text"
+
+[server]
+addr = "127.0.0.1:8080"
+max_concurrent_runs = 2
+vue_src = "cdn"
+
+[data]
+dir = "~/.patchbot"
+
+[providers.anthropic]
+kind = "anthropic"
+api_key_env = "ANTHROPIC_API_KEY"
+models = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"]
+default_model = "claude-sonnet-5-5"

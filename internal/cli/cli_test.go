@@ -34,7 +34,7 @@ func TestCLI(t *testing.T) {
 		{name: "cancel", args: []string{"cancel"}, wantCode: 1, wantStderr: "patchbot cancel: not implemented yet\n"},
 		{name: "runs", args: []string{"runs"}, wantCode: 1, wantStderr: "patchbot runs: not implemented yet\n"},
 		{name: "models", args: []string{"models"}, wantCode: 1, wantStderr: "patchbot models: not implemented yet\n"},
-		{name: "config", args: []string{"config"}, wantCode: 1, wantStderr: "patchbot config: not implemented yet\n"},
+		{name: "config", args: []string{"config"}, wantCode: 2, wantStderr: "Usage: patchbot config <check|show>"},
 		{name: "serve", args: []string{"serve"}, wantCode: 1, wantStderr: "patchbot serve: not implemented yet\n"},
 		{name: "run with options", args: []string{"run", "--repo", "owner/name", "--issue", "12"}, wantCode: 1, wantStderr: "patchbot run: not implemented yet\n"},
 	}

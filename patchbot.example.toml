@@ -1,0 +1,91 @@
+# patchbot example configuration.
+#
+# Copy this file to ./patchbot.toml (or to patchbot/config.toml inside your
+# user config directory) and edit it. Check it with:
+#
+#   patchbot config check     # validates the file and lists warnings
+#   patchbot config show      # prints every effective value and where it came from
+#
+# Precedence: command-line flag > PATCHBOT_* environment variable > this file >
+# built-in defaults. Unknown keys are errors.
+#
+# Secrets never go in this file. Name the environment variable that holds an
+# API key with api_key_env. A key called api_key, token, password or secret is
+# rejected.
+
+[defaults]
+provider = "anthropic"
+refine_model = "claude-opus-5-5"     # writes the spec
+code_model = "claude-sonnet-5-5"     # writes the code
+max_cost_usd = 2.0                   # budget of one run, across every stage
+approvers = ["aryanpappu"]           # GitHub logins whose /approve comments count
+# mode = "fix"                       # fix, refine or investigate
+
+[providers.anthropic]
+kind = "anthropic"
+api_key_env = "ANTHROPIC_API_KEY"
+# models and default_model for Anthropic come from the built-in defaults.
+
+# No prices are shipped. Without a price a model's cost is unknown and only the
+# token limit applies. Copy the numbers from the provider's official pricing
+# page, in US dollars per million tokens, and record the day you checked.
+#
+# [providers.anthropic.prices."claude-sonnet-5-5"]
+# input = <dollars per million input tokens>
+# output = <dollars per million output tokens>
+# cache_read = <optional; defaults to input>
+# cache_write = <optional; defaults to input>
+# checked = 2026-11-10
+
+[providers.gemini]
+kind = "gemini"
+api_key_env = "GEMINI_API_KEY"
+# default_model = "..."              # pick one from `patchbot models --provider gemini`
+
+[providers.ollama]
+kind = "openai"                      # any OpenAI-compatible server
+base_url = "http://localhost:11434/v1"
+models = ["qwen3-coder"]             # example only, your own local model
+price_free = true                    # a local model costs nothing; say so explicitly
+
+# Only repositories listed here can run.
+[repos."aryanpappu/demo-app"]
+# The agent can run these commands by ID and nothing else. Each one is an argv
+# array that runs without a shell: no pipes, redirection or variables.
+commands = { test = ["go", "test", "./..."], lint = ["go", "vet", "./..."] }
+protected = ["migrations/"]          # extra paths the agent may not read or write
+# test_command = "test"              # the command that verifies a change; "test" by default
+
+# The tables below show the built-in defaults.
+
+# [limits]
+# max_turns = 40
+# refine_max_turns = 20
+# max_output_tokens = 8192
+# max_total_tokens = 2000000
+# hard_max_cost_usd = 10.0           # ceiling for any per-run budget
+# max_test_attempts = 3
+# run_timeout = "30m"
+# cmd_timeout = "2m"
+# test_timeout = "10m"
+# cmd_output_bytes = 8192            # sent to the model per command
+# cmd_store_bytes = 262144           # stored per command
+# baseline_tests = true
+
+# [approval]
+# local_actor = "local"              # name recorded for CLI and UI approvals
+# poll_interval = "60s"
+# ttl = "336h"                       # a waiting run expires after 14 days
+# max_revisions = 5
+
+# [log]
+# level = "info"                     # debug, info, warn or error
+# format = "text"                    # text or json
+
+# [server]
+# addr = "127.0.0.1:8080"
+# max_concurrent_runs = 2
+# vue_src = "cdn"                    # or "local"
+
+# [data]
+# dir = "~/.patchbot"                # database and workspaces

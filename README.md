@@ -3,8 +3,9 @@
 Turn a GitHub issue into an approved spec and a tested pull request, using
 Claude, Gemini or any OpenAI-compatible model.
 
-Status: **early development, Step 1 in progress**. Currently, only CLI help
-and version output are implemented; the other commands are placeholders.
+Status: **early development, Step 1 in progress**. Currently, CLI help,
+version output and `patchbot config check|show` are implemented; the other
+commands are placeholders.
 
 ## How it works (planned)
 
@@ -22,6 +23,9 @@ Requires Go 1.27 or later. Linting requires golangci-lint v2.
 make build
 ./bin/patchbot version
 ./bin/patchbot help
+cp patchbot.example.toml patchbot.toml   # then edit it
+./bin/patchbot config check
+./bin/patchbot config show
 make test
 make race
 make ci
