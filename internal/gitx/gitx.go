@@ -24,6 +24,9 @@ const (
 	DefaultTimeout = 2 * time.Minute
 	// DefaultOutputCap bounds stdout and stderr independently.
 	DefaultOutputCap = 256 << 10
+	// MinimumGitVersion includes fixes for CVE-2022-23521 and the 2025 clone
+	// vulnerabilities, including CVE-2025-48384. Older Git must not clone repos.
+	MinimumGitVersion = "2.50.1"
 )
 
 var (
@@ -73,6 +76,8 @@ type Repo struct {
 	timeout                                               time.Duration
 	outputCap                                             int
 	closed                                                bool
+	// observeCommand is a per-repository test seam, called under mu.
+	observeCommand func([]string)
 }
 
 var (
@@ -81,7 +86,7 @@ var (
 	objectID   = regexp.MustCompile(`^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$`)
 )
 
-// Clone checks git >= 2.31 once and clones into a previously nonexistent Dir.
+// Clone checks MinimumGitVersion once and clones into a nonexistent Dir.
 // On failure it removes only directories it created, including a partial clone.
 func Clone(ctx context.Context, opts CloneOptions) (_ *Repo, cloneErr error) {
 	if runtime.GOOS == "windows" || runtime.GOOS == "plan9" {
@@ -167,9 +172,8 @@ func Clone(ctx context.Context, opts CloneOptions) (_ *Repo, cloneErr error) {
 	if err != nil {
 		return nil, err
 	}
-	var major, minor int
-	if _, err := fmt.Sscanf(version, "git version %d.%d", &major, &minor); err != nil || major < 2 || (major == 2 && minor < 31) {
-		return nil, errors.New("git >= 2.31 is required")
+	if err := checkGitVersion(version); err != nil {
+		return nil, err
 	}
 	args := []string{"clone", "--no-local", "--single-branch", "--no-tags", "--no-recurse-submodules", "--template=" + r.hooks, "--branch", opts.Branch}
 	if opts.Depth > 0 {

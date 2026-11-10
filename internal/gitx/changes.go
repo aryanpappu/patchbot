@@ -3,9 +3,9 @@ package gitx
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -142,6 +142,9 @@ func (r *Repo) diffIndex(ctx context.Context) (string, func(), error) {
 	if err != nil {
 		return "", nil, err
 	}
+	if err := r.checkDiffSizes(ctx, "", changes); err != nil {
+		return "", nil, err
+	}
 	f, err := os.CreateTemp(r.temp, "index-")
 	if err != nil {
 		return "", nil, errors.New("create temporary git index failed")
@@ -157,6 +160,11 @@ func (r *Repo) diffIndex(ctx context.Context) (string, func(), error) {
 	if err == nil {
 		err = r.stage(ctx, path, paths)
 	}
+	if err == nil {
+		// Built-in working-tree-encoding conversion can expand a small file.
+		// Check the actual snapshot blobs as well, before any diff command.
+		err = r.checkDiffSizes(ctx, path, nil)
+	}
 	if err != nil {
 		cleanup()
 		return "", nil, err
@@ -165,7 +173,8 @@ func (r *Repo) diffIndex(ctx context.Context) (string, func(), error) {
 }
 
 // Diff returns the complete staged+worktree+untracked diff against the pinned
-// base, up to OutputCap bytes. A final marker denotes a truncated diff.
+// base, up to OutputCap bytes. Binary changes have a summary only. A final
+// marker denotes a truncated diff. Oversized changes return *ErrDiffTooLarge.
 func (r *Repo) Diff(ctx context.Context) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -177,12 +186,38 @@ func (r *Repo) Diff(ctx context.Context) (string, error) {
 		return "", err
 	}
 	defer cleanup()
-	out, truncated, err := r.runIndex(ctx, false, index, "diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-color", "--unified=3", r.base, "--")
-	if truncated {
-		const marker = "\n[diff truncated]\n"
-		out = out[:r.outputCap-len(marker)] + marker
+	_, files, err := r.diffNumstat(ctx, index)
+	if err != nil {
+		return "", err
 	}
-	return out, err
+	out := &cappedBuffer{limit: r.outputCap}
+	var textFiles []diffFile
+	for _, file := range files {
+		if file.binary {
+			_, _ = fmt.Fprintf(out, "Binary file %q changed\n", file.paths[len(file.paths)-1])
+		} else {
+			textFiles = append(textFiles, file)
+		}
+	}
+	for len(textFiles) > 0 && !out.truncated {
+		batch := min(len(textFiles), 100)
+		args := []string{"diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-color", "--unified=3", "--find-renames", r.base, "--"}
+		for _, file := range textFiles[:batch] {
+			args = append(args, file.paths...)
+		}
+		patch, truncated, err := r.runIndexLimit(ctx, false, index, r.outputCap-len(out.data), args...)
+		if err != nil {
+			return "", err
+		}
+		_, _ = out.Write([]byte(patch))
+		out.truncated = out.truncated || truncated
+		textFiles = textFiles[batch:]
+	}
+	if out.truncated {
+		const marker = "\n[diff truncated]\n"
+		return string(out.data[:r.outputCap-len(marker)]) + marker, nil
+	}
+	return string(out.data), nil
 }
 
 // DiffStat summarizes changes against the pinned base. Binary files count as
@@ -194,6 +229,7 @@ type DiffStat struct {
 }
 
 // DiffStat includes untracked new files and never changes the real git index.
+// Oversized changes return *ErrDiffTooLarge before invoking git diff.
 func (r *Repo) DiffStat(ctx context.Context) (DiffStat, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -205,44 +241,6 @@ func (r *Repo) DiffStat(ctx context.Context) (DiffStat, error) {
 		return DiffStat{}, err
 	}
 	defer cleanup()
-	out, truncated, err := r.runIndex(ctx, false, index, "diff", "--cached", "--numstat", "-z", "--find-renames", "--no-ext-diff", "--no-textconv", r.base, "--")
-	if err != nil {
-		return DiffStat{}, err
-	}
-	if truncated {
-		return DiffStat{}, ErrOutputLimit
-	}
-	var stat DiffStat
-	for out != "" {
-		entry, rest, found := strings.Cut(out, "\x00")
-		if !found {
-			return DiffStat{}, errors.New("invalid git diff stat output")
-		}
-		fields := strings.SplitN(entry, "\t", 3)
-		if len(fields) != 3 {
-			return DiffStat{}, errors.New("invalid git diff stat record")
-		}
-		if fields[2] == "" {
-			// With -z, renames use an empty path followed by old\0new\0.
-			for range 2 {
-				var path string
-				path, rest, found = strings.Cut(rest, "\x00")
-				if !found || path == "" {
-					return DiffStat{}, errors.New("invalid git diff stat rename")
-				}
-			}
-		}
-		stat.Files++
-		if fields[0] != "-" || fields[1] != "-" {
-			added, e1 := strconv.Atoi(fields[0])
-			deleted, e2 := strconv.Atoi(fields[1])
-			if e1 != nil || e2 != nil || added < 0 || deleted < 0 {
-				return DiffStat{}, errors.New("invalid git diff stat count")
-			}
-			stat.Insertions += added
-			stat.Deletions += deleted
-		}
-		out = rest
-	}
-	return stat, nil
+	stat, _, err := r.diffNumstat(ctx, index)
+	return stat, err
 }

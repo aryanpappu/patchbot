@@ -42,6 +42,7 @@ func (r *Repo) command(ctx context.Context, authenticated bool, args ...string) 
 		"-c", "core.attributesFile=/dev/null",
 		"-c", "core.quotePath=false",
 		"-c", "core.pager=cat",
+		"-c", "core.bigFileThreshold=1m",
 		"-c", "commit.gpgSign=false",
 		"-c", "tag.gpgSign=false",
 	}
@@ -73,6 +74,13 @@ func (r *Repo) run(ctx context.Context, authenticated bool, args ...string) (str
 }
 
 func (r *Repo) runIndex(ctx context.Context, authenticated bool, index string, args ...string) (string, bool, error) {
+	return r.runIndexLimit(ctx, authenticated, index, r.outputCap, args...)
+}
+
+func (r *Repo) runIndexLimit(ctx context.Context, authenticated bool, index string, limit int, args ...string) (string, bool, error) {
+	if r.observeCommand != nil {
+		r.observeCommand(args)
+	}
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	cmd, err := r.command(ctx, authenticated, args...)
@@ -82,7 +90,7 @@ func (r *Repo) runIndex(ctx context.Context, authenticated bool, index string, a
 	if index != "" {
 		cmd.Env = append(cmd.Env, "GIT_INDEX_FILE="+index)
 	}
-	out, diagnostic := &cappedBuffer{limit: r.outputCap}, &cappedBuffer{limit: r.outputCap}
+	out, diagnostic := &cappedBuffer{limit: limit}, &cappedBuffer{limit: r.outputCap}
 	cmd.Stdout, cmd.Stderr = out, diagnostic
 	err = cmd.Run()
 	cleanupProcess(cmd)
