@@ -67,7 +67,7 @@ func TestDispatchValidatesArguments(t *testing.T) {
 		"array":             {"read_file", `["a.txt"]`, "arguments must be a JSON object, got array"},
 		"string":            {"read_file", `"a.txt"`, "arguments must be a JSON object, got string"},
 		"null":              {"read_file", `null`, "arguments must be a JSON object, got null"},
-		"two values":        {"read_file", `{"path":"a.txt"} {"path":"b"}`, "arguments hold more than one JSON value"},
+		"two values":        {"read_file", `{"path":"a.txt"} {"path":"b"}`, "unexpected data after the JSON value"},
 		"missing required":  {"read_file", `{}`, "path: missing required property"},
 		"empty args":        {"read_file", ``, "path: missing required property"},
 		"wrong type":        {"read_file", `{"path":["a.txt"]}`, "path: want string, got array"},
