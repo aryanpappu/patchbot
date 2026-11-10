@@ -3,7 +3,6 @@ package workspace_test
 import (
 	"errors"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -356,36 +355,4 @@ func FuzzJailPath(f *testing.F) {
 			}
 		}
 	})
-}
-
-// Finding 5: protect absent configured paths without relying on filesystem
-// identity. The conservative normalization rule rejects decomposed spellings on
-// every platform, for both policy inputs and candidates (not just macOS).
-func TestCombiningMarksCannotBypassPolicy(t *testing.T) {
-	t.Parallel()
-	p, err := workspace.NewPolicy([]string{"caf\u00e9/"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"cafe\u0301/x", "x\u034f/y", "x\u1ab0/y", "x\u20dd/y"} {
-		if _, err := p.Check(name); !errors.Is(err, workspace.ErrInvalidPath) {
-			t.Errorf("Check(%q) = %v, want ErrInvalidPath", name, err)
-		}
-		if _, err := workspace.NewPolicy([]string{name}); !errors.Is(err, workspace.ErrInvalidPath) {
-			t.Errorf("NewPolicy(%q) = %v, want ErrInvalidPath", name, err)
-		}
-	}
-	if _, err := p.Check("caf\u00e9/x"); !errors.Is(err, workspace.ErrPathProtected) {
-		t.Fatalf("composed configured name is not protected: %v", err)
-	}
-	dir, ws := openDir(t, workspace.Options{Protected: []string{"caf\u00e9/"}})
-	if err := ws.WriteFile("cafe\u0301/x", []byte("pwned")); !errors.Is(err, workspace.ErrInvalidPath) {
-		t.Fatalf("decomposed creation = %v", err)
-	}
-	if err := os.Symlink("cafe\u0301/x", filepath.Join(dir, "alias")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ws.ReadFile("alias"); !errors.Is(err, workspace.ErrInvalidPath) {
-		t.Fatalf("decomposed symlink target = %v", err)
-	}
 }

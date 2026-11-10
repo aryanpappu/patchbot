@@ -5,6 +5,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // The lexical limits on a path.
@@ -41,14 +43,11 @@ type prefixRule struct {
 //     .envrc)
 //   - .github/workflows at the checkout root
 //
-// Names are compared after case folding, so a variant such as .GIT or .Env
-// that a case-insensitive file system treats as the same file is protected
-// too. Combining marks (U+0300–U+036F and Unicode Mn/Me) are rejected
-// in both configured rules and candidate paths. Without a normalization
-// dependency this conservatively refuses decomposed spellings, including
-// symlink targets, rather than allowing NFC/NFD aliases to bypass a rule.
+// Names are NFC-normalized before case folding, so canonically equivalent
+// spellings and case variants are protected even when the path is absent.
+// The same match keys apply to configured rules, candidates and symlink targets.
 func NewPolicy(extra []string) (*Policy, error) {
-	p := &Policy{rules: []prefixRule{{keys: []string{".github", "workflows"}, display: ".github/workflows"}}}
+	p := &Policy{rules: []prefixRule{{keys: []string{matchKey(".github"), matchKey("workflows")}, display: ".github/workflows"}}}
 	for _, raw := range extra {
 		clean, err := cleanPath(raw)
 		if err != nil {
@@ -115,8 +114,6 @@ func cleanPath(path string) (string, error) {
 	}
 	for _, r := range path {
 		switch {
-		case (r >= 0x0300 && r <= 0x036f) || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r):
-			return "", invalid("combining marks are not allowed in path components")
 		case r == 0:
 			return "", invalid("holds a NUL byte")
 		case r < 0x20 || r == 0x7f:
@@ -143,6 +140,13 @@ func cleanPath(path string) (string, error) {
 		case len(name) > MaxComponentBytes:
 			return "", invalid(fmt.Sprintf("a name is longer than %d bytes", MaxComponentBytes))
 		}
+		// Combining marks are safe now that all policy keys use NFC. Reject
+		// sequences for which norm inserts a stream-safety GraphemeJoiner:
+		// that insertion changes canonical equivalence. Invalid UTF-8 was
+		// rejected above. Keep the original spelling for filesystem access.
+		if strings.Count(norm.NFC.String(name), norm.GraphemeJoiner) > strings.Count(name, norm.GraphemeJoiner) {
+			return "", invalid("a name cannot be normalized without inserting a stream-safety separator")
+		}
 		parts = append(parts, name)
 	}
 	if len(parts) > MaxPathDepth {
@@ -164,9 +168,9 @@ func (p *Policy) Protected(clean string) (rule string, ok bool) {
 	for name := range strings.SplitSeq(clean, "/") {
 		key := matchKey(name)
 		switch {
-		case key == ".git" || isShortGitName(key):
+		case key == matchKey(".git") || isShortGitName(key):
 			return ".git", true
-		case strings.HasPrefix(key, ".env"):
+		case strings.HasPrefix(key, matchKey(".env")):
 			return ".env*", true
 		}
 		keys = append(keys, key)
@@ -192,6 +196,7 @@ func equalKeys(a, b []string) bool {
 // Two names a supported file system could treat as the same file get the
 // same key:
 //
+//   - canonically equivalent spellings are normalized to NFC before folding
 //   - letters are case folded (macOS and Windows ignore case)
 //   - code points that HFS+ ignores in names are dropped
 //   - anything from a ":" on is dropped (an NTFS stream name)
@@ -200,6 +205,7 @@ func equalKeys(a, b []string) bool {
 // It errs on the side of protecting too much: a strange name that only
 // resembles a protected one is refused, which costs nothing.
 func matchKey(name string) string {
+	name = norm.NFC.String(name)
 	var b strings.Builder
 	b.Grow(len(name))
 	for _, r := range name {
@@ -208,7 +214,8 @@ func matchKey(name string) string {
 		}
 		b.WriteRune(foldRune(r))
 	}
-	key := b.String()
+	// Folding and dropping ignored runes can expose another composition.
+	key := norm.NFC.String(b.String())
 	if i := strings.IndexByte(key, ':'); i >= 0 {
 		key = key[:i]
 	}
