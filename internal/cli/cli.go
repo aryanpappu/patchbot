@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/aryanpappu/patchbot/internal/config"
 	"github.com/aryanpappu/patchbot/internal/version"
 )
 
@@ -19,15 +20,33 @@ Commands:
   cancel   Cancel a run (planned)
   runs     List runs (planned)
   models   List available models (planned)
-  config   Check or show configuration (planned)
+  config   Check or show configuration
   serve    Start the web interface (planned)
   version  Print version and build information
 
 Use patchbot help, -h or --help to show this usage.
 `
 
-// Main runs the CLI and returns its process exit code.
+// Main runs the CLI against the real environment and returns its process exit
+// code.
 func Main(args []string, stdout, stderr io.Writer) int {
+	return (&App{Stdout: stdout, Stderr: stderr}).Run(args)
+}
+
+// App is the CLI with its surroundings made explicit, so tests can run it
+// without reading the real environment, working directory or user config.
+type App struct {
+	Stdout io.Writer
+	Stderr io.Writer
+	// Config holds the config search settings. Its Path and Flags are set
+	// from the command line. The zero value reads the real environment.
+	Config config.Options
+}
+
+// Run runs one command and returns the process exit code: 0 for success, 1
+// for failure and 2 for a usage error.
+func (a *App) Run(args []string) int {
+	stdout, stderr := a.Stdout, a.Stderr
 	flags := flag.NewFlagSet("patchbot", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
@@ -53,7 +72,9 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	case "version":
 		_, _ = fmt.Fprintln(stdout, "patchbot "+version.String())
 		return 0
-	case "run", "approve", "revise", "reject", "cancel", "runs", "models", "config", "serve":
+	case "config":
+		return a.runConfig(flags.Args()[1:])
+	case "run", "approve", "revise", "reject", "cancel", "runs", "models", "serve":
 		_, _ = fmt.Fprintf(stderr, "patchbot %s: not implemented yet\n", name)
 		return 1
 	default:
