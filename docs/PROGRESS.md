@@ -19,5 +19,4 @@ M15 hardening, README, SECURITY.md, ARCHITECTURE.md, v0.1.0 · follow-up: execx 
 
 ## Working method
 Codex (gpt-6.1-sol, high/xhigh) builds, fixes and reviews in worktrees under `../patchbot-wt/`; Claude writes briefs,
-runs `make ci`, spot-checks and merges. Briefs live in the session scratchpad; the M6 brief is summarised in PLAN.md
-sections 2, 4 and 5.
+runs `make ci`, spot-checks and merges. Task briefs for each milestone are in `docs/tasks/`.
