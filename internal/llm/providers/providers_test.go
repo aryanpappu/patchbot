@@ -15,23 +15,20 @@ func TestConstructors(t *testing.T) {
 	if _, ok := providers.Constructors(providers.Options{})[fake.Kind]; ok {
 		t.Error("the fake provider is registered without being asked for")
 	}
+	if _, ok := providers.Constructors(providers.Options{})[config.KindGemini]; !ok {
+		t.Error("Gemini adapter is not registered")
+	}
 	c := providers.Constructors(providers.Options{Fake: true})
 	if _, ok := c[fake.Kind]; !ok {
 		t.Fatal("Options.Fake did not register the fake provider")
 	}
 
-	for _, kind := range []string{config.KindAnthropic, config.KindOpenAI} {
+	for _, kind := range []string{config.KindAnthropic, config.KindOpenAI, config.KindGemini} {
 		if _, ok := c[kind]; !ok {
 			t.Errorf("kind %q is not registered", kind)
 		}
 	}
 
-	// Until M9 lands, Gemini has no adapter.
-	for _, kind := range []string{config.KindGemini} {
-		if _, ok := c[kind]; ok {
-			t.Errorf("kind %q has an adapter; update this test and the registry wiring notes", kind)
-		}
-	}
 }
 
 func TestOpenAIInstances(t *testing.T) {

@@ -1,0 +1,43 @@
+{
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "Be precise."
+      }
+    ]
+  },
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "lookup",
+          "description": "Look up a value.",
+          "parameters": {
+            "type": "OBJECT",
+            "properties": {
+              "q": {
+                "type": "STRING"
+              }
+            },
+            "required": [
+              "q"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 100
+  },
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Hello"
+        }
+      ]
+    }
+  ]
+}

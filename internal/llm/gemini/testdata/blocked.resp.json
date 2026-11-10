@@ -1,0 +1,9 @@
+{
+  "promptFeedback": {
+    "blockReason": "BLOCKLIST"
+  },
+  "usageMetadata": {
+    "promptTokenCount": 20,
+    "candidatesTokenCount": 0
+  }
+}

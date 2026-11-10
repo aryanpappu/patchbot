@@ -9,6 +9,7 @@ import (
 	"github.com/aryanpappu/patchbot/internal/llm"
 	"github.com/aryanpappu/patchbot/internal/llm/anthropic"
 	"github.com/aryanpappu/patchbot/internal/llm/fake"
+	"github.com/aryanpappu/patchbot/internal/llm/gemini"
 	"github.com/aryanpappu/patchbot/internal/llm/openai"
 )
 
@@ -35,7 +36,9 @@ func Constructors(opts Options) llm.Constructors {
 		openai.Kind: func(cfg llm.ProviderConfig) (llm.Provider, error) {
 			return openai.NewWithOptions(cfg, openai.Options{HTTPClient: opts.HTTPClient})
 		},
-		// M9: "gemini":    gemini.New,
+		gemini.Kind: func(cfg llm.ProviderConfig) (llm.Provider, error) {
+			return gemini.NewWithClient(cfg, opts.HTTPClient)
+		},
 	}
 	if opts.Fake {
 		c[fake.Kind] = fake.Constructor

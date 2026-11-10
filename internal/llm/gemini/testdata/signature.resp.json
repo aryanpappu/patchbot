@@ -1,0 +1,7 @@
+{
+ "candidates": [{"content": {"role": "model", "parts": [
+  { "text" : "Thinking.", "thought":true, "futureField" : { "keep" : [1, 2] } },
+  { "functionCall" : { "name":"lookup", "args": { "q":"one" }, "futureCallField" : 42 }, "thoughtSignature" : "c3ludGhldGlj", "futurePart" : [true, null] },
+  { "futureOpaque" : { "escaped" : "\u0061", "n" : 1e+02 } }
+ ]}, "finishReason":"STOP"}], "modelVersion":"fixture-model", "responseId":"fixture-response"
+}

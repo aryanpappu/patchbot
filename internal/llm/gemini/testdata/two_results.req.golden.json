@@ -1,0 +1,85 @@
+{
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "Be precise."
+      }
+    ]
+  },
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "lookup",
+          "description": "Look up a value.",
+          "parameters": {
+            "type": "OBJECT",
+            "properties": {
+              "q": {
+                "type": "STRING"
+              }
+            },
+            "required": [
+              "q"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 100
+  },
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Hello"
+        }
+      ]
+    },
+    {
+      "role": "model",
+      "parts": [
+        {
+          "functionCall": {
+            "name": "lookup",
+            "args": {
+              "q": "one"
+            }
+          }
+        },
+        {
+          "functionCall": {
+            "name": "lookup",
+            "args": {
+              "q": "two"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "name": "lookup",
+            "response": {
+              "output": "result 0"
+            }
+          }
+        },
+        {
+          "functionResponse": {
+            "name": "lookup",
+            "response": {
+              "output": "result 1"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
