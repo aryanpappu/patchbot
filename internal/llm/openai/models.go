@@ -23,13 +23,13 @@ type modelsResponse struct {
 // the configured endpoint; provider-supplied links are never followed.
 // Fallback, merging and caching belong to llm.ModelLister.
 func (p *Provider) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	ctx, cancel := context.WithTimeoutCause(ctx, requestTimeout, errRequestTimeout)
 	defer cancel()
 	target := p.endpoint("models")
 	var models []llm.ModelInfo
 	seen, cursors := map[string]bool{}, map[string]bool{}
 	for range 100 {
-		if err := ctx.Err(); err != nil {
+		if err := p.contextFailure(ctx); err != nil {
 			return nil, err
 		}
 		var page modelsResponse

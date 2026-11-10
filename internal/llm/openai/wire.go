@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
+	"strings"
 
 	"github.com/aryanpappu/patchbot/internal/llm"
 )
@@ -22,12 +25,59 @@ type wireCall struct {
 }
 
 type wireMessage struct {
-	Role         string        `json:"role"`
-	Content      *string       `json:"content"`
-	ToolCalls    []wireCall    `json:"tool_calls,omitempty"`
-	ToolCallID   string        `json:"tool_call_id,omitempty"`
-	FunctionCall *wireFunction `json:"function_call,omitempty"`
-	Refusal      *string       `json:"refusal,omitempty"`
+	Role         string                     `json:"role"`
+	Content      *string                    `json:"content"`
+	ToolCalls    []wireCall                 `json:"tool_calls,omitempty"`
+	ToolCallID   string                     `json:"tool_call_id,omitempty"`
+	FunctionCall *wireFunction              `json:"function_call,omitempty"`
+	Refusal      *string                    `json:"refusal,omitempty"`
+	Extra        map[string]json.RawMessage `json:"-"`
+}
+
+func knownMessageField(name string) bool {
+	switch strings.ToLower(name) {
+	case "role", "content", "tool_calls", "tool_call_id", "function_call", "refusal":
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *wireMessage) UnmarshalJSON(data []byte) error {
+	type plain wireMessage
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for name := range fields {
+		if knownMessageField(name) {
+			delete(fields, name)
+		}
+	}
+	*m = wireMessage(decoded)
+	m.Extra = fields
+	return nil
+}
+
+// encoding/json compacts RawMessage values, including results of MarshalJSON.
+// Append opaque field values only after marshaling the enclosing object so
+// signatures retain their original whitespace, escapes and number spelling.
+func appendRawFields(object []byte, fields map[string]json.RawMessage) []byte {
+	object = object[:len(object)-1]
+	for _, name := range slices.Sorted(maps.Keys(fields)) {
+		if len(object) > 1 {
+			object = append(object, ',')
+		}
+		key, _ := json.Marshal(name)
+		object = append(object, key...)
+		object = append(object, ':')
+		object = append(object, fields[name]...)
+	}
+	return append(object, '}')
 }
 
 type wireTool struct {
@@ -41,7 +91,7 @@ type wireTool struct {
 
 type chatRequest struct {
 	Model               string        `json:"model"`
-	Messages            []wireMessage `json:"messages"`
+	Messages            []wireMessage `json:"-"`
 	Tools               []wireTool    `json:"tools,omitempty"`
 	MaxTokens           int           `json:"max_tokens,omitempty"`
 	MaxCompletionTokens int           `json:"max_completion_tokens,omitempty"`
@@ -77,10 +127,22 @@ func (p *Provider) encodeRequest(req llm.ChatRequest) ([]byte, error) {
 			wm.Content = &text
 		}
 		for _, part := range message.Parts {
-			switch {
-			case len(part.ProviderMeta) > 0 && message.Origin == p.name:
-				return nil, p.failure(llm.ErrBadRequest, "unsupported OpenAI continuation metadata", nil)
-			case part.Type == llm.PartToolCall:
+			if len(part.ProviderMeta) > 0 && message.Origin == p.name {
+				var fields map[string]json.RawMessage
+				if err := json.Unmarshal(part.ProviderMeta, &fields); err != nil || len(fields) == 0 {
+					return nil, p.failure(llm.ErrBadRequest, "invalid OpenAI continuation metadata", err)
+				}
+				if wm.Extra == nil {
+					wm.Extra = make(map[string]json.RawMessage)
+				}
+				for name, value := range fields {
+					if knownMessageField(name) || wm.Extra[name] != nil {
+						return nil, p.failure(llm.ErrBadRequest, "conflicting OpenAI continuation metadata", nil)
+					}
+					wm.Extra[name] = value
+				}
+			}
+			if part.Type == llm.PartToolCall {
 				args, err := json.Marshal(string(part.ToolCall.Args))
 				if err != nil {
 					return nil, p.failure(llm.ErrBadRequest, "cannot encode tool arguments", err)
@@ -104,7 +166,20 @@ func (p *Provider) encodeRequest(req llm.ChatRequest) ([]byte, error) {
 	if err != nil {
 		return nil, p.failure(llm.ErrBadRequest, "cannot encode chat request", err)
 	}
-	return body, nil
+	// Marshal messages separately to keep opaque values out of json.Marshal.
+	messages := []byte{'['}
+	for i, message := range wire.Messages {
+		data, err := json.Marshal(message)
+		if err != nil {
+			return nil, p.failure(llm.ErrBadRequest, "cannot encode chat message", err)
+		}
+		if i > 0 {
+			messages = append(messages, ',')
+		}
+		messages = append(messages, appendRawFields(data, message.Extra)...)
+	}
+	messages = append(messages, ']')
+	return appendRawFields(body, map[string]json.RawMessage{"messages": messages}), nil
 }
 
 type chatResponse struct {
@@ -117,7 +192,8 @@ type chatResponse struct {
 		PromptTokens     *int64 `json:"prompt_tokens"`
 		CompletionTokens *int64 `json:"completion_tokens"`
 		PromptDetails    struct {
-			CachedTokens int64 `json:"cached_tokens"`
+			CachedTokens     int64 `json:"cached_tokens"`
+			CacheWriteTokens int64 `json:"cache_write_tokens"`
 		} `json:"prompt_tokens_details"`
 	} `json:"usage"`
 }
@@ -161,12 +237,16 @@ func (p *Provider) normalize(req llm.ChatRequest, wire chatResponse) (*llm.ChatR
 	if len(out.Message.Parts) == 0 && out.StopReason != llm.StopMaxTokens && out.StopReason != llm.StopRefusal {
 		return nil, p.failure(llm.ErrMalformed, "assistant response has no content", nil)
 	}
+	if len(choice.Message.Extra) > 0 {
+		out.Message.Parts = append(out.Message.Parts, llm.Part{Type: llm.PartOpaque, ProviderMeta: appendRawFields([]byte("{}"), choice.Message.Extra)})
+	}
 	if wire.Usage != nil && wire.Usage.PromptTokens != nil && wire.Usage.CompletionTokens != nil {
 		input, output, cached := *wire.Usage.PromptTokens, *wire.Usage.CompletionTokens, wire.Usage.PromptDetails.CachedTokens
-		if input < 0 || output < 0 || cached < 0 || cached > input {
+		writes := wire.Usage.PromptDetails.CacheWriteTokens
+		if input < 0 || output < 0 || cached < 0 || cached > input || writes < 0 || writes > input-cached {
 			return nil, p.failure(llm.ErrMalformed, "invalid API usage counts", nil)
 		}
-		out.Usage = &llm.Usage{InputTokens: input - cached, OutputTokens: output, CacheReadTokens: cached}
+		out.Usage = &llm.Usage{InputTokens: input - cached - writes, OutputTokens: output, CacheReadTokens: cached, CacheWriteTokens: writes}
 	}
 	return out, nil
 }

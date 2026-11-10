@@ -26,6 +26,8 @@ const (
 	requestTimeout  = 2 * time.Minute
 )
 
+var errRequestTimeout = errors.New("OpenAI adapter request timeout")
+
 // Quirks selects optional request fields for one instance. Response quirks
 // (null content, object arguments and missing usage) are always accepted.
 type Quirks struct {
@@ -125,7 +127,7 @@ func (p *Provider) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatResp
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	ctx, cancel := context.WithTimeoutCause(ctx, requestTimeout, errRequestTimeout)
 	defer cancel()
 	var response chatResponse
 	meta, err := p.request(ctx, http.MethodPost, p.endpoint("chat/completions"), body, &response)
@@ -175,7 +177,7 @@ func (p *Provider) request(ctx context.Context, method string, target *url.URL, 
 	if err != nil {
 		return meta, p.ioFailure(ctx, "cannot read API response", err)
 	}
-	if err := ctx.Err(); err != nil {
+	if err := p.contextFailure(ctx); err != nil {
 		return meta, err
 	}
 	if len(data) > maxResponseBody {
@@ -183,6 +185,23 @@ func (p *Provider) request(ctx context.Context, method string, target *url.URL, 
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return meta, p.statusError(meta, data)
+	}
+	// Providers can fail after sending HTTP 200, including after partial
+	// generation. Classify errors before decoding or accepting any content.
+	var envelope errorEnvelope
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return meta, p.failure(llm.ErrMalformed, "invalid API JSON response", err)
+	}
+	if envelope.Error != nil {
+		return meta, p.embeddedError(meta, envelope.Error)
+	}
+	for _, choice := range envelope.Choices {
+		if choice.Error != nil {
+			return meta, p.embeddedError(meta, choice.Error)
+		}
+		if choice.FinishReason == "error" {
+			return meta, p.failure(llm.ErrMalformed, "API generation failed without an error code", nil)
+		}
 	}
 	if err := json.Unmarshal(data, out); err != nil {
 		return meta, p.failure(llm.ErrMalformed, "invalid API JSON response", err)
@@ -197,7 +216,7 @@ func (p *Provider) failure(kind llm.ErrorKind, message string, cause error) *llm
 }
 
 func (p *Provider) ioFailure(ctx context.Context, message string, cause error) error {
-	if err := ctx.Err(); err != nil {
+	if err := p.contextFailure(ctx); err != nil {
 		return err
 	}
 	if errors.Is(cause, context.Canceled) {
@@ -206,20 +225,51 @@ func (p *Provider) ioFailure(ctx context.Context, message string, cause error) e
 	return p.failure(llm.ErrUnavailable, message, cause)
 }
 
+func (p *Provider) contextFailure(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		if errors.Is(context.Cause(ctx), errRequestTimeout) {
+			return p.failure(llm.ErrUnavailable, "API request timed out", err)
+		}
+		return err
+	}
+	return nil
+}
+
 var contextOverflow = regexp.MustCompile(`(?i)context (length|window)|maximum context|too many tokens`)
 
+type apiError struct {
+	Code    json.RawMessage `json:"code"`
+	Message string          `json:"message"`
+}
+
+type errorEnvelope struct {
+	Error   *apiError `json:"error"`
+	Choices []struct {
+		Error        *apiError `json:"error"`
+		FinishReason string    `json:"finish_reason"`
+	} `json:"choices"`
+}
+
+func (p *Provider) embeddedError(meta responseMeta, detail *apiError) *llm.Error {
+	var status int
+	if json.Unmarshal(detail.Code, &status) != nil || status < 400 || status > 599 {
+		return p.failure(llm.ErrMalformed, "API generation failed without a valid error code", nil)
+	}
+	meta.status = status
+	return p.rejection(meta, detail)
+}
+
 func (p *Provider) statusError(meta responseMeta, data []byte) *llm.Error {
+	var envelope errorEnvelope
+	_ = json.Unmarshal(data, &envelope)
+	return p.rejection(meta, envelope.Error)
+}
+
+func (p *Provider) rejection(meta responseMeta, detail *apiError) *llm.Error {
 	kind := llm.KindFromStatus(meta.status)
-	if meta.status == http.StatusBadRequest {
-		var envelope struct {
-			Error struct {
-				Code    json.RawMessage `json:"code"`
-				Message string          `json:"message"`
-			} `json:"error"`
-		}
-		if json.Unmarshal(data, &envelope) == nil && (string(envelope.Error.Code) == `"context_length_exceeded"` || contextOverflow.MatchString(envelope.Error.Message)) {
-			kind = llm.ErrContextTooLong
-		}
+	if meta.status == http.StatusBadRequest && detail != nil &&
+		(string(detail.Code) == `"context_length_exceeded"` || contextOverflow.MatchString(detail.Message)) {
+		kind = llm.ErrContextTooLong
 	}
 	return &llm.Error{
 		Kind: kind, Provider: p.name, Status: meta.status,

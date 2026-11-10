@@ -236,11 +236,19 @@ func TestInvalidRequestsAndMetadata(t *testing.T) {
 		func(r *llm.ChatRequest) { r.Tools[0].Schema = json.RawMessage(`{"type":"private-request-body"}`) },
 		func(r *llm.ChatRequest) {
 			r.Messages = append(r.Messages,
-				llm.Message{Role: llm.RoleAssistant, Origin: "test", Parts: []llm.Part{{Type: llm.PartOpaque, ProviderMeta: json.RawMessage(`{"private-request-body":true}`)}}}, llm.UserText("Continue."))
+				llm.Message{Role: llm.RoleAssistant, Origin: "test", Parts: []llm.Part{{Type: llm.PartOpaque, ProviderMeta: json.RawMessage(`{"role":"private-request-body"}`)}}}, llm.UserText("Continue."))
 		},
 		func(r *llm.ChatRequest) {
 			r.Messages = append(r.Messages,
 				llm.Message{Role: llm.RoleAssistant, Origin: "test", Parts: []llm.Part{{Type: llm.PartText, Text: "Hello.", ProviderMeta: json.RawMessage(`{}`)}}}, llm.UserText("Continue."))
+		},
+		func(r *llm.ChatRequest) {
+			r.Messages = append(r.Messages,
+				llm.Message{Role: llm.RoleAssistant, Origin: "test", Parts: []llm.Part{{Type: llm.PartOpaque, ProviderMeta: json.RawMessage(`{"Role":"private-request-body"}`)}}}, llm.UserText("Continue."))
+		},
+		func(r *llm.ChatRequest) {
+			r.Messages = append(r.Messages,
+				llm.Message{Role: llm.RoleAssistant, Origin: "test", Parts: []llm.Part{{Type: llm.PartOpaque, ProviderMeta: json.RawMessage(`[]`)}}}, llm.UserText("Continue."))
 		},
 	} {
 		req := baseRequest(true)
@@ -255,7 +263,7 @@ func TestInvalidRequestsAndMetadata(t *testing.T) {
 	req := baseRequest(false)
 	req.Temperature = nil
 	req.System = ""
-	req.Messages = append(req.Messages, llm.Message{Role: llm.RoleAssistant, Origin: "other", Parts: []llm.Part{llm.Text("Hello."), {Type: llm.PartOpaque, ProviderMeta: json.RawMessage(`{}`)}}}, llm.UserText("Continue."))
+	req.Messages = append(req.Messages, llm.Message{Role: llm.RoleAssistant, Origin: "other", Parts: []llm.Part{llm.Text("Hello."), {Type: llm.PartOpaque, ProviderMeta: json.RawMessage(`{"reasoning_details":[{"data":"private-request-body"}]}`)}}}, llm.UserText("Continue."))
 	data, err := p.encodeRequest(req)
 	if err != nil {
 		t.Fatal(err)
