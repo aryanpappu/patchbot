@@ -270,3 +270,42 @@ func TestNewRegistry(t *testing.T) {
 		t.Errorf("a tool error = %v, want one that wraps context.Canceled and names the tool", err)
 	}
 }
+
+// Finding 7: the registered value straddles each display cap. Matching uses
+// the original secret, while display copies must be redacted before cutting.
+func TestRedactionPrecedesEveryTruncation(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ws, err := workspace.Open(dir, workspace.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close(true) }()
+	const value = "custom-password-7b2468"
+	redactor := secret.NewRedactor(value, "multi\nline-secret")
+	reg, err := tools.NewCodeRegistry(&tools.Env{WS: ws, Redactor: redactor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, dir, "read", strings.Repeat("x", 1990)+value+"\n")
+	put(t, dir, "search", strings.Repeat("x", 290)+value+"\n")
+	put(t, dir, "multiline", "multi\nline-secret\nvisible\n")
+	for _, tc := range []struct {
+		tool string
+		args obj
+	}{
+		{"read_file", obj{"path": "read"}},
+		{"search", obj{"path": "search", "pattern": value}},
+		{"read_file", obj{"path": "multiline", "offset": 2, "limit": 1}},
+		{"search", obj{"path": "multiline", "pattern": "line-secret"}},
+		{strings.Repeat("x", 70) + value, obj{}},
+	} {
+		res := call(t, reg, tc.tool, tc.args)
+		if strings.Contains(res.Content, "custom-pas") || strings.Contains(res.Content, "line-secret") || strings.Contains(res.Content, "multi\n") {
+			t.Fatalf("%s leaked a fragment: %q", tc.tool, res.Content)
+		}
+		if !strings.Contains(res.Content, "[redacted]") {
+			t.Fatalf("%s has no redaction marker: %q", tc.tool, res.Content)
+		}
+	}
+}

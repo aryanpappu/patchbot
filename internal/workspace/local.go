@@ -58,6 +58,9 @@ type Local struct {
 	closeOnce sync.Once
 	closeErr  error
 	onClose   func(keep bool) error
+	// testHook forces namespace changes at acquisition/use boundaries in tests.
+	// It is set before an operation starts and is nil in production.
+	testHook func(stage string)
 }
 
 var _ Workspace = (*Local)(nil)
@@ -72,15 +75,30 @@ func Open(dir string, opts Options) (*Local, error) {
 	if err != nil {
 		return nil, fmt.Errorf("workspace: %w", err)
 	}
-	root, err := os.OpenRoot(abs)
+	root, err := os.OpenRoot(abs + string(os.PathSeparator) + ".")
 	if err != nil {
 		return nil, fmt.Errorf("workspace: open checkout: %w", err)
 	}
-	return &Local{dir: abs, root: root, policy: policy, opts: opts.withDefaults()}, nil
+	return localFromRoot(abs, root, policy, opts), nil
+}
+
+// localFromRoot takes ownership of a handle acquired through the caller's
+// pinned root. In particular, Manager must never reopen dir by host pathname.
+func localFromRoot(dir string, root *os.Root, policy *Policy, opts Options) *Local {
+	return &Local{dir: dir, root: root, policy: policy, opts: opts.withDefaults()}
+}
+
+func (l *Local) hook(stage string) {
+	if l.testHook != nil {
+		l.testHook(stage)
+	}
 }
 
 // Dir returns the absolute host path of the checkout.
 func (l *Local) Dir() string { return l.dir }
+
+// MaxWriteBytes returns the allocation limit used by file editing tools.
+func (l *Local) MaxWriteBytes() int64 { return l.opts.MaxWriteBytes }
 
 // RunDir returns the per-run directory that holds the checkout, where the
 // harness may keep other per-run files next to it. It is empty for a
@@ -116,22 +134,31 @@ func (l *Local) ReadFile(name string) ([]byte, error) {
 	if r.info.Size() > limit {
 		return nil, l.fail(op, name, tooLarge(r.info.Size(), limit))
 	}
-	dir, done, err := l.pinDir(path.Dir(r.path), false)
+	pinned, err := l.pinDir(r, path.Dir(r.path), false)
 	if err != nil {
 		return nil, l.fail(op, name, err)
 	}
-	defer done()
-	f, err := openRegular(dir, path.Base(r.path))
+	defer pinned.close()
+	if err := pinned.validate(); err != nil {
+		return nil, l.fail(op, name, err)
+	}
+	f, err := openRegular(pinned.root(), path.Base(r.path))
 	if err != nil {
 		return nil, l.fail(op, name, err)
 	}
 	defer func() { _ = f.Close() }()
+	if err := pinned.checkFile(f); err != nil {
+		return nil, l.fail(op, name, err)
+	}
 	data, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil {
 		return nil, l.fail(op, name, err)
 	}
 	if int64(len(data)) > limit {
 		return nil, l.fail(op, name, tooLarge(int64(len(data)), limit))
+	}
+	if err := pinned.checkFile(f); err != nil {
+		return nil, l.fail(op, name, err)
 	}
 	return data, nil
 }
@@ -162,19 +189,26 @@ func (l *Local) WriteFile(name string, data []byte) error {
 		}
 		mode = r.info.Mode().Perm()
 	}
-	dir, done, err := l.pinDir(path.Dir(r.path), true)
+	pinned, err := l.pinDir(r, path.Dir(r.path), true)
 	if err != nil {
 		return l.fail(op, name, err)
 	}
-	defer done()
-	if err := writeAtomic(dir, path.Base(r.path), data, mode); err != nil {
+	defer pinned.close()
+	if err := pinned.validate(); err != nil {
+		return l.fail(op, name, err)
+	}
+	validate := func() error { return pinned.validateTarget(path.Base(r.path)) }
+	if err := validate(); err != nil {
+		return l.fail(op, name, err)
+	}
+	if err := writeAtomic(pinned.root(), path.Base(r.path), data, mode, validate); err != nil {
 		return l.fail(op, name, err)
 	}
 	return nil
 }
 
 // writeAtomic writes data to a temporary file in dir and renames it to base.
-func writeAtomic(dir *os.Root, base string, data []byte, mode fs.FileMode) (err error) {
+func writeAtomic(dir *os.Root, base string, data []byte, mode fs.FileMode, validate func() error) (err error) {
 	tmp := ".patchbot-" + rand.Text() + ".tmp"
 	f, err := dir.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
@@ -205,6 +239,9 @@ func writeAtomic(dir *os.Root, base string, data []byte, mode fs.FileMode) (err 
 	case statErr != nil && !errors.Is(statErr, fs.ErrNotExist):
 		return statErr
 	}
+	if err := validate(); err != nil {
+		return err
+	}
 	return dir.Rename(tmp, base)
 }
 
@@ -212,6 +249,18 @@ func writeAtomic(dir *os.Root, base string, data []byte, mode fs.FileMode) (err 
 func (l *Local) Stat(name string) (fs.FileInfo, error) {
 	r, err := l.resolve(name, false)
 	if err != nil {
+		return nil, l.fail("stat", name, err)
+	}
+	dir := path.Dir(r.path)
+	if r.info.IsDir() {
+		dir = r.path
+	}
+	pinned, err := l.pinDir(r, dir, false)
+	if err != nil {
+		return nil, l.fail("stat", name, err)
+	}
+	defer pinned.close()
+	if err := pinned.validate(); err != nil {
 		return nil, l.fail("stat", name, err)
 	}
 	return r.info, nil
@@ -227,11 +276,15 @@ func (l *Local) ReadDir(name string) ([]fs.DirEntry, error) {
 	if !r.info.IsDir() {
 		return nil, l.fail(op, name, ErrNotDir)
 	}
-	dir, done, err := l.pinDir(r.path, false)
+	pinned, err := l.pinDir(r, r.path, false)
 	if err != nil {
 		return nil, l.fail(op, name, err)
 	}
-	defer done()
+	defer pinned.close()
+	if err := pinned.validate(); err != nil {
+		return nil, l.fail(op, name, err)
+	}
+	dir := pinned.root()
 	f, err := dir.Open(".")
 	if err != nil {
 		return nil, l.fail(op, name, err)
@@ -270,6 +323,9 @@ func (l *Local) ReadDir(name string) ([]fs.DirEntry, error) {
 		}
 		entries = append(entries, fs.FileInfoToDirEntry(info))
 	}
+	if err := pinned.validate(); err != nil {
+		return nil, l.fail(op, name, err)
+	}
 	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return cmp.Compare(a.Name(), b.Name()) })
 	if truncated {
 		return entries, l.fail(op, name, &lexError{
@@ -288,6 +344,9 @@ type resolved struct {
 	// info describes path. It is nil when the path does not exist yet,
 	// which only happens when resolving for a write.
 	info fs.FileInfo
+	// dirs binds each existing directory to the dev+ino approved by resolve.
+	dirs  map[string]fs.FileInfo
+	guard protectedSet
 }
 
 // component is one name still to be resolved. fromLink marks a name that
@@ -311,6 +370,11 @@ func (l *Local) resolve(name string, create bool) (resolved, error) {
 		}
 	}
 	guard := l.protectedFiles()
+	rootInfo, err := l.root.Stat(".")
+	if err != nil {
+		return resolved{}, err
+	}
+	dirs := map[string]fs.FileInfo{".": rootInfo}
 
 	var (
 		stack   []string    // the resolved path so far
@@ -378,10 +442,13 @@ func (l *Local) resolve(name string, create bool) (resolved, error) {
 		if rule, ok := guard.match(fi); ok {
 			return resolved{}, &lexError{kind: ErrPathProtected, detail: rule}
 		}
+		if fi.IsDir() {
+			dirs[candidate] = fi
+		}
 		stack, info = append(stack, c.name), fi
 	}
 
-	out := resolved{path: "."}
+	out := resolved{path: ".", dirs: dirs, guard: guard}
 	if len(stack) > 0 {
 		out.path = strings.Join(stack, "/")
 	}
@@ -410,6 +477,11 @@ func linkTarget(target string) ([]component, error) {
 	}
 	var parts []component
 	for part := range strings.SplitSeq(slashed, "/") {
+		if part != "" && part != "." && part != ".." {
+			if _, err := cleanPath(part); err != nil {
+				return nil, err
+			}
+		}
 		parts = append(parts, component{name: part, fromLink: true})
 	}
 	return parts, nil
@@ -451,48 +523,185 @@ func (s protectedSet) match(fi fs.FileInfo) (rule string, ok bool) {
 	return "", false
 }
 
-// pinDir opens the directory at a resolved path one level at a time and
-// checks at each level that the name is a real directory, not a symlink.
-// With create set, missing directories are made. The caller must call the
-// returned function when done with the handle.
-func (l *Local) pinDir(dir string, create bool) (*os.Root, func(), error) {
-	cur, owned := l.root, false
-	closeCur := func() {
-		if owned {
-			_ = cur.Close()
+// openDirectory checks the entry without opening special files. The trailing
+// "/." deliberately makes name an intermediate component of Root.OpenRoot:
+// Go's Unix root walker opens it with O_DIRECTORY (unlike a terminal component).
+// Thus even a swap to a FIFO after Lstat cannot block. The final "." refers to
+// that already opened directory, and all acquisition stays relative to parent.
+func openDirectory(parent *os.Root, name string, approved fs.FileInfo, beforeOpen func()) (*os.Root, error) {
+	entry, err := parent.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !entry.IsDir() {
+		return nil, ErrNotDir
+	}
+	if !os.SameFile(entry, approved) {
+		return nil, changedPath()
+	}
+	if beforeOpen != nil {
+		beforeOpen()
+	}
+	next, err := parent.OpenRoot(name + "/.")
+	if err != nil {
+		return nil, err
+	}
+	opened, err := next.Stat(".")
+	if err == nil && !os.SameFile(opened, approved) {
+		err = changedPath()
+	}
+	entry, statErr := parent.Lstat(name)
+	if err == nil {
+		err = statErr
+		if err == nil && (!entry.IsDir() || !os.SameFile(entry, approved)) {
+			err = changedPath()
 		}
 	}
-	if dir == "." {
-		return cur, closeCur, nil
+	if err != nil {
+		_ = next.Close()
+		return nil, err
 	}
-	for name := range strings.SplitSeq(dir, "/") {
-		next, err := cur.OpenRoot(name)
-		if create && errors.Is(err, fs.ErrNotExist) {
-			if err := cur.Mkdir(name, newDirMode); err != nil && !errors.Is(err, fs.ErrExist) {
-				closeCur()
-				return nil, nil, err
-			}
-			next, err = cur.OpenRoot(name)
-		}
+	return next, nil
+}
+
+func changedPath() error {
+	return &lexError{kind: ErrSymlink, detail: "the path changed during the operation"}
+}
+
+type pinnedLevel struct {
+	root *os.Root
+	path string
+	info fs.FileInfo
+}
+
+type pinnedDir struct {
+	local  *Local
+	levels []pinnedLevel // retain parents so namespace edges can be rechecked
+	guard  protectedSet
+}
+
+func (p *pinnedDir) root() *os.Root { return p.levels[len(p.levels)-1].root }
+
+func (p *pinnedDir) close() {
+	for i := len(p.levels) - 1; i > 0; i-- {
+		_ = p.levels[i].root.Close()
+	}
+}
+
+// validate rechecks both the approved directory identities and their namespace
+// edges, plus protected identities captured during resolution and at use time.
+// A retained descriptor must not become an alias of a protected directory.
+func (p *pinnedDir) validate() error {
+	current := p.local.protectedFiles()
+	for i, level := range p.levels {
+		opened, err := level.root.Stat(".")
 		if err != nil {
-			closeCur()
-			return nil, nil, err
+			return err
 		}
-		entry, err := cur.Lstat(name)
-		if err == nil {
-			var opened fs.FileInfo
-			if opened, err = next.Stat("."); err == nil && !os.SameFile(entry, opened) {
-				err = &lexError{kind: ErrSymlink, detail: "the path changed during the operation"}
+		if !os.SameFile(opened, level.info) {
+			return changedPath()
+		}
+		if i == 0 {
+			continue // the checkout root itself is the jail boundary
+		}
+		for _, guard := range []protectedSet{p.guard, current} {
+			if rule, ok := guard.match(opened); ok {
+				return &lexError{kind: ErrPathProtected, detail: rule}
 			}
 		}
-		closeCur()
+		entry, err := p.levels[i-1].root.Lstat(path.Base(level.path))
 		if err != nil {
-			_ = next.Close()
-			return nil, nil, err
+			return err
 		}
-		cur, owned = next, true
+		if !entry.IsDir() || !os.SameFile(entry, level.info) {
+			return changedPath()
+		}
 	}
-	return cur, closeCur, nil
+	return nil
+}
+
+func (p *pinnedDir) checkFile(f *os.File) error {
+	if err := p.validate(); err != nil {
+		return err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	for _, guard := range []protectedSet{p.guard, p.local.protectedFiles()} {
+		if rule, ok := guard.match(info); ok {
+			return &lexError{kind: ErrPathProtected, detail: rule}
+		}
+	}
+	return nil
+}
+
+// validateTarget also checks a destination that has appeared or changed since
+// resolution, including aliases of configured protected regular files.
+func (p *pinnedDir) validateTarget(base string) error {
+	if err := p.validate(); err != nil {
+		return err
+	}
+	info, err := p.root().Lstat(base)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, guard := range []protectedSet{p.guard, p.local.protectedFiles()} {
+		if rule, ok := guard.match(info); ok {
+			return &lexError{kind: ErrPathProtected, detail: rule}
+		}
+	}
+	return nil
+}
+
+// pinDir binds every acquired handle to the identities approved by resolve.
+// A missing directory is approved only after this operation creates it.
+func (l *Local) pinDir(r resolved, dir string, create bool) (_ *pinnedDir, err error) {
+	l.hook("resolved")
+	p := &pinnedDir{local: l, guard: r.guard, levels: []pinnedLevel{{root: l.root, path: ".", info: r.dirs["."]}}}
+	defer func() {
+		if err != nil {
+			p.close()
+		}
+	}()
+	if dir != "." {
+		full := ""
+		for name := range strings.SplitSeq(dir, "/") {
+			full = path.Join(full, name)
+			cur := p.root()
+			approved := r.dirs[full]
+			if approved == nil {
+				if !create {
+					return nil, changedPath()
+				}
+				// Do not adopt an entry planted since resolution. If another
+				// operation created it, the caller can retry from resolution.
+				if err := p.validate(); err != nil {
+					return nil, err
+				}
+				if err := cur.Mkdir(name, newDirMode); err != nil {
+					return nil, err
+				}
+				approved, err = cur.Lstat(name)
+				if err != nil {
+					return nil, err
+				}
+			}
+			next, err := openDirectory(cur, name, approved, func() { l.hook("before-open-dir") })
+			if err != nil {
+				return nil, err
+			}
+			p.levels = append(p.levels, pinnedLevel{root: next, path: full, info: approved})
+			if err := p.validate(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	l.hook("pinned")
+	return p, nil
 }
 
 // openAttempts is how often openRegular tries again when the file is

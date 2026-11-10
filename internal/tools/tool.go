@@ -216,3 +216,22 @@ func plural(n int, one, many string) string {
 	}
 	return fmt.Sprintf("%d %s", n, many)
 }
+
+// displayLines redacts the complete file before line selection, formatting or
+// truncation can split a secret. Matching and editing still use the original.
+// A multiline mask changes line positions; in that case mask the entire display
+// while preserving source line numbers, rather than expose fragments or mislabel
+// later lines.
+func displayLines(env *Env, data []byte) []string {
+	source := string(data)
+	display := env.Redactor.Redact(source)
+	lines := strings.Split(strings.TrimSuffix(display, "\n"), "\n")
+	originalLines := strings.Count(strings.TrimSuffix(source, "\n"), "\n") + 1
+	if len(lines) != originalLines {
+		lines = make([]string, originalLines)
+		for i := range lines {
+			lines[i] = "[redacted]"
+		}
+	}
+	return lines
+}

@@ -154,7 +154,11 @@ Rules that follow from it:
    allowlist.
 3. **Path jail:** `os.Root` for every file tool. Absolute paths, `..`, NUL, and symlinks leading out are
    rejected. `.git/`, `.env*`, `.github/workflows/` and paths you configure are protected for read and
-   write. A fuzz test covers this.
+   write. A fuzz test covers this. Policy configuration, candidate paths and symlink targets reject
+   combining marks U+0300–U+036F and all Unicode Mn/Me characters. This conservative rule refuses
+   decomposed (NFD) spellings rather than allowing them to alias a protected composed (NFC) name;
+   full Unicode normalization is not available without an additional dependency. Such names cannot
+   be addressed by file tools and are omitted from directory listings.
 4. **Go 1.27** (installed 1.27.3; must stay ≥ 1.25.12 because GO-2026-4970 fixed an `os.Root` symlink escape). The `go.mod` `go` line
    line and CI enforce it.
 5. **Process control:** each command runs in its own process group. A timeout kills the whole group.

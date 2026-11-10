@@ -43,7 +43,10 @@ type prefixRule struct {
 //
 // Names are compared after case folding, so a variant such as .GIT or .Env
 // that a case-insensitive file system treats as the same file is protected
-// too.
+// too. Combining marks (U+0300–U+036F and Unicode Mn/Me) are rejected
+// in both configured rules and candidate paths. Without a normalization
+// dependency this conservatively refuses decomposed spellings, including
+// symlink targets, rather than allowing NFC/NFD aliases to bypass a rule.
 func NewPolicy(extra []string) (*Policy, error) {
 	p := &Policy{rules: []prefixRule{{keys: []string{".github", "workflows"}, display: ".github/workflows"}}}
 	for _, raw := range extra {
@@ -112,6 +115,8 @@ func cleanPath(path string) (string, error) {
 	}
 	for _, r := range path {
 		switch {
+		case (r >= 0x0300 && r <= 0x036f) || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r):
+			return "", invalid("combining marks are not allowed in path components")
 		case r == 0:
 			return "", invalid("holds a NUL byte")
 		case r < 0x20 || r == 0x7f:

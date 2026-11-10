@@ -67,7 +67,7 @@ func (ReadFile) Execute(ctx context.Context, env *Env, raw json.RawMessage) (Res
 	if len(data) == 0 {
 		return Result{Content: "[the file is empty]"}, nil
 	}
-	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	lines := displayLines(env, data)
 	total := len(lines)
 	if offset > total {
 		return failed("offset %d is past the end of the file, which has %s", offset, plural(total, "line", "lines"))

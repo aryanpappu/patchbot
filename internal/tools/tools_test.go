@@ -413,3 +413,28 @@ func TestWriteFile(t *testing.T) {
 		}
 	}
 }
+
+// Finding 6: a short source can expand into a huge NFA. This rejects the
+// original adversarial expression before any matching and skips oversized
+// lines whole so anchors never see an invented end of line.
+func TestSearchBoundsExpandedProgramAndInputLine(t *testing.T) {
+	t.Parallel()
+	dir, reg := dirRegistry(t, tools.Limits{})
+	put(t, dir, "file", "a")
+	pattern := strings.Repeat("[ab]{1000}", 80) + "c"
+	if got := bad(t, reg, "search", obj{"pattern": pattern, "path": "file"}); !strings.Contains(got, "instructions") {
+		t.Fatalf("expanded program not rejected: %q", got)
+	}
+	put(t, dir, "file", strings.Repeat("a", 1<<20))
+	got := ok(t, reg, "search", obj{"pattern": "a$", "path": "file"})
+	if !strings.Contains(got, "0 matches") || !strings.Contains(got, "1 lines skipped (over 8192 bytes)") {
+		t.Fatalf("long line was scanned: %q", got)
+	}
+	put(t, dir, "file", strings.Repeat("a", 8192)+"\nneedle\n"+strings.Repeat("a", 8193)+"\nneedle\n")
+	got = ok(t, reg, "search", obj{"pattern": "a$|needle", "path": "file"})
+	for _, want := range []string{"file:1:", "file:2: needle", "file:4: needle", "3 matches", "1 lines skipped"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("search lacks %q: %q", want, got)
+		}
+	}
+}

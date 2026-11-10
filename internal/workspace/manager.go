@@ -70,8 +70,16 @@ func NewManager(dataDir string) (*Manager, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("workspace: %s is not a directory", base)
 	}
-	root, err := os.OpenRoot(base)
+	root, err := os.OpenRoot(base + string(os.PathSeparator) + ".")
 	if err != nil {
+		return nil, fmt.Errorf("workspace: %w", err)
+	}
+	opened, err := root.Stat(".")
+	if err == nil && !os.SameFile(info, opened) {
+		err = changedPath()
+	}
+	if err != nil {
+		_ = root.Close()
 		return nil, fmt.Errorf("workspace: %w", err)
 	}
 	if err := root.Chmod(".", privateMode); err != nil {
@@ -114,14 +122,32 @@ func (m *Manager) Create(runID string, opts Options) (*Local, error) {
 func (m *Manager) open(name string, opts Options) (*Local, error) {
 	// Mkdir is subject to the umask, which can only take bits away, so the
 	// directories are never more open than 0700.
-	if err := m.root.Mkdir(name+"/"+checkoutDir, privateMode); err != nil {
-		return nil, err
-	}
-	runDir := filepath.Join(m.base, name)
-	ws, err := Open(filepath.Join(runDir, checkoutDir), opts)
+	policy, err := NewPolicy(opts.Protected)
 	if err != nil {
 		return nil, err
 	}
+	approved, err := m.root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	runRoot, err := openDirectory(m.root, name, approved, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = runRoot.Close() }()
+	if err := runRoot.Mkdir(checkoutDir, privateMode); err != nil {
+		return nil, err
+	}
+	checkoutInfo, err := runRoot.Lstat(checkoutDir)
+	if err != nil {
+		return nil, err
+	}
+	root, err := openDirectory(runRoot, checkoutDir, checkoutInfo, nil)
+	if err != nil {
+		return nil, err
+	}
+	runDir := filepath.Join(m.base, name)
+	ws := localFromRoot(filepath.Join(runDir, checkoutDir), root, policy, opts)
 	ws.runDir = runDir
 	ws.onClose = func(keep bool) error {
 		m.mu.Lock()

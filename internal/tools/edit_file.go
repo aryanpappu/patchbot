@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/aryanpappu/patchbot/internal/llm"
+	"github.com/aryanpappu/patchbot/internal/workspace"
 )
 
 // EditFile is the edit_file tool.
@@ -64,12 +65,17 @@ func (EditFile) Execute(ctx context.Context, env *Env, raw json.RawMessage) (Res
 	}
 	content, oldText, newText := string(data), *args.OldString, *args.NewString
 	count := strings.Count(content, oldText)
+	crlf := false
 	if count == 0 && strings.Contains(content, "\r\n") && !strings.Contains(oldText, "\r") {
 		// read_file shows the lines of a CRLF file without the carriage
 		// returns, so text copied from it has plain line feeds. Match it
 		// against the file's own line endings.
+		// Do not expand either argument until its size has been checked.
+		if strings.Count(oldText, "\n") > len(content)-len(oldText) {
+			return failed("old_string was not found in %q (0 matches); nothing was changed", args.Path)
+		}
 		oldText = strings.ReplaceAll(oldText, "\n", "\r\n")
-		newText = strings.ReplaceAll(strings.ReplaceAll(newText, "\r\n", "\n"), "\n", "\r\n")
+		crlf = true
 		count = strings.Count(content, oldText)
 	}
 	switch {
@@ -79,6 +85,24 @@ func (EditFile) Execute(ctx context.Context, env *Env, raw json.RawMessage) (Res
 	case count > 1 && !args.ReplaceAll:
 		return failed("old_string matches %d times in %q; nothing was changed. "+
 			"Add surrounding lines to make it match exactly once, or set replace_all", count, args.Path)
+	}
+	limit := int64(workspace.DefaultMaxWriteBytes)
+	if ws, ok := env.WS.(interface{ MaxWriteBytes() int64 }); ok {
+		limit = ws.MaxWriteBytes()
+	}
+	newLen := int64(len(newText))
+	if crlf {
+		extra := int64(strings.Count(newText, "\n") - strings.Count(newText, "\r\n"))
+		if newLen > int64(^uint64(0)>>1)-extra {
+			return failed("edit result exceeds the write size limit")
+		}
+		newLen += extra
+	}
+	if !replacementFits(int64(len(content)), int64(len(oldText)), newLen, int64(count), limit) {
+		return failed("edit result exceeds the write size limit of %d bytes", limit)
+	}
+	if crlf {
+		newText = strings.ReplaceAll(strings.ReplaceAll(newText, "\r\n", "\n"), "\n", "\r\n")
 	}
 	before, _, _ := strings.Cut(content, oldText)
 	line := 1 + strings.Count(before, "\n")
@@ -93,4 +117,15 @@ func (EditFile) Execute(ctx context.Context, env *Env, raw json.RawMessage) (Res
 		where = fmt.Sprintf("the first at line %d", line)
 	}
 	return Result{Content: fmt.Sprintf("edited %s: replaced %s, %s", args.Path, plural(count, "occurrence", "occurrences"), where)}, nil
+}
+
+// replacementFits checks the final size without multiplying untrusted lengths
+// until the division proves that the product fits both the limit and an int.
+func replacementFits(size, oldLen, newLen, count, limit int64) bool {
+	if size < 0 || oldLen <= 0 || newLen < 0 || count <= 0 || count > size/oldLen || limit < 0 {
+		return false
+	}
+	limit = min(limit, int64(int(^uint(0)>>1)))
+	remaining := size - count*oldLen
+	return remaining <= limit && newLen <= (limit-remaining)/count
 }

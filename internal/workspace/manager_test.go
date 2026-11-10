@@ -212,3 +212,43 @@ func TestManagerSweep(t *testing.T) {
 		t.Errorf("the active workspace broke after Sweep: %v", err)
 	}
 }
+
+// Finding 1: replacing the manager's absolute pathname between calls must not
+// redirect a checkout away from the directory pinned by NewManager.
+func TestManagerCreateUsesPinnedRoot(t *testing.T) {
+	t.Parallel()
+	data, m := newManager(t)
+	outside := t.TempDir()
+	mustWrite(t, filepath.Join(outside, "precious"), "outside", 0o600)
+	attacker := t.TempDir()
+	if err := os.Mkdir(filepath.Join(attacker, "run-next"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(attacker, "run-next", "repo")); err != nil {
+		t.Fatal(err)
+	}
+	base, parked := filepath.Join(data, "workspaces"), filepath.Join(data, "parked")
+	if err := os.Rename(base, parked); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(attacker, base); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := m.Create("next", workspace.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close(false) }()
+	if got, err := ws.ReadFile("precious"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("poisoned checkout read %q, %v; want not found", got, err)
+	}
+	if err := ws.WriteFile("created", []byte("inside")); err != nil {
+		t.Fatal(err)
+	}
+	if got := hostFile(t, filepath.Join(parked, "run-next", "repo", "created")); string(got) != "inside" {
+		t.Errorf("write did not use pinned checkout: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "created")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("write reached outside: %v", err)
+	}
+}

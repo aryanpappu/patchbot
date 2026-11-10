@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"regexp/syntax"
 	"strings"
 
 	"github.com/aryanpappu/patchbot/internal/llm"
@@ -15,12 +16,19 @@ import (
 )
 
 // maxPatternBytes is the longest regular expression search accepts.
-const maxPatternBytes = 1000
+const (
+	maxPatternBytes        = 1000
+	maxPatternInstructions = 5000
+	// Longer lines are skipped, not partially matched (which would change
+	// anchor semantics). Together with the instruction cap this bounds each
+	// uncancellable Match call, regardless of configurable file/display caps.
+	maxSearchScanLineBytes = 8 << 10
+)
 
 // Search is the search tool. It walks the checkout through the Workspace,
 // so it sees exactly what read_file may read: no protected path, and no
-// symlink is followed. The regular expressions are Go's RE2, which runs in
-// time linear in the input, so a pattern cannot stall the run.
+// symlink is followed. RE2 work is bounded by caps on the expanded program
+// and each input line, with cancellation checks between lines and files.
 type Search struct{}
 
 type searchArgs struct {
@@ -36,7 +44,7 @@ func (Search) Spec() llm.ToolSpec {
 		Name: "search",
 		Description: "Search the text files of the repository with a regular expression (Go RE2 syntax, matched " +
 			"line by line; start the pattern with (?i) to ignore case). Returns matches as path:line: text. " +
-			"Binary files, files over 1 MB, protected paths and symlinks are skipped. Returns 50 matches by default.",
+			"Binary files, files over 1 MB, lines over 8 KB, protected paths and symlinks are skipped. Returns 50 matches by default.",
 		Schema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -63,6 +71,20 @@ func (Search) Execute(ctx context.Context, env *Env, raw json.RawMessage) (Resul
 		return failed("pattern is empty")
 	case len(args.Pattern) > maxPatternBytes:
 		return failed("pattern is longer than %d bytes", maxPatternBytes)
+	}
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
+	tree, err := syntax.Parse(args.Pattern, syntax.Perl)
+	if err != nil {
+		return failed("pattern is not a valid RE2 regular expression: %v", err)
+	}
+	program, err := syntax.Compile(tree.Simplify())
+	if err != nil {
+		return failed("pattern is not a valid RE2 regular expression: %v", err)
+	}
+	if len(program.Inst) > maxPatternInstructions {
+		return failed("pattern expands beyond the limit of %d instructions; simplify it", maxPatternInstructions)
 	}
 	re, err := regexp.Compile(args.Pattern)
 	if err != nil {
@@ -114,14 +136,15 @@ type searcher struct {
 	glob       string
 	maxResults int
 
-	out     strings.Builder
-	matches int
-	files   int   // files read
-	binary  int   // files read and then found to be binary
-	dirs    int   // directories listed
-	bytes   int64 // content read
-	skipped int   // files not read: binary, too large or unreadable
-	stopped string
+	out       strings.Builder
+	matches   int
+	files     int   // files read
+	binary    int   // files read and then found to be binary
+	dirs      int   // directories listed
+	bytes     int64 // content read
+	skipped   int   // files not read: binary, too large or unreadable
+	stopped   string
+	longLines int
 }
 
 // errStop ends the walk early once a cap is reached.
@@ -160,6 +183,9 @@ func (s *searcher) walkDir(dir string, top bool) error {
 		return nil // a subdirectory that cannot be listed is passed over
 	}
 	for _, e := range entries {
+		if err := s.ctx.Err(); err != nil {
+			return err
+		}
 		rel := path.Join(dir, e.Name())
 		switch {
 		case e.IsDir():
@@ -226,20 +252,28 @@ func (s *searcher) file(rel string, size int64) error {
 		s.skipped++
 		return nil
 	}
+	display := displayLines(s.env, data)
 	for n := 1; len(data) > 0; n++ {
+		if err := s.ctx.Err(); err != nil {
+			return err
+		}
 		line, rest, _ := bytes.Cut(data, []byte("\n"))
 		data = rest
+		if len(line) > maxSearchScanLineBytes {
+			s.longLines++
+			continue
+		}
 		if !s.re.Match(line) {
 			continue
 		}
 		if s.matches >= s.maxResults {
 			return s.stop(fmt.Sprintf("stopped at %d matches; there are more. Narrow the pattern, path or glob", s.matches))
 		}
-		text := printable(string(line))
+		text := printable(display[n-1])
 		if len(text) > s.lim.SearchMaxLineBytes {
 			text = cutUTF8(text, s.lim.SearchMaxLineBytes) + " [line cut]"
 		}
-		row := fmt.Sprintf("%s:%d: %s\n", rel, n, text)
+		row := fmt.Sprintf("%s:%d: %s\n", s.env.Redactor.Redact(rel), n, text)
 		if s.out.Len()+len(row) > s.lim.MaxOutputBytes {
 			return s.stop(fmt.Sprintf("stopped at %d matches because the result is full", s.matches))
 		}
@@ -253,6 +287,9 @@ func (s *searcher) report() string {
 	notes := []string{fmt.Sprintf("%s in %s searched", plural(s.matches, "match", "matches"), plural(s.files-s.binary, "file", "files"))}
 	if s.skipped > 0 {
 		notes = append(notes, plural(s.skipped, "file", "files")+" skipped (binary, too large or unreadable)")
+	}
+	if s.longLines > 0 {
+		notes = append(notes, fmt.Sprintf("%d lines skipped (over %d bytes)", s.longLines, maxSearchScanLineBytes))
 	}
 	if s.stopped != "" {
 		notes = append(notes, s.stopped)

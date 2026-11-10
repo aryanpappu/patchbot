@@ -132,7 +132,7 @@ func (r *Registry) run(ctx context.Context, call llm.ToolCall) (Result, error) {
 	if !ok {
 		// The name comes from the model. It is quoted and cut so that it
 		// cannot inject lines into the result.
-		return failed("unknown tool %q; the tools are: %s", cutUTF8(call.Name, 80), strings.Join(r.order, ", "))
+		return failed("unknown tool %q; the tools are: %s", cutUTF8(r.env.Redactor.Redact(call.Name), 80), strings.Join(r.order, ", "))
 	}
 	args := call.Args
 	if len(args) == 0 {
