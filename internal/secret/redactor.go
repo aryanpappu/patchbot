@@ -161,6 +161,9 @@ type span struct {
 	// open is set when a private-key block reached the end of the input with
 	// no END line.
 	open bool
+	// token is set when a token pattern reaches the end of the input and
+	// could continue in the next write. Fixed registered values do not grow.
+	token bool
 }
 
 // find returns the ranges to mask, sorted and merged so that overlapping
@@ -191,7 +194,10 @@ func (r *Redactor) find(s string) []span {
 				continue
 			}
 			open := p.pem && end == len(s) && !pemEnd.MatchString(s[start:end])
-			spans = append(spans, span{start: start, end: end, from: m[0], open: open})
+			spans = append(spans, span{
+				start: start, end: end, from: m[0], open: open,
+				token: !p.pem && end == len(s),
+			})
 		}
 	}
 	if len(spans) < 2 {
@@ -214,8 +220,10 @@ func (r *Redactor) find(s string) []span {
 		if sp.end > last.end {
 			last.end = sp.end
 			last.open = sp.open
+			last.token = sp.token
 		} else if sp.end == last.end {
 			last.open = last.open || sp.open
+			last.token = last.token || sp.token
 		}
 	}
 	return merged

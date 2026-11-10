@@ -129,7 +129,7 @@ func displayURL(raw string) string {
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return secret.Mask
 	}
-	clean := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}
+	clean := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path, RawPath: u.RawPath}
 	text := clean.String()
 	if u.User != nil {
 		text += " (credentials removed)"

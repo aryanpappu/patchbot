@@ -186,6 +186,29 @@ func TestWriterBoundsMemoryOnEndlessMatch(t *testing.T) {
 	}
 }
 
+func TestWriterLargeRegisteredValueWithOrdinaryOutput(t *testing.T) {
+	t.Parallel()
+	value := strings.Repeat("X", 70<<10)
+	r := secret.NewRedactor(value)
+	in := strings.Repeat(".", 100<<10)
+	if got := writeSplit(t, r, in, "tail\n"); got != in+"tail\n" {
+		t.Fatalf("ordinary output changed: got %d bytes, want %d", len(got), len(in)+5)
+	}
+	if got, want := writeSplit(t, r, in, value[:len(value)/2], value[len(value)/2:], "tail\n"), in+secret.Mask+"tail\n"; got != want {
+		t.Fatalf("split large secret: got %q, want %q", truncate(got), truncate(want))
+	}
+}
+
+func TestWriterOversizedMatchFollowedByRegisteredValue(t *testing.T) {
+	t.Parallel()
+	const value = "known-value-123456"
+	r := secret.NewRedactor(value)
+	in := "sk-" + strings.Repeat("A", 70<<10) + " " + value
+	if got, want := writeSplit(t, r, in, "tail\n"), secret.Mask+" "+secret.Mask+"tail\n"; got != want {
+		t.Fatalf("output = %q, want %q", truncate(got), want)
+	}
+}
+
 func TestWriterReportsDestinationError(t *testing.T) {
 	t.Parallel()
 	wantErr := errors.New("disk full")

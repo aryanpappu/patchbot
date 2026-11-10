@@ -135,6 +135,8 @@ func TestWriteEffectiveStripsURLCredentials(t *testing.T) {
 		{"unparseable", "https://u:Zq7pLx2MvB9c@host:port%zz/", `base_url = "[redacted]"`, []string{"Zq7pLx2MvB9c"}},
 		{"wrong scheme", "ftp://u:Zq7pLx2MvB9c@host/v1", `base_url = "[redacted]"`, []string{"Zq7pLx2MvB9c"}},
 		{"clean url is unchanged", "http://localhost:11434/v1", `base_url = "http://localhost:11434/v1"`, nil},
+		{"encoded slash is unchanged", "https://proxy.example/tenant%2Fname/v1", `base_url = "https://proxy.example/tenant%2Fname/v1"`, nil},
+		{"encoded path with credentials", "https://deploy:Zq7pLx2MvB9c@proxy.example/tenant%2fname/v1?key=Rt5WnYh3KdF8#secret", `base_url = "https://proxy.example/tenant%2fname/v1 (credentials removed) (query removed)"`, []string{"deploy", "Zq7pLx2MvB9c", "Rt5WnYh3KdF8", "#secret"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

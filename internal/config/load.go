@@ -272,20 +272,15 @@ func (c *Config) loadFile(path string) error {
 	return nil
 }
 
-var (
-	// tomlPrefixRE matches the "toml: line N (last key "k"): " prefix of the
-	// library's plain errors.
-	tomlPrefixRE = regexp.MustCompile(`^toml: (?:line (\d+) )?(?:\(last key "(?:[^"\\]|\\.)*"\))?:? ?`)
-	// quotedRE matches a Go-quoted string, which is how the library quotes
-	// text from the file.
-	quotedRE = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
-)
+// tomlPrefixRE matches the prefix of the library's plain errors. Only the
+// line number is retained; the last key can contain a secret.
+var tomlPrefixRE = regexp.MustCompile(`^toml: (?:line (\d+) )?(?:\(last key "(?:[^"\\]|\\.)*"\))?:? ?`)
 
 // describeDecodeError turns a TOML library error into a message that says
 // where the problem is and what kind it is, without the text that caused it.
-// The library quotes the offending value (`invalid duration: "..."`,
-// `expected value but found "..."`) and the last key it read, and either can
-// be a key pasted into the wrong place.
+// Every diagnostic is a fixed error class, never text copied from the parser:
+// its messages can include keys and values in several quoting styles, even
+// when parsing failed before any API key environment variables were decoded.
 func describeDecodeError(err error) string {
 	line, msg := 0, err.Error()
 	if pe, ok := errors.AsType[toml.ParseError](err); ok {
@@ -294,21 +289,23 @@ func describeDecodeError(err error) string {
 		line, _ = strconv.Atoi(m[1])
 		msg = msg[len(m[0]):]
 	}
+	kind := "invalid TOML syntax or value"
 	switch {
 	case strings.HasPrefix(msg, "invalid duration"):
-		msg = `want a duration string such as "30m"`
+		kind = `want a duration string such as "30m"`
+	case msg == "want a date like 2026-01-31":
+		kind = "want a date like 2026-01-31"
 	case strings.Contains(msg, "is out of range"), strings.Contains(msg, "is out of the safe"):
-		msg = "a number is out of range"
+		kind = "a number is out of range"
 	case strings.HasPrefix(msg, "expected value but found"):
-		msg = "expected a value; text needs quotes"
-	default:
-		msg = quotedRE.ReplaceAllString(msg, "a value")
+		kind = "expected a value; text needs quotes"
+	case strings.HasPrefix(msg, "incompatible types:"), strings.HasPrefix(msg, "type mismatch"):
+		kind = "incompatible types"
 	}
-	msg = (*secret.Redactor)(nil).Redact(msg)
 	if line > 0 {
-		return fmt.Sprintf("line %d: %s", line, msg)
+		return fmt.Sprintf("line %d: %s", line, kind)
 	}
-	return msg
+	return kind
 }
 
 // checkKeys rejects keys that look like secrets and keys the schema does not

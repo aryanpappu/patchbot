@@ -7,8 +7,9 @@ import (
 	"sync"
 )
 
-// maxPending bounds the memory a Writer uses when one match never ends, such
-// as a private-key header followed by megabytes of output.
+// maxPending bounds the tail held for a match that never ends, such as a
+// private-key header followed by megabytes of output. Registered values may
+// require a larger overlap to recognize secrets split across writes.
 const maxPending = 64 << 10
 
 // pemEndMax is longer than any END line pemEnd can match.
@@ -106,12 +107,13 @@ func (w *Writer) process(out *bytes.Buffer, final bool) {
 
 	// Everything before cut is safe to write: no secret that starts there can
 	// still be growing. A match that crosses cut moves cut back to its start.
-	cut := safeCut(spans, len(s)-w.r.overlap())
+	overlap := w.r.overlap()
+	cut := safeCut(spans, len(s)-overlap)
 	if cut < 0 {
 		return
 	}
 	writeMasked(out, s, spans, 0, cut)
-	if len(s)-cut <= maxPending {
+	if len(s)-cut <= max(maxPending, overlap) {
 		w.buf = w.buf[cut:]
 		return
 	}
@@ -127,7 +129,7 @@ func (w *Writer) process(out *bytes.Buffer, final bool) {
 	case last.open:
 		w.mode = swallowPEM
 		rest = w.buf[max(0, len(w.buf)-pemEndMax):]
-	case len(rest) == 0:
+	case last.token && len(rest) == 0:
 		w.mode = swallowToken
 	}
 	w.buf = append(w.buf[:0], rest...)

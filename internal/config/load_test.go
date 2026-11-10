@@ -474,7 +474,7 @@ func TestRejectedFiles(t *testing.T) {
 		notWant string
 	}{
 		{name: "syntax error", file: "[defaults\nprovider = 1", wantErr: []string{"patchbot.toml"}},
-		{name: "wrong type", file: "[limits]\nmax_turns = \"forty\"", wantErr: []string{"line 2: incompatible types: TOML value has type string; destination has type integer"}, notWant: "forty"},
+		{name: "wrong type", file: "[limits]\nmax_turns = \"forty\"", wantErr: []string{"line 2: incompatible types"}, notWant: "forty"},
 		{name: "unknown top-level key", file: "colour = \"blue\"", wantErr: []string{"unknown key colour"}},
 		{name: "unknown table", file: "[webhooks]\nurl = \"x\"", wantErr: []string{"unknown key webhooks"}},
 		{name: "unknown key in a table", file: "[limits]\nmax_turn = 3", wantErr: []string{"unknown key limits.max_turn"}},
@@ -683,5 +683,35 @@ func TestLoadErrorIsRedactedWithLoadedKeys(t *testing.T) {
 	opts.Path = filepath.Join(t.TempDir(), "absent.toml")
 	if _, err := config.Load(opts); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("errors.Is(err, os.ErrNotExist) is false for a missing file: %v", err)
+	}
+}
+
+func TestDecodeErrorsNeverEchoKeys(t *testing.T) {
+	t.Parallel()
+	const pasted = "Zq7pLx2MvB9cRt5WnYh3KdF8"
+	for _, tt := range []struct {
+		name string
+		body string
+	}{
+		{"duplicate key", pasted + " = 1\n" + pasted + " = 2\n"},
+		{"duplicate table", "[" + pasted + "]\n[" + pasted + "]\n"},
+		{"key env before parse failure", "[providers.x]\napi_key_env = 'CUSTOM_KEY'\n" + pasted + " = 1\n" + pasted + " = 2\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t)
+			e.local(t, tt.body)
+			e.vars["CUSTOM_KEY"] = pasted
+			_, err := config.Load(e.options())
+			if err == nil {
+				t.Fatal("Load succeeded, want a duplicate-key error")
+			}
+			if strings.Contains(err.Error(), pasted) || strings.Contains(err.Error(), pasted[:8]) {
+				t.Errorf("decoder diagnostic leaks a key: %v", err)
+			}
+			if !strings.Contains(err.Error(), "line ") {
+				t.Errorf("decoder diagnostic has no line number: %v", err)
+			}
+		})
 	}
 }
