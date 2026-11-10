@@ -72,6 +72,22 @@ a SHA-256 hash.
 - The PR body links the approved spec and ticks each acceptance criterion the agent claims, next to the
   harness test result. The model's own "tests pass" never counts.
 
+**Approval details (from Fable's revision):**
+- The gate is a hash match between `specs` and `approvals`, not a boolean flag. It is checked in
+  `Approve`, at the start of the code stage, and before write tools are registered.
+- An approval is voided by a revise, a UI edit, or a change to the issue title or body after the spec
+  was written.
+- An `/approve` comment counts only if its author is in `approvers` **and** a repo collaborator.
+  Edited comments never count. Hand edits to the spec comment on GitHub are not imported: the bot asks
+  for `/revise` or a UI edit instead.
+- Waiting runs expire after 14 days. A run allows at most 5 revisions.
+- There is no pre-approve flag on `patchbot run`.
+- Retry creates a **new run** linked by `retry_of`. An already-approved spec is reused only if the issue
+  is unchanged.
+- One budget covers the whole run, including refine and every revision. Per-run budgets are capped by
+  `hard_max_cost_usd` in the config.
+- CLI and UI approvals are recorded under a configured local name, because Step 1 has no login.
+
 **Statuses:** `queued → running → awaiting_approval | needs_info → approved → running → succeeded | failed |
 cancelled | rejected`. A separate `phase` column shows `preflight, refine, clone, baseline, code, verify,
 publish`. All non-terminal statuses count as "active", and a partial unique index allows one active run
