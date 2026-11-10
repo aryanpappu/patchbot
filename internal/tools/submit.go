@@ -3,8 +3,8 @@ package tools
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -100,14 +100,24 @@ func (d SpecDraft) Markdown() string {
 func ParseSpec(markdown string) (SpecDraft, error) {
 	const marker = "\n<!-- patchbot:spec-data "
 	_, encoded, ok := strings.Cut(markdown, marker)
-	if !ok { return SpecDraft{}, errors.New("spec has no canonical data") }
+	if !ok {
+		return SpecDraft{}, errors.New("spec has no canonical data")
+	}
 	encoded, ok = strings.CutSuffix(encoded, " -->\n")
-	if !ok { return SpecDraft{}, errors.New("spec canonical data is malformed") }
+	if !ok {
+		return SpecDraft{}, errors.New("spec canonical data is malformed")
+	}
 	raw, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil { return SpecDraft{}, errors.New("spec canonical data is malformed") }
+	if err != nil {
+		return SpecDraft{}, errors.New("spec canonical data is malformed")
+	}
 	var draft SpecDraft
-	if err := decodeArgs(raw, &draft); err != nil { return SpecDraft{}, err }
-	if draft.Markdown() != markdown { return SpecDraft{}, errors.New("spec rendering differs from canonical data") }
+	if err := decodeArgs(raw, &draft); err != nil {
+		return SpecDraft{}, err
+	}
+	if draft.Markdown() != markdown {
+		return SpecDraft{}, errors.New("spec rendering differs from canonical data")
+	}
 	return draft, nil
 }
 

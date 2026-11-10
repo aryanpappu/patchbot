@@ -161,8 +161,11 @@ func (r *Registry) DispatchDetailed(ctx context.Context, call llm.ToolCall) (llm
 		res.Submission = res.Submission.Redacted(r.env.Redactor)
 	}
 	if r.env.Log != nil {
+		if res.SecurityDenied {
+			r.env.Log.WarnContext(ctx, "tool policy denied", "tool", r.env.Redactor.Redact(call.Name), "reason", content)
+		}
 		r.env.Log.DebugContext(ctx, "tool call",
-			"tool", call.Name, "is_error", res.IsError, "bytes", len(content), "duration", time.Since(start))
+			"tool", r.env.Redactor.Redact(call.Name), "is_error", res.IsError, "bytes", len(content), "duration", time.Since(start))
 	}
 	return llm.ToolResult{CallID: call.ID, Name: call.Name, Content: content, IsError: res.IsError}, res, nil
 }

@@ -19,6 +19,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/aryanpappu/patchbot/internal/secret"
 )
 
 func TestMain(m *testing.M) {
@@ -48,6 +50,10 @@ func helperMain() int {
 			if _, err := io.WriteString(os.Stderr, "stderr\n"); err != nil {
 				return 92
 			}
+		}
+	case "secret-output":
+		if _, err := io.WriteString(os.Stdout, strings.Repeat("x", 246)+"private-command-secret"+strings.Repeat("x", 4000)+"TAIL"); err != nil {
+			return 92
 		}
 	case "flood":
 		chunk := bytes.Repeat([]byte("x"), 8192)
@@ -449,5 +455,22 @@ func TestPolicyShellOptInAndSymlinks(t *testing.T) {
 	}
 	if _, err := NewPolicy(root, map[string][]string{"test": {alias}}); err == nil {
 		t.Fatal("accepted symlink to workspace executable")
+	}
+}
+
+func TestLocalRedactsStreamBeforeCap(t *testing.T) {
+	t.Parallel()
+	e, spec := helperSpec(t, "secret-output")
+	spec.OutputCap = 1024
+	spec.Redactor = secret.NewRedactor("private-command-secret")
+	result, err := e.Run(t.Context(), spec)
+	if err != nil || result.ExitCode != 0 || !result.Truncated || len(result.Output) > 1024 {
+		t.Fatalf("%+v %v", result, err)
+	}
+	if strings.Contains(result.Output, "private") || !strings.Contains(result.Output, secret.Mask) || !strings.HasSuffix(result.Output, "TAIL") {
+		t.Fatalf("redaction followed truncation: %q", result.Output)
+	}
+	if result.TotalBytes != int64(246+len("private-command-secret")+4000+4) {
+		t.Fatal("raw byte accounting changed")
 	}
 }
