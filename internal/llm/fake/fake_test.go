@@ -432,6 +432,7 @@ func TestFromFile(t *testing.T) {
 		{"missing file", filepath.Join(dir, "absent.json"), "fake script:"},
 		{"not json", write("bad.json", `[{"text":`), "parse:"},
 		{"not an array", write("object.json", `{"text":"x"}`), "parse:"},
+		{"trailing data", write("trailing.json", `[{"text":"x"}]]`), "unexpected data after the script"},
 		{"unknown key", write("unknown.json", `[{"text":"x","delay":5}]`), "parse:"},
 		{"empty step", write("empty.json", `[{"text":"x"},{}]`), "step 1 has no text, tool_calls or error"},
 	}

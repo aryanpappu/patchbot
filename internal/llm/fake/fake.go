@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"slices"
 	"sync"
@@ -271,6 +272,10 @@ func ParseScript(name string, data []byte) ([]Step, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&raw); err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
+	}
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, errors.New("parse: unexpected data after the script")
 	}
 	steps := make([]Step, len(raw))
 	for i, fs := range raw {

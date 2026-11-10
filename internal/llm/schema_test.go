@@ -40,7 +40,11 @@ func TestParseSchemaRejects(t *testing.T) {
 		{"not json", `{"type":`, "schema:"},
 		{"not an object", `"string"`, "schema:"},
 		{"null", `null`, "$: no type"},
-		{"two values", `{"type":"object"} {"type":"object"}`, "more than one JSON value"},
+		{"two values", `{"type":"object"} {"type":"object"}`, "unexpected data after the JSON value"},
+		{"trailing bracket", `{"type":"object"}]`, "unexpected data after the JSON value"},
+		{"trailing brace", `{"type":"object"}}`, "unexpected data after the JSON value"},
+		{"trailing text", `{"type":"object"} x`, "unexpected data after the JSON value"},
+		{"trailing comma", `{"type":"object"},`, "unexpected data after the JSON value"},
 		{"no type", `{}`, "$: no type"},
 		{"unknown type", `{"type":"null"}`, `$: type "null" is not one of`},
 		{"type list", `{"type":["string","null"]}`, "schema:"},
@@ -95,7 +99,11 @@ func TestValidateArgs(t *testing.T) {
 		{"array", `["a.go"]`, "arguments must be a JSON object, got array"},
 		{"string", `"a.go"`, "arguments must be a JSON object, got string"},
 		{"null", `null`, "arguments must be a JSON object, got null"},
-		{"two values", `{"path":"a"}{"path":"b"}`, "more than one JSON value"},
+		{"two values", `{"path":"a"}{"path":"b"}`, "unexpected data after the JSON value"},
+		{"trailing bracket", `{"path":"a"}]`, "unexpected data after the JSON value"},
+		{"trailing brace", `{"path":"a"}}`, "unexpected data after the JSON value"},
+		{"trailing text", `{"path":"a"} null`, "unexpected data after the JSON value"},
+		{"trailing space is fine", "{\"path\":\"a\"} \n\t", ""},
 		{"missing required", `{}`, "path: missing required property"},
 		{"missing nested required", `{"path":"a","range":{"end":2}}`, "range.start: missing required property"},
 		{"unknown property", `{"path":"a","file":"b"}`, "file: unknown property; known properties: all, line, mode, path, range, ratio, tags"},
@@ -251,7 +259,7 @@ func FuzzValidateArgs(f *testing.F) {
 	if err != nil {
 		f.Fatal(err)
 	}
-	for _, seed := range []string{`{"path":"a"}`, `{"path":1}`, `[]`, `{"range":{"start":1e9}}`, strings.Repeat("[", 5000), `{"tags":[[[[[[]]]]]]}`, ``} {
+	for _, seed := range []string{`{"path":"a"}]`, `{"path":"a"}}`, `{"path":"a"}`, `{"path":1}`, `[]`, `{"range":{"start":1e9}}`, strings.Repeat("[", 5000), `{"tags":[[[[[[]]]]]]}`, ``} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, args string) {

@@ -12,6 +12,8 @@ import (
 // ModelCacheTTL is how long a live model list is reused.
 const ModelCacheTTL = 5 * time.Minute
 
+var errEmptyModelList = errors.New("the provider returned an empty model list")
+
 // ModelList is the answer of ModelLister.List.
 type ModelList struct {
 	// Models is the live list followed by config entries the live list lacks.
@@ -36,6 +38,11 @@ type ModelLister struct {
 
 	mu    sync.Mutex
 	cache map[string]cachedModels
+	// generation counts Invalidate calls. A fetch remembers the count it
+	// started under and may fill the cache only if no Invalidate has
+	// happened since, so a slow fetch cannot bring back a list the caller
+	// has just declared stale.
+	generation uint64
 }
 
 type cachedModels struct {
@@ -61,7 +68,8 @@ func (l *ModelLister) List(ctx context.Context, provider string) (ModelList, err
 	}
 	fromConfig := configModels(cfg)
 
-	if cached, ok := l.cached(provider); ok {
+	cached, generation, ok := l.cached(provider)
+	if ok {
 		return ModelList{Models: mergeModels(cached.models, fromConfig), Live: true, FetchedAt: cached.fetchedAt}, nil
 	}
 
@@ -69,7 +77,9 @@ func (l *ModelLister) List(ctx context.Context, provider string) (ModelList, err
 	if err == nil {
 		fetchedAt := l.clock.Now()
 		l.mu.Lock()
-		l.cache[provider] = cachedModels{models: live, fetchedAt: fetchedAt}
+		if l.generation == generation {
+			l.cache[provider] = cachedModels{models: live, fetchedAt: fetchedAt}
+		}
 		l.mu.Unlock()
 		return ModelList{Models: mergeModels(live, fromConfig), Live: true, FetchedAt: fetchedAt}, nil
 	}
@@ -80,8 +90,11 @@ func (l *ModelLister) List(ctx context.Context, provider string) (ModelList, err
 		return ModelList{}, fmt.Errorf("list models of %q: the live list failed and the config lists none: %w", provider, err)
 	}
 	return ModelList{
-		Models:  fromConfig,
-		Warning: fmt.Sprintf("could not fetch the live model list of %q, showing the models from the config: %v", provider, err),
+		Models: fromConfig,
+		// SafeText, not %v: the error may wrap a transport error that quotes
+		// a URL with a key in it, and a warning is shown to the user.
+		Warning: fmt.Sprintf("could not fetch the live model list of %q, showing the models from the config: %s",
+			provider, SafeText(err)),
 	}, nil
 }
 
@@ -90,6 +103,7 @@ func (l *ModelLister) List(ctx context.Context, provider string) (ModelList, err
 func (l *ModelLister) Invalidate(provider string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.generation++
 	if provider == "" {
 		clear(l.cache)
 		return
@@ -97,14 +111,16 @@ func (l *ModelLister) Invalidate(provider string) {
 	delete(l.cache, provider)
 }
 
-func (l *ModelLister) cached(provider string) (cachedModels, bool) {
+// cached returns the fresh cache entry of a provider, if there is one, and
+// the generation a fetch that starts now must still see when it finishes.
+func (l *ModelLister) cached(provider string) (entry cachedModels, generation uint64, ok bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	entry, ok := l.cache[provider]
+	entry, ok = l.cache[provider]
 	if !ok || l.clock.Now().Sub(entry.fetchedAt) >= l.ttl {
-		return cachedModels{}, false
+		return cachedModels{}, l.generation, false
 	}
-	return entry, true
+	return entry, l.generation, true
 }
 
 // fetch gets the live list and normalizes it: entries without an ID and
@@ -129,7 +145,7 @@ func (l *ModelLister) fetch(ctx context.Context, provider string) ([]ModelInfo, 
 		live = append(live, m)
 	}
 	if len(live) == 0 {
-		return nil, errors.New("the provider returned an empty model list")
+		return nil, errEmptyModelList
 	}
 	return live, nil
 }

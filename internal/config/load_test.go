@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -443,7 +444,7 @@ lint = ["go", "vet", "./..."]
 	}
 
 	opus := a.Prices["claude-opus-5-5"]
-	if opus == nil || opus.Input != 1.5 || opus.Output != 7.25 || opus.CacheRead == nil || *opus.CacheRead != 0.15 || opus.CacheWrite != nil {
+	if opus == nil || opus.Input == nil || *opus.Input != 1.5 || opus.Output == nil || *opus.Output != 7.25 || opus.CacheRead == nil || *opus.CacheRead != 0.15 || opus.CacheWrite != nil {
 		t.Errorf("opus price = %+v", opus)
 	}
 	if got := opus.Checked.String(); got != "2026-11-01" {
@@ -473,7 +474,7 @@ func TestRejectedFiles(t *testing.T) {
 		notWant string
 	}{
 		{name: "syntax error", file: "[defaults\nprovider = 1", wantErr: []string{"patchbot.toml"}},
-		{name: "wrong type", file: "[limits]\nmax_turns = \"forty\"", wantErr: []string{"max_turns"}},
+		{name: "wrong type", file: "[limits]\nmax_turns = \"forty\"", wantErr: []string{"line 2: incompatible types: TOML value has type string; destination has type integer"}, notWant: "forty"},
 		{name: "unknown top-level key", file: "colour = \"blue\"", wantErr: []string{"unknown key colour"}},
 		{name: "unknown table", file: "[webhooks]\nurl = \"x\"", wantErr: []string{"unknown key webhooks"}},
 		{name: "unknown key in a table", file: "[limits]\nmax_turn = 3", wantErr: []string{"unknown key limits.max_turn"}},
@@ -602,4 +603,85 @@ func keys[V any](m map[string]V) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestLoadErrorsNeverQuoteValues: when Load cannot parse a value it does not
+// know what the value is. A key pasted into the wrong field, or exported
+// under the wrong variable name, must not come back in the error.
+func TestLoadErrorsNeverQuoteValues(t *testing.T) {
+	t.Parallel()
+	// No recognizable token shape, so only the loader's own care hides it.
+	const pasted = "Zq7pLx2MvB9cRt5WnYh3KdF8"
+	tests := []struct {
+		name     string
+		file     string
+		vars     map[string]string
+		flags    []config.Override
+		wantErr  string
+		wantLine bool
+	}{
+		{name: "duration field", file: "[limits]\nrun_timeout = \"" + pasted + "\"", wantErr: `want a duration string such as "30m"`, wantLine: true},
+		{name: "date field", file: "[providers.x.prices.m]\nchecked = \"" + pasted + "\"", wantErr: "want a date like 2026-01-31", wantLine: true},
+		{name: "unquoted value", file: "[log]\nlevel = " + pasted, wantErr: "expected a value; text needs quotes", wantLine: true},
+		{name: "value in a number field", file: "[limits]\nmax_turns = \"" + pasted + "\"", wantErr: "incompatible types", wantLine: true},
+		{name: "unterminated string", file: "[log]\nlevel = \"" + pasted, wantErr: "config file", wantLine: true},
+		{name: "bare line", file: "[log]\n" + pasted + "\n", wantErr: "config file", wantLine: true},
+		{name: "key with no value", file: "[log]\nlevel = \"info\"\n" + pasted + " = ", wantErr: "config file", wantLine: true},
+		{name: "huge number", file: "[limits]\nmax_turns = 99999999999999999999", wantErr: "a number is out of range", wantLine: true},
+		{name: "env int", vars: map[string]string{"PATCHBOT_MAX_TURNS": pasted}, wantErr: "PATCHBOT_MAX_TURNS: limits.max_turns: want a whole number"},
+		{name: "env float", vars: map[string]string{"PATCHBOT_MAX_COST_USD": pasted}, wantErr: "want a number"},
+		{name: "flag duration", flags: []config.Override{{Key: "limits.run_timeout", Value: pasted, Flag: "--timeout"}}, wantErr: "flag --timeout: limits.run_timeout: want a duration"},
+		{name: "flag bool", flags: []config.Override{{Key: "limits.baseline_tests", Value: pasted, Flag: "--baseline"}}, wantErr: "want true or false"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t)
+			if tt.file != "" {
+				e.local(t, tt.file)
+			}
+			if tt.vars != nil {
+				e.vars = tt.vars
+			}
+			opts := e.options()
+			opts.Flags = tt.flags
+			_, err := config.Load(opts)
+			if err == nil {
+				t.Fatal("Load succeeded, want an error")
+			}
+			if strings.Contains(err.Error(), pasted) || strings.Contains(err.Error(), pasted[:8]) {
+				t.Errorf("the error quotes the value: %v", err)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %v, want it to contain %q", err, tt.wantErr)
+			}
+			if tt.wantLine && !strings.Contains(err.Error(), "line ") {
+				t.Errorf("error = %v, want a line number so the user can find the problem", err)
+			}
+		})
+	}
+}
+
+// TestLoadErrorIsRedactedWithLoadedKeys: even a message that does name a
+// value (an unknown key name, here) is masked when the text is a known key.
+func TestLoadErrorIsRedactedWithLoadedKeys(t *testing.T) {
+	t.Parallel()
+	const key = "Zq7pLx2MvB9cRt5WnYh3KdF8"
+	e := newEnv(t)
+	e.local(t, "[providers.g]\nkind = \"gemini\"\napi_key_env = \"GEMINI_API_KEY\"\n[log]\n"+key+" = 1\n")
+	e.vars["GEMINI_API_KEY"] = key
+	_, err := config.Load(e.options())
+	if err == nil || !strings.Contains(err.Error(), "unknown key log.[redacted]") {
+		t.Fatalf("Load error = %v, want the key name masked", err)
+	}
+	if strings.Contains(err.Error(), key) {
+		t.Errorf("the error shows a loaded API key: %v", err)
+	}
+
+	// The original error is still reachable.
+	opts := newEnv(t).options()
+	opts.Path = filepath.Join(t.TempDir(), "absent.toml")
+	if _, err := config.Load(opts); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("errors.Is(err, os.ErrNotExist) is false for a missing file: %v", err)
+	}
 }

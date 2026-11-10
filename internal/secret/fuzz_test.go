@@ -16,6 +16,8 @@ func FuzzRedactor(f *testing.F) {
 	f.Add("s3cr3t/with+chars=", "Bearer ", "\n-----BEGIN PRIVATE KEY-----\n", uint16(9), uint16(40))
 	f.Add("ghp_0123456789abcdefghij", "sk-", "AIza", uint16(0), uint16(200))
 	f.Add("line1\nline2", strings.Repeat("x", 300), strings.Repeat("y", 300), uint16(301), uint16(305))
+	f.Add("mykeyBearer", "", " "+strings.Repeat("A", 200), uint16(0), uint16(11))
+	f.Add("tokenXbasic", "x", " "+strings.Repeat("Q", 200), uint16(4), uint16(150))
 
 	f.Fuzz(func(t *testing.T, value, before, after string, cut1, cut2 uint16) {
 		// The mask is public text. A secret that is part of the mask, or that
@@ -65,12 +67,16 @@ func FuzzWriterMatchesRedact(f *testing.F) {
 	f.Add(pad+fakePEM+pad+"-----BEGIN PRIVATE KEY-----\nabc", uint16(380), uint16(420))
 	f.Add("hunter2-hunter2-hunter2"+pad+"hunter2-hunter2-hunter", uint16(5), uint16(700))
 	f.Add("bearer bearer  sk-ant-sk-ghp_github_pat_AIza"+pad, uint16(7), uint16(21))
+	f.Add("hunter2-hunter2-hunter2Bearer "+pad+strings.Repeat("A", 200), uint16(3), uint16(30))
+	f.Add(pad+"Authorization: Basic dXNlcjpodW50ZXIyLWh1bnRlcjI= basic "+pad, uint16(365), uint16(390))
 
 	f.Fuzz(func(t *testing.T, in string, cut1, cut2 uint16) {
 		if len(in) > 32<<10 {
 			t.Skip() // above this the Writer may mask early to bound memory
 		}
-		r := secret.NewRedactor(knownValue)
+		// The second value ends in a pattern prefix, so a pattern match can
+		// begin inside a registered value.
+		r := secret.NewRedactor(knownValue, "mykeyBearer")
 		want := r.Redact(in)
 		a, b := int(cut1)%(len(in)+1), int(cut2)%(len(in)+1)
 		if a > b {

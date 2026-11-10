@@ -39,7 +39,7 @@ func TestRegistry(t *testing.T) {
 
 	configs := []llm.ProviderConfig{
 		{Name: "zeta", Kind: fake.Kind, DefaultModel: "z-default", Models: []string{"z1"}, Pricing: llm.Pricing{Free: true}},
-		{Name: "alpha", Kind: fake.Kind, APIKey: secret.Secret("alpha-key-0123456789"), APIKeyEnv: "ALPHA_KEY"},
+		{Name: "alpha", Kind: fake.Kind, APIKey: secret.New("alpha-key-0123456789"), APIKeyEnv: "ALPHA_KEY"},
 		{Name: "claude", Kind: "anthropic"}, // valid in the config, no adapter yet
 		{Name: "bad", Kind: "broken"},
 		{Name: "wrong-name", Kind: "misnamed"},

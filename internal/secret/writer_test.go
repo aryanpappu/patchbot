@@ -41,6 +41,9 @@ func TestWriterSplitAtEveryByte(t *testing.T) {
 		{"github token", pad + "push " + fakeGitHub + " done\n" + pad},
 		{"anthropic key", pad + fakeAnthropic + "\n" + pad},
 		{"bearer header", pad + "Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345\n" + pad},
+		{"basic header", pad + "Authorization: Basic " + basic("x-access-token:"+knownValue) + "\n" + pad},
+		{"short basic header", pad + "authorization: basic " + basic("a:b") + "\n" + pad},
+		{"basic without a header name", pad + "sent Basic " + basic("deploy:"+knownValue) + " ok\n" + pad},
 		{"pem block", pad + fakePEM + "\n" + pad},
 		{"two secrets close together", pad + knownValue + " " + fakeGoogle + " " + knownValue + pad},
 		{"no secret", pad + pad},
@@ -55,6 +58,49 @@ func TestWriterSplitAtEveryByte(t *testing.T) {
 			for i := 0; i <= len(tt.in); i++ {
 				if got := writeSplit(t, r, tt.in[:i], tt.in[i:]); got != want {
 					t.Fatalf("split at %d:\n got %q\nwant %q", i, got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestWriterMatchStartingInsideAValue is the reported leak: the Bearer match
+// begins inside the registered value, so moving the cut to the start of the
+// match put it in the middle of the value and wrote the value's first half.
+func TestWriterMatchStartingInsideAValue(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		value string
+		in    string
+	}{
+		{"value ends with bearer", "mykeyBearer", "mykeyBearer " + strings.Repeat("A", 200)},
+		{"value ends with basic", "tokenXbasic", "tokenXbasic " + strings.Repeat("Q", 300)},
+		{"value ends with a header name", "abcdAuthorization", "abcdAuthorization: Basic " + strings.Repeat("Q", 300)},
+		{"value holds a token prefix", "prefix-sk-ant-", "prefix-sk-ant-" + strings.Repeat("b", 400)},
+		{"chain of three", "one-twoBearer", "zero-one-twoBearer " + strings.Repeat("A", 200) + " tail"},
+		{"after other output", "mykeyBearer", strings.Repeat("log line\n", 40) + "mykeyBearer " + strings.Repeat("A", 200)},
+		{"endless token after the value", "mykeyBearer", "mykeyBearer " + strings.Repeat("A", 100<<10) + " tail"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			values := []string{tt.value}
+			if tt.name == "chain of three" {
+				values = append(values, "zero-one")
+			}
+			r := secret.NewRedactor(values...)
+			want := r.Redact(tt.in)
+			for _, split := range []int{0, 1, 5, len(tt.value), len(tt.value) + 1, len(tt.in) / 2, len(tt.in)} {
+				split = min(split, len(tt.in))
+				got := writeSplit(t, r, tt.in[:split], tt.in[split:])
+				for _, value := range values {
+					if strings.Contains(got, value) || strings.Contains(got, value[:5]) {
+						t.Fatalf("split at %d: output %q holds part of the value %q", split, truncate(got), value)
+					}
+				}
+				if got != want {
+					t.Fatalf("split at %d:\n got %q\nwant %q", split, truncate(got), truncate(want))
 				}
 			}
 		})

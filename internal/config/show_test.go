@@ -116,6 +116,56 @@ func TestWriteEffectiveWithoutFileOrKey(t *testing.T) {
 	}
 }
 
+// TestWriteEffectiveStripsURLCredentials: Validate rejects these URLs, but
+// config show prints invalid configs too, to help fix them.
+func TestWriteEffectiveStripsURLCredentials(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		baseURL string
+		want    string
+		secrets []string
+	}{
+		{"user and password", "https://deploy:Zq7pLx2MvB9c@proxy.example.com/v1", `base_url = "https://proxy.example.com/v1 (credentials removed)"`, []string{"deploy", "Zq7pLx2MvB9c"}},
+		{"token as the user", "https://Zq7pLx2MvB9c@proxy.example.com/v1", `"https://proxy.example.com/v1 (credentials removed)"`, []string{"Zq7pLx2MvB9c"}},
+		{"key in the query", "https://api.example.com/v1?key=Zq7pLx2MvB9c&x=1", `"https://api.example.com/v1 (query removed)"`, []string{"Zq7pLx2MvB9c", "key="}},
+		{"key in the fragment", "https://api.example.com/v1#Zq7pLx2MvB9c", `"https://api.example.com/v1 (query removed)"`, []string{"Zq7pLx2MvB9c"}},
+		{"both", "http://u:Zq7pLx2MvB9c@h:8080/v1?t=Rt5WnYh3KdF8", `"http://h:8080/v1 (credentials removed) (query removed)"`, []string{"Zq7pLx2MvB9c", "Rt5WnYh3KdF8"}},
+		{"not a url", "Zq7pLx2MvB9c", `base_url = "[redacted]"`, []string{"Zq7pLx2MvB9c"}},
+		{"unparseable", "https://u:Zq7pLx2MvB9c@host:port%zz/", `base_url = "[redacted]"`, []string{"Zq7pLx2MvB9c"}},
+		{"wrong scheme", "ftp://u:Zq7pLx2MvB9c@host/v1", `base_url = "[redacted]"`, []string{"Zq7pLx2MvB9c"}},
+		{"clean url is unchanged", "http://localhost:11434/v1", `base_url = "http://localhost:11434/v1"`, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := config.Default()
+			c.Providers["p"] = &config.Provider{Kind: config.KindOpenAI, BaseURL: tt.baseURL}
+			var b strings.Builder
+			if err := c.WriteEffective(&b); err != nil {
+				t.Fatal(err)
+			}
+			got := strings.Join(strings.FieldsFunc(b.String(), func(r rune) bool { return r == ' ' }), " ")
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("output does not contain %s:\n%s", tt.want, got)
+			}
+			for _, s := range tt.secrets {
+				if strings.Contains(got, s) {
+					t.Errorf("output still shows %q:\n%s", s, got)
+				}
+			}
+			// Validation messages about the URL do not quote it either.
+			if err := c.Validate(); err != nil {
+				for _, s := range tt.secrets {
+					if strings.Contains(err.Error(), s) {
+						t.Errorf("the validation error shows %q: %v", s, err)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestWriteEffectiveReportsWriteError(t *testing.T) {
 	t.Parallel()
 	wantErr := errors.New("closed pipe")

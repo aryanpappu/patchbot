@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"slices"
 	"strconv"
@@ -72,8 +73,8 @@ func ParseSchema(raw json.RawMessage) (*Schema, error) {
 	if err := dec.Decode(&s); err != nil {
 		return nil, fmt.Errorf("schema: %w", cleanDecodeError(err))
 	}
-	if dec.More() {
-		return nil, errors.New("schema: more than one JSON value")
+	if err := expectEOF(dec); err != nil {
+		return nil, fmt.Errorf("schema: %w", err)
 	}
 	if err := s.check("$", 0); err != nil {
 		return nil, fmt.Errorf("schema: %w", err)
@@ -209,8 +210,8 @@ func (s *Schema) ValidateArgs(args json.RawMessage) error {
 	if err := dec.Decode(&value); err != nil {
 		return fmt.Errorf("arguments are not valid JSON: %w", err)
 	}
-	if dec.More() {
-		return errors.New("arguments hold more than one JSON value")
+	if err := expectEOF(dec); err != nil {
+		return fmt.Errorf("arguments: %w", err)
 	}
 	if _, ok := value.(map[string]any); !ok {
 		return fmt.Errorf("arguments must be a JSON object, got %s", jsonType(value))
@@ -309,6 +310,17 @@ func (s *Schema) validateNumber(path string, number json.Number) error {
 	}
 	if s.Maximum != nil && f > *s.Maximum {
 		return fmt.Errorf("%s: %s is above the maximum %v", display(path), number, *s.Maximum)
+	}
+	return nil
+}
+
+// expectEOF reports an error unless the decoder has reached the end of its
+// input. Decoder.More is not enough: it is false at a stray "]" or "}", so
+// `{}]` would pass as one value.
+func expectEOF(dec *json.Decoder) error {
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return errors.New("unexpected data after the JSON value")
 	}
 	return nil
 }

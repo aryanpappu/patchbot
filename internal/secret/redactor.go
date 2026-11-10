@@ -45,6 +45,12 @@ var (
 		{re: regexp.MustCompile(`AIza[A-Za-z0-9_-]{30,}`)},
 		// Authorization headers. Only the credential is masked.
 		{re: regexp.MustCompile(`(?i)bearer[ \t]{1,8}([A-Za-z0-9._~+/=-]{16,})`), group: 1},
+		// Basic auth. The value is base64("user:password"), which no
+		// registered value can match, so it is masked by shape. After an
+		// Authorization header any length counts; elsewhere it must be long
+		// enough not to be an ordinary word after "basic".
+		{re: regexp.MustCompile(`(?i)authorization["']?[ \t]{0,4}[:=][ \t]{0,4}["']?basic[ \t]{1,8}([A-Za-z0-9+/=_-]+)`), group: 1},
+		{re: regexp.MustCompile(`(?i)basic[ \t]{1,8}([A-Za-z0-9+/_-]{16,}={0,2})`), group: 1},
 		// PEM private keys. A block with no END line is masked to the end.
 		{
 			re: regexp.MustCompile(`-----BEGIN [A-Z ]{0,24}PRIVATE KEY-----[\s\S]*?` +
@@ -94,6 +100,24 @@ func (r *Redactor) Add(values ...string) {
 			}
 			r.values = append(r.values, form)
 			r.maxLen = max(r.maxLen, len(form))
+		}
+	}
+}
+
+// Extend adds everything other masks to r.
+func (r *Redactor) Extend(other *Redactor) {
+	if other == nil || other == r {
+		return
+	}
+	other.mu.RLock()
+	values := slices.Clone(other.values)
+	other.mu.RUnlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, value := range values {
+		if !slices.Contains(r.values, value) {
+			r.values = append(r.values, value)
+			r.maxLen = max(r.maxLen, len(value))
 		}
 	}
 }

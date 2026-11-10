@@ -8,7 +8,7 @@
 package config
 
 import (
-	"fmt"
+	"errors"
 	"path/filepath"
 	"strings"
 	"time"
@@ -47,6 +47,9 @@ type Config struct {
 	sources map[string]Source
 	// home is the user's home directory, used to expand "~/" in Data.Dir.
 	home string
+	// rejectedKeyEnvs are the api_key_env names of a file that failed to
+	// load. They are used only to redact the load error.
+	rejectedKeyEnvs []string
 }
 
 // Defaults are the choices a run uses unless it says otherwise.
@@ -129,10 +132,15 @@ type Provider struct {
 
 // Price is one [providers.<name>.prices.<model>] table, in US dollars per
 // million tokens.
+//
+// Every rate is a pointer so that a rate left out of the file can be told
+// apart from a rate of 0. Input and Output are required: a price table with
+// only an input rate must not turn into "output is free", because the budget
+// would then stop counting output tokens. Write 0 for a rate that is free.
 type Price struct {
-	Input  float64 `toml:"input"`
-	Output float64 `toml:"output"`
-	// CacheRead and CacheWrite fall back to Input when nil.
+	Input  *float64 `toml:"input"`
+	Output *float64 `toml:"output"`
+	// CacheRead and CacheWrite are optional and fall back to Input when nil.
 	CacheRead  *float64 `toml:"cache_read"`
 	CacheWrite *float64 `toml:"cache_write"`
 	// Checked is the day the price was read from the provider's price page.
@@ -178,12 +186,14 @@ func (d *Date) UnmarshalTOML(v any) error {
 	case string:
 		t, err := time.Parse(dateLayout, v)
 		if err != nil {
-			return fmt.Errorf("want a date like 2026-01-31: %w", err)
+			// The value is not quoted back: nothing says it is not a secret
+			// pasted into the wrong field.
+			return errors.New("want a date like 2026-01-31")
 		}
 		d.Time = t
 		return nil
 	default:
-		return fmt.Errorf("want a date like 2026-01-31, got %T", v)
+		return errors.New("want a date like 2026-01-31")
 	}
 }
 
@@ -229,6 +239,16 @@ func (c *Config) Model(stage string) string {
 		return p.DefaultModel
 	}
 	return ""
+}
+
+// Redactor returns a redactor that masks every secret the config holds, as
+// well as token-shaped text. Diagnostics about the config pass through it,
+// because a secret can turn up in any field: a key exported under the wrong
+// variable name becomes a "log level".
+func (c *Config) Redactor() *secret.Redactor {
+	r := secret.NewRedactor()
+	r.AddSecrets(c.Secrets()...)
+	return r
 }
 
 // Secrets returns every secret the config holds, for registering with a

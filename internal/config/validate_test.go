@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/llm"
 )
 
 // validBase is a complete, valid file. Each case appends to it; TOML lets a
@@ -203,6 +204,115 @@ func TestValidateNeverEchoesAPastedKey(t *testing.T) {
 	}
 	if c.Providers["anthropic"].APIKey.IsSet() {
 		t.Error("a malformed api_key_env was looked up in the environment")
+	}
+}
+
+// TestDiagnosticsHideLoadedKeys is the reported leak: the Anthropic key was
+// also exported as PATCHBOT_LOG_LEVEL, and the validation error quoted the
+// bad log level, which is the key.
+func TestDiagnosticsHideLoadedKeys(t *testing.T) {
+	t.Parallel()
+	// No token shape: only the loaded-secret list can catch it.
+	const key = "Zq7pLx2MvB9cRt5WnYh3KdF8"
+	tests := []struct {
+		name string
+		file string
+		vars map[string]string
+	}{
+		{"log level from the environment", validBase, map[string]string{"PATCHBOT_LOG_LEVEL": key}},
+		{"log format from the environment", validBase, map[string]string{"PATCHBOT_LOG_FORMAT": key}},
+		{"provider from the environment", validBase, map[string]string{"PATCHBOT_PROVIDER": key}},
+		{"address from the environment", validBase, map[string]string{"PATCHBOT_ADDR": key}},
+		{"mode in the file", validBase + "mode = \"" + key + "\"\n", nil},
+		{"approver in the file", "[defaults]\napprovers = [\"" + key + "!\"]\n", nil},
+		{"model in the file", validBase + "[providers.anthropic]\ndefault_model = \"a " + key + "\"\n", nil},
+		{"command in the file", validBase + "[repos.\"o/n\"]\ncommands = { test = [\"KEY=" + key + "\"] }\n", nil},
+		{"protected path in the file", validBase + "[repos.\"o/n\"]\nprotected = [\"/" + key + "\"]\n", nil},
+		{"stage model without a price", validBase + "code_model = \"" + key + "\"\n", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			vars := map[string]string{"ANTHROPIC_API_KEY": key}
+			for k, v := range tt.vars {
+				vars[k] = v
+			}
+			c := loadString(t, tt.file, vars)
+			err := c.Validate()
+			warnings := strings.Join(c.Warnings(), "\n")
+			if err == nil && !strings.Contains(warnings, "[redacted]") {
+				t.Fatal("the case produced no diagnostic that mentions the value")
+			}
+			if err != nil && strings.Contains(err.Error(), key) {
+				t.Errorf("the validation error shows the API key: %v", err)
+			}
+			if strings.Contains(warnings, key) {
+				t.Errorf("a warning shows the API key: %s", warnings)
+			}
+		})
+	}
+}
+
+// TestIncompletePriceTable: a price with only one rate used to load as a
+// known price of 0 for the other, so those tokens were free in the budget.
+func TestIncompletePriceTable(t *testing.T) {
+	t.Parallel()
+	const head = validBase + "[providers.x]\nkind = \"gemini\"\n[providers.x.prices.m]\n"
+	tests := []struct {
+		name    string
+		price   string
+		wantErr string // empty means valid
+	}{
+		{"both rates", "input = 1.0\noutput = 2.0\n", ""},
+		{"explicit zeros are a real price", "input = 0\noutput = 0.0\n", ""},
+		{"explicit zero output", "input = 1.0\noutput = 0\n", ""},
+		{"output missing", "input = 1.0\n", "providers.x.prices.m.output: missing"},
+		{"input missing", "output = 2.0\n", "providers.x.prices.m.input: missing"},
+		{"only a date", "checked = 2026-11-01\n", "providers.x.prices.m.input: missing"},
+		{"only cache rates", "cache_read = 0.1\ncache_write = 0.2\n", "providers.x.prices.m.output: missing"},
+		{"empty table", "", "providers.x.prices.m.input: missing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := loadString(t, head+tt.price, nil)
+			err := c.Validate()
+			providers, convErr := c.LLMProviders()
+			if tt.wantErr == "" {
+				if err != nil || convErr != nil {
+					t.Fatalf("Validate = %v, LLMProviders = %v; want both to accept", err, convErr)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("Validate error = %v, want it to contain %q", err, tt.wantErr)
+			}
+			// The conversion refuses too, so a caller that skipped Validate
+			// cannot get a price that counts some tokens as free.
+			if convErr == nil {
+				for _, p := range providers {
+					if cost, known := p.Pricing.Cost("m", &llm.Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000}); known {
+						t.Errorf("an incomplete price became a known cost of %d", cost)
+					}
+				}
+				t.Error("LLMProviders accepted an incomplete price table")
+			}
+		})
+	}
+
+	// An explicit 0 is a known price of 0; that is the difference.
+	c := loadString(t, head+"input = 1.0\noutput = 0\n", nil)
+	providers, err := c.LLMProviders()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range providers {
+		if p.Name != "x" {
+			continue
+		}
+		if cost, known := p.Pricing.Cost("m", &llm.Usage{OutputTokens: 1_000_000}); !known || cost != 0 {
+			t.Errorf("explicit zero output rate: cost = %d, known = %v; want a known 0", cost, known)
+		}
 	}
 }
 

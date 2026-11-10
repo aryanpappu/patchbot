@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 
@@ -57,11 +58,16 @@ func (c *Config) MaxCostMicro() (budget, hardMax int64, err error) {
 func (p *Price) micro() (llm.Price, error) {
 	var out llm.Price
 	var ok bool
-	if out.Input, ok = llm.USDToMicro(p.Input); !ok {
-		return out, fmt.Errorf("input: %v is not a valid price", p.Input)
+	// A missing rate is an error here too, not a zero: this function is the
+	// last step before the budget math, and Validate may not have been run.
+	if p.Input == nil || p.Output == nil {
+		return out, errors.New("input and output are both required; write 0 for a rate that is free")
 	}
-	if out.Output, ok = llm.USDToMicro(p.Output); !ok {
-		return out, fmt.Errorf("output: %v is not a valid price", p.Output)
+	if out.Input, ok = llm.USDToMicro(*p.Input); !ok {
+		return out, fmt.Errorf("input: %v is not a valid price", *p.Input)
+	}
+	if out.Output, ok = llm.USDToMicro(*p.Output); !ok {
+		return out, fmt.Errorf("output: %v is not a valid price", *p.Output)
 	}
 	for _, f := range []struct {
 		name string

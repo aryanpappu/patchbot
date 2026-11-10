@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"io"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
@@ -92,6 +93,9 @@ func (p *printer) table(key toml.Key, v reflect.Value) {
 		if isProvider && name == "api_key_env" && provider.APIKeyEnv != "" && !envNameRE.MatchString(provider.APIKeyEnv) {
 			text = strconv.Quote(secret.Mask) // most likely a key pasted into the wrong field
 		}
+		if isProvider && name == "base_url" {
+			text = strconv.Quote(displayURL(provider.BaseURL))
+		}
 		rendered[i] = fmt.Sprintf("%s = %s", toml.Key{name}, text)
 		width = max(width, len(rendered[i]))
 	}
@@ -110,6 +114,30 @@ func (p *printer) table(key toml.Key, v reflect.Value) {
 		}
 		p.table(t.key, value)
 	}
+}
+
+// displayURL returns a URL without the parts that can carry credentials: the
+// user name and password, the query and the fragment. Validate rejects a
+// base_url that has them, but config show prints invalid configs too, and
+// that is exactly when such a URL is on screen. A URL that does not parse is
+// masked whole.
+func displayURL(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return secret.Mask
+	}
+	clean := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}
+	text := clean.String()
+	if u.User != nil {
+		text += " (credentials removed)"
+	}
+	if u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
+		text += " (query removed)"
+	}
+	return text
 }
 
 func apiKeyStatus(p Provider) string {

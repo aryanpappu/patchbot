@@ -58,7 +58,7 @@ func TestLoggerRedacts(t *testing.T) {
 		{"with group", func(l *slog.Logger) { l.WithGroup("g").With("k", known).Info("m", "t", token) }},
 		{"group name", func(l *slog.Logger) { l.WithGroup(known).Info("m", "a", 1) }},
 		{"with run", func(l *slog.Logger) { logging.WithRun(l, known).Info("m") }},
-		{"secret type", func(l *slog.Logger) { l.Info("m", "key", secret.Secret(known)) }},
+		{"secret type", func(l *slog.Logger) { l.Info("m", "key", secret.New(known)) }},
 		{"log attrs", func(l *slog.Logger) {
 			l.LogAttrs(context.Background(), slog.LevelWarn, known, slog.String("k", token))
 		}},
@@ -176,5 +176,75 @@ func TestNilRedactorStillMasksTokenShapes(t *testing.T) {
 	l.Info("clone", "header", "Authorization: Bearer "+token)
 	if strings.Contains(buf.String(), token) {
 		t.Errorf("log line leaks the token: %s", buf.String())
+	}
+}
+
+// TestSecretRegisteredAfterBinding covers a logger that was given attributes
+// and groups before the secret was known, which is the normal start-up order:
+// the logger is built first and the API keys are read later.
+func TestSecretRegisteredAfterBinding(t *testing.T) {
+	t.Parallel()
+	const late = "late-secret-value-777"
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			r := secret.NewRedactor()
+			base, err := logging.New(&buf, logging.Options{Format: format}, r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bound := base.With("auth", late, slog.Group("req", slog.String("header", "x "+late))).
+				WithGroup(late).
+				With("inner", errors.New("failed with "+late))
+			sibling := base.With("other", "plain")
+
+			r.Add(late) // registered only now
+
+			bound.Info("first", "k", late)
+			bound.Info("second")
+			sibling.Info("third", "k", late)
+			got := buf.String()
+			if strings.Contains(got, late) {
+				t.Errorf("a value bound before its secret was registered is logged:\n%s", got)
+			}
+			if strings.Count(got, "\n") != 3 || !strings.Contains(got, "other=plain") && !strings.Contains(got, `"other":"plain"`) {
+				t.Errorf("records or ordinary bound attributes were lost:\n%s", got)
+			}
+		})
+	}
+}
+
+func TestBindingKeepsOrderAndIsolation(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	base, err := logging.New(&buf, logging.Options{Format: "json"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := base.With("a", 1).WithGroup("g").With("b", 2)
+	// Two children of one parent must not see each other's attributes.
+	left, right := parent.With("side", "left"), parent.With("side", "right")
+	left.Info("l", "c", 3)
+	right.WithGroup("").With().Info("r")
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("%d lines, want 2:\n%s", len(lines), buf.String())
+	}
+	var l, r map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &l); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &r); err != nil {
+		t.Fatal(err)
+	}
+	lg, _ := l["g"].(map[string]any)
+	rg, _ := r["g"].(map[string]any)
+	if l["a"] != 1.0 || lg["b"] != 2.0 || lg["side"] != "left" || lg["c"] != 3.0 {
+		t.Errorf("left record = %v", l)
+	}
+	if r["a"] != 1.0 || rg["b"] != 2.0 || rg["side"] != "right" {
+		t.Errorf("right record = %v", r)
 	}
 }

@@ -41,6 +41,13 @@ func TestRedactPatterns(t *testing.T) {
 		{"bearer keeps the scheme", "Authorization: Bearer abcdefghijklmnop.qrstuv", "Authorization: Bearer [redacted]"},
 		{"bearer lower case", "authorization: bearer abcdefghijklmnopqrstuv", "authorization: bearer [redacted]"},
 		{"bearer with a known token", "Bearer " + fakeGitHub, "Bearer [redacted]"},
+		{"basic header", "Authorization: Basic " + basic("user:pass"), "Authorization: Basic [redacted]"},
+		{"basic header, shortest credentials", "authorization: basic " + basic("a:b"), "authorization: basic [redacted]"},
+		{"basic in a json header map", `{"Authorization":"Basic ` + basic("ci:hunter2") + `"}`, `{"Authorization":"Basic [redacted]"}`},
+		{"basic in a git extraheader", "http.extraheader=AUTHORIZATION: basic " + basic("x-access-token:abc"), "http.extraheader=AUTHORIZATION: basic [redacted]"},
+		{"proxy basic header", "Proxy-Authorization: Basic " + basic("u:p") + "\r\n", "Proxy-Authorization: Basic [redacted]\r\n"},
+		{"basic without a header name", "curl sent Basic " + basic("deploy:a-long-password") + " ok", "curl sent Basic [redacted] ok"},
+		{"basic in prose is kept", "a basic understanding of basic authentication", "a basic understanding of basic authentication"},
 		{"pem", "a\n" + fakePEM + "\nb", "a\n[redacted]\nb"},
 		{"pem without end", "a\n-----BEGIN PRIVATE KEY-----\nMIIabc\ndef", "a\n[redacted]"},
 		{"two pem blocks", fakePEM + "\nmid\n" + fakePEM, "[redacted]\nmid\n[redacted]"},
@@ -118,10 +125,50 @@ func TestRedactValues(t *testing.T) {
 	}
 }
 
+func basic(credentials string) string {
+	return base64.StdEncoding.EncodeToString([]byte(credentials))
+}
+
+// TestRedactBasicAuthWithRegisteredKey is the case the value list cannot
+// catch: base64("user:" + key) shares no substring with base64(key).
+func TestRedactBasicAuthWithRegisteredKey(t *testing.T) {
+	t.Parallel()
+	const key = "registered-key-0123456789"
+	r := secret.NewRedactor(key)
+	for _, user := range []string{"x-access-token", "u", "ab", "abc", "git", ""} {
+		encoded := basic(user + ":" + key)
+		for _, line := range []string{
+			"Authorization: Basic " + encoded,
+			"> authorization: basic " + encoded + "\r\n",
+			"extraheader=AUTHORIZATION: basic " + encoded,
+			"sent Basic " + encoded,
+		} {
+			got := r.Redact(line)
+			if strings.Contains(got, encoded) || strings.Contains(got, encoded[:12]) {
+				t.Errorf("Redact(%q) = %q, which still holds the credentials", line, got)
+			}
+		}
+	}
+}
+
+func TestRedactorExtend(t *testing.T) {
+	t.Parallel()
+	a, b := secret.NewRedactor("first-secret-value"), secret.NewRedactor("second-secret-value")
+	a.Extend(b)
+	a.Extend(a)
+	a.Extend(nil)
+	if got := a.Redact("first-secret-value second-secret-value"); got != "[redacted] [redacted]" {
+		t.Errorf("Redact after Extend = %q", got)
+	}
+	if got := b.Redact("first-secret-value"); got != "first-secret-value" {
+		t.Errorf("Extend changed its argument: %q", got)
+	}
+}
+
 func TestRedactorAddSecrets(t *testing.T) {
 	t.Parallel()
 	r := secret.NewRedactor()
-	r.AddSecrets(secret.Secret("first-secret-value"), secret.Secret(""), secret.Secret("tiny"))
+	r.AddSecrets(secret.New("first-secret-value"), secret.New(""), secret.Secret{}, secret.New("tiny"))
 	if got, want := r.Redact("a first-secret-value tiny"), "a [redacted] tiny"; got != want {
 		t.Errorf("Redact = %q, want %q", got, want)
 	}

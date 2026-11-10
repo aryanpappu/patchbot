@@ -225,3 +225,47 @@ func TestConfigFlagAndUsage(t *testing.T) {
 		})
 	}
 }
+
+// TestConfigCommandsNeverPrintAKey runs the leaks from the review through the
+// real commands and checks both output streams.
+func TestConfigCommandsNeverPrintAKey(t *testing.T) {
+	t.Parallel()
+	// No token shape, so the pattern redactor alone would not catch it.
+	const key = "Zq7pLx2MvB9cRt5WnYh3KdF8"
+	withKey := func(extra map[string]string) map[string]string {
+		vars := map[string]string{"ANTHROPIC_API_KEY": key}
+		for k, v := range extra {
+			vars[k] = v
+		}
+		return vars
+	}
+	tests := []struct {
+		name string
+		file string
+		vars map[string]string
+	}{
+		{"key also set as the log level", validConfig, withKey(map[string]string{"PATCHBOT_LOG_LEVEL": key})},
+		{"key also set as the provider", validConfig, withKey(map[string]string{"PATCHBOT_PROVIDER": key})},
+		{"key also set as max turns", validConfig, withKey(map[string]string{"PATCHBOT_MAX_TURNS": key})},
+		{"key pasted into a duration", validConfig + "[limits]\nrun_timeout = \"" + key + "\"\n", nil},
+		{"key pasted into a date", validConfig + "[providers.anthropic.prices.m]\ninput = 1\noutput = 1\nchecked = \"" + key + "\"\n", nil},
+		{"key pasted without quotes", validConfig + "[log]\nlevel = " + key + "\n", nil},
+		{"key in the base url", validConfig + "[providers.o]\nkind = \"openai\"\nbase_url = \"https://user:" + key + "@host/v1\"\n", nil},
+		{"key in the base url query", validConfig + "[providers.o]\nkind = \"openai\"\nbase_url = \"https://host/v1?api-key=" + key + "\"\n", nil},
+		{"key as a stage model", validConfig, withKey(map[string]string{"PATCHBOT_MODEL": key})},
+	}
+	for _, tt := range tests {
+		for _, sub := range []string{"check", "show"} {
+			t.Run(tt.name+"/"+sub, func(t *testing.T) {
+				t.Parallel()
+				code, stdout, stderr := runApp(t, tt.file, tt.vars, "config", sub)
+				if strings.Contains(stdout+stderr, key) {
+					t.Errorf("config %s prints the key (exit %d):\nstdout: %s\nstderr: %s", sub, code, stdout, stderr)
+				}
+				if stdout+stderr == "" {
+					t.Error("no output at all")
+				}
+			})
+		}
+	}
+}

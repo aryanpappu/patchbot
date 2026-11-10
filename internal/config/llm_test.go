@@ -56,7 +56,7 @@ price_free = true
 			Pricing: llm.Pricing{Free: true},
 		},
 	}
-	want[0].APIKey = secret.Secret(key)
+	want[0].APIKey = secret.New(key)
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("LLMProviders (-want +got):\n%s", diff)
 	}

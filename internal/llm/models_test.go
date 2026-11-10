@@ -3,6 +3,7 @@ package llm_test
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -128,6 +129,39 @@ func TestModelListerMerge(t *testing.T) {
 			}
 			if got.Live != !got.FetchedAt.IsZero() {
 				t.Errorf("FetchedAt = %v with Live = %v", got.FetchedAt, got.Live)
+			}
+		})
+	}
+}
+
+// TestModelListerWarningIsSafe checks that the warning, which the UI shows
+// next to the model picker, never quotes a transport error.
+func TestModelListerWarningIsSafe(t *testing.T) {
+	t.Parallel()
+	const key = "QUERYKEY0123456789abcdef"
+	transport := &url.Error{Op: "Get", URL: "https://api.example.com/v1/models?key=" + key, Err: errors.New("refused")}
+	tests := []struct {
+		name    string
+		liveErr error
+		want    string
+	}{
+		{"llm error with a transport cause", (&llm.Error{Kind: llm.ErrUnavailable, Provider: "p"}).WithCause(transport), "p: unavailable: network or transport failure"},
+		{"bare transport error from a careless adapter", transport, "the provider could not be reached or set up"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newListerFixture(t, llm.ProviderConfig{Models: []string{"c1"}})
+			f.provider.SetModels(nil, tt.liveErr)
+			got, err := f.lister.List(context.Background(), "p")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(got.Warning, key) || strings.Contains(got.Warning, "api.example.com") {
+				t.Errorf("the warning exposes the request URL: %s", got.Warning)
+			}
+			if !strings.Contains(got.Warning, tt.want) {
+				t.Errorf("Warning = %q, want it to contain %q", got.Warning, tt.want)
 			}
 		})
 	}
@@ -260,5 +294,96 @@ func TestNewModelListerDefaultClock(t *testing.T) {
 	got, err := llm.NewModelLister(reg, nil).List(context.Background(), "p")
 	if err != nil || !got.Live || time.Since(got.FetchedAt) > time.Minute {
 		t.Errorf("List with the system clock = %+v, %v", got, err)
+	}
+}
+
+// slowLister is a Provider whose ListModels blocks until the test lets it
+// finish, to hold a fetch open across an Invalidate.
+type slowLister struct {
+	started chan struct{}
+	release chan struct{}
+
+	mu     sync.Mutex
+	models []llm.ModelInfo
+	calls  int
+}
+
+func (s *slowLister) Name() string { return "slow" }
+
+func (s *slowLister) Chat(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
+	return nil, errors.New("not used")
+}
+
+func (s *slowLister) set(ids ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.models = nil
+	for _, id := range ids {
+		s.models = append(s.models, llm.ModelInfo{ID: id})
+	}
+}
+
+func (s *slowLister) ListModels(context.Context) ([]llm.ModelInfo, error) {
+	s.mu.Lock()
+	s.calls++
+	first := s.calls == 1
+	answer := append([]llm.ModelInfo(nil), s.models...) // what the provider had when asked
+	s.mu.Unlock()
+	if first {
+		close(s.started)
+		<-s.release
+	}
+	return answer, nil
+}
+
+// TestInvalidateDuringFetch: a fetch is in flight, the caller invalidates
+// (say, after changing the API key), and the old fetch then finishes. Its
+// result must not go into the cache, or the next List would serve the list
+// the caller just declared stale for a full TTL.
+func TestInvalidateDuringFetch(t *testing.T) {
+	t.Parallel()
+	slow := &slowLister{started: make(chan struct{}), release: make(chan struct{})}
+	slow.set("old")
+	reg, err := llm.NewRegistry(
+		llm.Constructors{"slow": func(llm.ProviderConfig) (llm.Provider, error) { return slow, nil }},
+		[]llm.ProviderConfig{{Name: "slow", Kind: "slow"}}, llm.RegistryOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lister := llm.NewModelLister(reg, newFakeClock())
+
+	firstDone := make(chan llm.ModelList, 1)
+	go func() {
+		got, err := lister.List(context.Background(), "slow")
+		if err != nil {
+			t.Errorf("first List: %v", err)
+		}
+		firstDone <- got
+	}()
+	<-slow.started
+
+	slow.set("new")
+	lister.Invalidate("slow")
+	close(slow.release)
+	if first := <-firstDone; len(first.Models) != 1 || first.Models[0].ID != "old" {
+		t.Errorf("the in-flight List = %+v; it should still return what it fetched", first.Models)
+	}
+
+	got, err := lister.List(context.Background(), "slow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Models) != 1 || got.Models[0].ID != "new" {
+		t.Errorf("List after Invalidate = %+v, want the new list; the superseded fetch filled the cache", got.Models)
+	}
+	// The fresh result is cached as usual.
+	if _, err := lister.List(context.Background(), "slow"); err != nil {
+		t.Fatal(err)
+	}
+	slow.mu.Lock()
+	calls := slow.calls
+	slow.mu.Unlock()
+	if calls != 2 {
+		t.Errorf("%d fetches, want 2: one superseded, one fresh and then cached", calls)
 	}
 }

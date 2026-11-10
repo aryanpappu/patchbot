@@ -223,7 +223,7 @@ func TestWithRetryStopsOnContext(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		inner := fake.NewFunc("p", func(context.Context, int, llm.ChatRequest) (*llm.ChatResponse, error) {
 			cancel() // the transport reports a cancelled request as a network error
-			return nil, &llm.Error{Kind: llm.ErrUnavailable, Provider: "p", Err: context.Canceled}
+			return nil, (&llm.Error{Kind: llm.ErrUnavailable, Provider: "p"}).WithCause(context.Canceled)
 		})
 		clock := newFakeClock()
 		_, err := llm.WithRetry(inner, llm.RetryPolicy{}, clock).Chat(ctx, chatReq)

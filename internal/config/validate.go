@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/aryanpappu/patchbot/internal/secret"
 )
 
 var (
@@ -28,8 +30,12 @@ const shellMeta = " \t\r\n|&;<>()$`\\\"'*?[]{}~!#=%^"
 
 // Validate checks the values of a loaded configuration and returns every
 // problem it finds, joined with errors.Join. Messages never contain a secret.
+//
+// A message may quote a bad value to help the user find it. Every message is
+// therefore redacted with the secrets the config holds: a key exported under
+// the wrong variable name would otherwise be printed as, say, a log level.
 func (c *Config) Validate() error {
-	var v validator
+	v := validator{redactor: c.Redactor()}
 	c.validateDefaults(&v)
 	c.validateLimits(&v)
 	c.validateFixed(&v)
@@ -42,10 +48,13 @@ func (c *Config) Validate() error {
 	return errors.Join(v.errs...)
 }
 
-type validator struct{ errs []error }
+type validator struct {
+	errs     []error
+	redactor *secret.Redactor
+}
 
 func (v *validator) addf(format string, args ...any) {
-	v.errs = append(v.errs, fmt.Errorf(format, args...))
+	v.errs = append(v.errs, errors.New(v.redactor.Redact(fmt.Sprintf(format, args...))))
 }
 
 // check adds the message when ok is false.
@@ -173,8 +182,18 @@ func (c *Config) validateProvider(v *validator, name string, p *Provider) {
 		price := p.Prices[model]
 		pat := fmt.Sprintf("%s.prices.%s", at, model)
 		v.check(validModelID(model), "%s: %q is not a model ID", pat, model)
-		v.check(validMoney(price.Input), "%s.input: must be 0 or more", pat)
-		v.check(validMoney(price.Output), "%s.output: must be 0 or more", pat)
+		for _, rate := range []struct {
+			name  string
+			value *float64
+		}{{"input", price.Input}, {"output", price.Output}} {
+			switch {
+			case rate.value == nil:
+				v.addf("%s.%s: missing; a price needs both input and output, and a rate that is "+
+					"really free must be written as 0", pat, rate.name)
+			case !validMoney(*rate.value):
+				v.addf("%s.%s: must be 0 or more", pat, rate.name)
+			}
+		}
 		v.check(price.CacheRead == nil || validMoney(*price.CacheRead), "%s.cache_read: must be 0 or more", pat)
 		v.check(price.CacheWrite == nil || validMoney(*price.CacheWrite), "%s.cache_write: must be 0 or more", pat)
 	}
@@ -224,7 +243,10 @@ func validateRepo(v *validator, name string, r *Repo) {
 // names the environment variable and never its value.
 func (c *Config) Warnings() []string {
 	var out []string
-	warnf := func(format string, args ...any) { out = append(out, fmt.Sprintf(format, args...)) }
+	redactor := c.Redactor()
+	warnf := func(format string, args ...any) {
+		out = append(out, redactor.Redact(fmt.Sprintf(format, args...)))
+	}
 
 	for _, name := range sortedKeys(c.Providers) {
 		p := c.Providers[name]

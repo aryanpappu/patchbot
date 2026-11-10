@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/secret"
 )
 
 const configUsage = `Usage: patchbot config <check|show> [--config FILE]
@@ -60,7 +61,7 @@ func (a *App) runConfig(args []string) int {
 
 	cfg, err := config.Load(opts)
 	if err != nil {
-		a.printProblems("error", err)
+		a.printProblems(nil, err)
 		return 1
 	}
 	if sub == "show" {
@@ -74,12 +75,13 @@ func (a *App) configCheck(cfg *config.Config) int {
 	if cfg.Path() != "" {
 		source = cfg.Path()
 	}
+	redactor := cfg.Redactor()
 	warnings := cfg.Warnings()
 	for _, w := range warnings {
-		_, _ = fmt.Fprintf(a.Stderr, "warning: %s\n", w)
+		_, _ = fmt.Fprintf(a.Stderr, "warning: %s\n", redactor.Redact(w))
 	}
 	if err := cfg.Validate(); err != nil {
-		n := a.printProblems("error", err)
+		n := a.printProblems(redactor, err)
 		_, _ = fmt.Fprintf(a.Stderr, "config invalid: %s: %s\n", source, plural(n, "error"))
 		return 1
 	}
@@ -95,7 +97,7 @@ func (a *App) configShow(cfg *config.Config) int {
 	// An invalid config is still shown, which helps to fix it, but the
 	// command says so and fails.
 	if err := cfg.Validate(); err != nil {
-		n := a.printProblems("error", err)
+		n := a.printProblems(cfg.Redactor(), err)
 		_, _ = fmt.Fprintf(a.Stderr, "config invalid: %s; run `patchbot config check`\n", plural(n, "error"))
 		return 1
 	}
@@ -103,11 +105,14 @@ func (a *App) configShow(cfg *config.Config) int {
 }
 
 // printProblems prints each error joined into err on its own line and
-// returns how many there were.
-func (a *App) printProblems(label string, err error) int {
-	lines := strings.Split(err.Error(), "\n")
+// returns how many there were. Every line passes the redactor first: the
+// config package already redacts its own messages, and this is the last
+// check before the text reaches a terminal or a CI log. A nil redactor
+// still masks token-shaped text.
+func (a *App) printProblems(redactor *secret.Redactor, err error) int {
+	lines := strings.Split(redactor.Redact(err.Error()), "\n")
 	for _, line := range lines {
-		_, _ = fmt.Fprintf(a.Stderr, "%s: %s\n", label, line)
+		_, _ = fmt.Fprintf(a.Stderr, "error: %s\n", line)
 	}
 	return len(lines)
 }

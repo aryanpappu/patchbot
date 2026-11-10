@@ -1,12 +1,18 @@
 package llm
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/aryanpappu/patchbot/internal/secret"
 )
 
 // ErrorKind classifies a provider failure.
@@ -26,6 +32,12 @@ const (
 
 // Error is a failure of a provider call. Adapters return it for every
 // failure except context cancellation.
+//
+// Everything an Error prints or serializes is safe to log and to show to the
+// user. The underlying cause is not: a transport error can quote the request
+// URL, and some APIs take the key in the query string. So the cause is kept
+// for errors.Is and errors.As only, and never appears in Error(), in JSON or
+// in any fmt output.
 type Error struct {
 	Kind ErrorKind
 	// Provider is the instance name.
@@ -34,14 +46,30 @@ type Error struct {
 	Status int
 	// RetryAfter is how long the provider asked us to wait; 0 when it did not.
 	RetryAfter time.Duration
-	// Message is safe to log and show: the adapter redacts it.
+	// Message describes the failure. Adapters redact it, and it passes the
+	// token-pattern redactor again whenever it is printed.
 	Message   string
 	RequestID string
-	// Err is the underlying error, if any.
-	Err error
+
+	// cause is behind a pointer so that fmt, which prints unexported fields
+	// by walking memory, finds an address and not the error's text.
+	cause *cause
 }
 
-// Error implements error.
+type cause struct{ err error }
+
+// WithCause records the underlying error and returns e. The cause is
+// reachable through Unwrap, errors.Is and errors.As, and is never printed.
+func (e *Error) WithCause(err error) *Error {
+	e.cause = nil
+	if err != nil {
+		e.cause = &cause{err: err}
+	}
+	return e
+}
+
+// Error implements error. It never includes the cause's text; when there is
+// no message it names only the class of the cause, such as "timed out".
 func (e *Error) Error() string {
 	var b strings.Builder
 	if e.Provider != "" {
@@ -52,19 +80,61 @@ func (e *Error) Error() string {
 	if e.Status != 0 {
 		fmt.Fprintf(&b, " (HTTP %d)", e.Status)
 	}
-	if e.Message != "" {
+	if detail := e.detail(); detail != "" {
 		b.WriteString(": ")
-		b.WriteString(e.Message)
-	}
-	if e.Err != nil && e.Message == "" {
-		b.WriteString(": ")
-		b.WriteString(e.Err.Error())
+		b.WriteString(detail)
 	}
 	return b.String()
 }
 
+// detail returns the sanitized description: the redacted message, or the
+// class of the cause when there is no message.
+func (e *Error) detail() string {
+	if e.Message != "" {
+		return (*secret.Redactor)(nil).Redact(e.Message)
+	}
+	return causeClass(e.Unwrap())
+}
+
+// causeClass describes an underlying error without quoting it.
+func causeClass(err error) string {
+	if err == nil {
+		return ""
+	}
+	if netErr, ok := errors.AsType[net.Error](err); ok && netErr.Timeout() {
+		return "timed out"
+	}
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timed out"
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "connection closed early"
+	default:
+		return "network or transport failure"
+	}
+}
+
 // Unwrap returns the underlying error.
-func (e *Error) Unwrap() error { return e.Err }
+func (e *Error) Unwrap() error {
+	if e.cause == nil {
+		return nil
+	}
+	return e.cause.err
+}
+
+// MarshalJSON implements json.Marshaler with the sanitized fields only.
+func (e *Error) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind         ErrorKind `json:"kind"`
+		Provider     string    `json:"provider,omitempty"`
+		Status       int       `json:"status,omitempty"`
+		RetryAfterMS int64     `json:"retry_after_ms,omitempty"`
+		Message      string    `json:"message,omitempty"`
+		RequestID    string    `json:"request_id,omitempty"`
+	}{e.Kind, e.Provider, e.Status, e.RetryAfter.Milliseconds(), e.detail(), e.RequestID})
+}
 
 // Retryable reports whether the same request may succeed if sent again.
 // Only rate limits, overload and unavailability qualify.
@@ -141,4 +211,32 @@ func ParseRetryAfter(header string, now time.Time) time.Duration {
 		}
 	}
 	return 0
+}
+
+// SafeText describes err for a log line, a warning or the UI. Text is taken
+// only from errors this package produced, whose text is sanitized; any other
+// error in the chain is named by its class, never quoted. The result also
+// passes the token-pattern redactor.
+func SafeText(err error) string {
+	if err == nil {
+		return ""
+	}
+	var text string
+	switch {
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		text = causeClass(err)
+	case errors.Is(err, ErrNoAdapter):
+		text = ErrNoAdapter.Error()
+	case errors.Is(err, ErrUnknownProvider):
+		text = ErrUnknownProvider.Error()
+	case errors.Is(err, errEmptyModelList):
+		text = errEmptyModelList.Error()
+	default:
+		if e, ok := errors.AsType[*Error](err); ok {
+			text = e.Error()
+		} else {
+			text = "the provider could not be reached or set up"
+		}
+	}
+	return (*secret.Redactor)(nil).Redact(text)
 }

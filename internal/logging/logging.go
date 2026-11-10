@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/aryanpappu/patchbot/internal/secret"
@@ -61,9 +62,23 @@ func WithRun(l *slog.Logger, runID string) *slog.Logger {
 }
 
 // Handler is a slog.Handler that redacts records before passing them on.
+//
+// Attributes and groups bound with WithAttrs and WithGroup are kept as they
+// were given and redacted each time a record is written, not once when they
+// are bound. A logger is often built before every secret is known (the API
+// keys are read after the logger exists), and a value bound early must still
+// be masked once its secret is registered.
 type Handler struct {
 	inner slog.Handler
 	r     *secret.Redactor
+	// bound lists the WithAttrs and WithGroup calls, in order.
+	bound []binding
+}
+
+// binding is one WithAttrs call (attrs set) or one WithGroup call (group set).
+type binding struct {
+	group string
+	attrs []slog.Attr
 }
 
 // NewHandler wraps inner so that every record is redacted with r first.
@@ -78,26 +93,45 @@ func (h *Handler) Enabled(ctx context.Context, level slog.Level) bool {
 
 // Handle implements slog.Handler.
 func (h *Handler) Handle(ctx context.Context, rec slog.Record) error {
+	inner := h.inner
+	for _, b := range h.bound {
+		if b.attrs == nil {
+			inner = inner.WithGroup(h.r.Redact(b.group))
+			continue
+		}
+		redacted := make([]slog.Attr, len(b.attrs))
+		for i, a := range b.attrs {
+			redacted[i] = h.attr(a)
+		}
+		inner = inner.WithAttrs(redacted)
+	}
 	out := slog.NewRecord(rec.Time, rec.Level, h.r.Redact(rec.Message), rec.PC)
 	rec.Attrs(func(a slog.Attr) bool {
 		out.AddAttrs(h.attr(a))
 		return true
 	})
-	return h.inner.Handle(ctx, out)
+	return inner.Handle(ctx, out)
 }
 
 // WithAttrs implements slog.Handler.
 func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	redacted := make([]slog.Attr, len(attrs))
-	for i, a := range attrs {
-		redacted[i] = h.attr(a)
+	if len(attrs) == 0 {
+		return h
 	}
-	return &Handler{inner: h.inner.WithAttrs(redacted), r: h.r}
+	return h.bind(binding{attrs: slices.Clone(attrs)})
 }
 
 // WithGroup implements slog.Handler.
 func (h *Handler) WithGroup(name string) slog.Handler {
-	return &Handler{inner: h.inner.WithGroup(h.r.Redact(name)), r: h.r}
+	if name == "" {
+		return h
+	}
+	return h.bind(binding{group: name})
+}
+
+func (h *Handler) bind(b binding) *Handler {
+	// Clip so that two handlers derived from h never share a backing array.
+	return &Handler{inner: h.inner, r: h.r, bound: append(slices.Clip(h.bound), b)}
 }
 
 func (h *Handler) attr(a slog.Attr) slog.Attr {

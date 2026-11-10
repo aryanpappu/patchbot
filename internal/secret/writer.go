@@ -99,38 +99,32 @@ func (w *Writer) process(out *bytes.Buffer, final bool) {
 	s := string(w.buf)
 	spans := w.r.find(s)
 	if final {
-		writeMasked(out, s, spans, len(s))
+		writeMasked(out, s, spans, 0, len(s))
 		w.buf = nil
 		return
 	}
 
 	// Everything before cut is safe to write: no secret that starts there can
 	// still be growing. A match that crosses cut moves cut back to its start.
-	cut := len(s) - w.r.overlap()
-	if cut <= 0 {
+	cut := safeCut(spans, len(s)-w.r.overlap())
+	if cut < 0 {
 		return
 	}
-	var crossing *span
-	for i := range spans {
-		if spans[i].from < cut && spans[i].end > cut {
-			crossing = &spans[i]
-			cut = crossing.from
-			break
-		}
-	}
-	writeMasked(out, s, spans, cut)
-	w.buf = w.buf[cut:]
-
-	if crossing == nil || len(w.buf) <= maxPending {
+	writeMasked(out, s, spans, 0, cut)
+	if len(s)-cut <= maxPending {
+		w.buf = w.buf[cut:]
 		return
 	}
-	// One match has grown past the memory bound. Mask it now and remember to
-	// drop the rest of it as it arrives.
-	out.WriteString(s[cut:crossing.start])
+	// The held text has grown past the memory bound, which takes a match
+	// that never ends. Every span but the last is complete, so write up to
+	// the last one, mask it now and remember to drop the rest of it as it
+	// arrives.
+	last := spans[len(spans)-1]
+	writeMasked(out, s, spans, cut, last.start)
 	out.WriteString(Mask)
-	rest := w.buf[crossing.end-cut:]
+	rest := w.buf[last.end:]
 	switch {
-	case crossing.open:
+	case last.open:
 		w.mode = swallowPEM
 		rest = w.buf[max(0, len(w.buf)-pemEndMax):]
 	case len(rest) == 0:
@@ -171,11 +165,38 @@ func (w *Writer) finishSwallow(final bool) bool {
 	return true
 }
 
-// writeMasked writes s[:limit] with every span that ends at or before limit
-// replaced by Mask.
-func writeMasked(out *bytes.Buffer, s string, spans []span, limit int) {
-	last := 0
+// safeCut returns the largest cut at or below limit that no match crosses,
+// so that everything before it is final. It returns -1 when limit is not
+// positive.
+//
+// Moving the cut back to the start of one match can put it inside an earlier
+// one: in "mykeyBearer <token>" the Bearer match begins inside the registered
+// value "mykeyBearer". So the spans are rechecked until none crosses.
+func safeCut(spans []span, limit int) int {
+	if limit <= 0 {
+		return -1
+	}
+	cut := limit
+	for moved := true; moved; {
+		moved = false
+		for _, sp := range spans {
+			if sp.from < cut && sp.end > cut {
+				cut = sp.from
+				moved = true
+			}
+		}
+	}
+	return cut
+}
+
+// writeMasked writes s[from:limit] with every span inside that range replaced
+// by Mask. No span may cross from or limit.
+func writeMasked(out *bytes.Buffer, s string, spans []span, from, limit int) {
+	last := from
 	for _, sp := range spans {
+		if sp.start < from {
+			continue
+		}
 		if sp.end > limit {
 			break
 		}

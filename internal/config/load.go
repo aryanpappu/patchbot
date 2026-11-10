@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -126,11 +127,51 @@ func Default() *Config {
 // then environment variables, then flags. It reports syntax errors, unknown
 // keys and keys that look like secrets. It does not judge the values; call
 // Validate for that.
+//
+// An error from Load never quotes a value it could not parse, since nothing
+// says the value is not a secret in the wrong place, and it is redacted with
+// every API key the loader could find.
 func Load(opts Options) (*Config, error) {
 	lookupEnv := opts.LookupEnv
 	if lookupEnv == nil {
 		lookupEnv = os.LookupEnv
 	}
+	c, err := load(opts, lookupEnv)
+	// The keys are read even when loading failed, to redact the error.
+	for _, p := range c.Providers {
+		if !envNameRE.MatchString(p.APIKeyEnv) {
+			continue // Validate reports a bad name; never look it up.
+		}
+		if value, ok := lookupEnv(p.APIKeyEnv); ok {
+			p.APIKey = secret.New(strings.TrimSpace(value))
+		}
+	}
+	if err != nil {
+		// A file that was rejected never became part of c, but the variable
+		// names it gave still say where its keys are.
+		redactor := c.Redactor()
+		for _, name := range c.rejectedKeyEnvs {
+			if value, ok := lookupEnv(name); ok && envNameRE.MatchString(name) {
+				redactor.Add(strings.TrimSpace(value))
+			}
+		}
+		return nil, &redactedError{msg: redactor.Redact(err.Error()), err: err}
+	}
+	return c, nil
+}
+
+// redactedError carries a redacted message and keeps the original error
+// reachable for errors.Is and errors.As.
+type redactedError struct {
+	msg string
+	err error
+}
+
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.err }
+
+// load applies the layers. It always returns a Config, complete or not.
+func load(opts Options, lookupEnv func(string) (string, bool)) (*Config, error) {
 	if opts.UserConfigDir == nil {
 		opts.UserConfigDir = os.UserConfigDir
 	}
@@ -144,11 +185,11 @@ func Load(opts Options) (*Config, error) {
 
 	path, err := findFile(opts, lookupEnv)
 	if err != nil {
-		return nil, err
+		return c, err
 	}
 	if path != "" {
 		if err := c.loadFile(path); err != nil {
-			return nil, err
+			return c, err
 		}
 	}
 
@@ -159,22 +200,13 @@ func Load(opts Options) (*Config, error) {
 		}
 		for _, key := range b.keys {
 			if err := c.set(key, value, Source{Kind: SourceEnv, Name: b.env}); err != nil {
-				return nil, fmt.Errorf("environment variable %s: %w", b.env, err)
+				return c, fmt.Errorf("environment variable %s: %w", b.env, err)
 			}
 		}
 	}
 	for _, o := range opts.Flags {
 		if err := c.set(o.Key, o.Value, Source{Kind: SourceFlag, Name: o.Flag}); err != nil {
-			return nil, fmt.Errorf("flag %s: %w", o.Flag, err)
-		}
-	}
-
-	for _, p := range c.Providers {
-		if !envNameRE.MatchString(p.APIKeyEnv) {
-			continue // Validate reports a bad name; never look it up.
-		}
-		if value, ok := lookupEnv(p.APIKeyEnv); ok {
-			p.APIKey = secret.Secret(strings.TrimSpace(value))
+			return c, fmt.Errorf("flag %s: %w", o.Flag, err)
 		}
 	}
 	return c, nil
@@ -222,10 +254,13 @@ func (c *Config) loadFile(path string) error {
 	}
 	var layer Config
 	md, err := toml.Decode(string(data), &layer)
+	for _, p := range layer.Providers {
+		if p != nil && p.APIKeyEnv != "" {
+			c.rejectedKeyEnvs = append(c.rejectedKeyEnvs, p.APIKeyEnv)
+		}
+	}
 	if err != nil {
-		// A syntax error can quote the file, and the file might hold a pasted
-		// key, so the message goes through the pattern redactor.
-		return fmt.Errorf("config file %s: %s", path, (*secret.Redactor)(nil).Redact(err.Error()))
+		return fmt.Errorf("config file %s: %s", path, describeDecodeError(err))
 	}
 	if err := checkKeys(md); err != nil {
 		return fmt.Errorf("config file %s: %w", path, err)
@@ -235,6 +270,45 @@ func (c *Config) loadFile(path string) error {
 	}
 	c.path = path
 	return nil
+}
+
+var (
+	// tomlPrefixRE matches the "toml: line N (last key "k"): " prefix of the
+	// library's plain errors.
+	tomlPrefixRE = regexp.MustCompile(`^toml: (?:line (\d+) )?(?:\(last key "(?:[^"\\]|\\.)*"\))?:? ?`)
+	// quotedRE matches a Go-quoted string, which is how the library quotes
+	// text from the file.
+	quotedRE = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+)
+
+// describeDecodeError turns a TOML library error into a message that says
+// where the problem is and what kind it is, without the text that caused it.
+// The library quotes the offending value (`invalid duration: "..."`,
+// `expected value but found "..."`) and the last key it read, and either can
+// be a key pasted into the wrong place.
+func describeDecodeError(err error) string {
+	line, msg := 0, err.Error()
+	if pe, ok := errors.AsType[toml.ParseError](err); ok {
+		line, msg = pe.Position.Line, pe.Message
+	} else if m := tomlPrefixRE.FindStringSubmatch(msg); m != nil {
+		line, _ = strconv.Atoi(m[1])
+		msg = msg[len(m[0]):]
+	}
+	switch {
+	case strings.HasPrefix(msg, "invalid duration"):
+		msg = `want a duration string such as "30m"`
+	case strings.Contains(msg, "is out of range"), strings.Contains(msg, "is out of the safe"):
+		msg = "a number is out of range"
+	case strings.HasPrefix(msg, "expected value but found"):
+		msg = "expected a value; text needs quotes"
+	default:
+		msg = quotedRE.ReplaceAllString(msg, "a value")
+	}
+	msg = (*secret.Redactor)(nil).Redact(msg)
+	if line > 0 {
+		return fmt.Sprintf("line %d: %s", line, msg)
+	}
+	return msg
 }
 
 // checkKeys rejects keys that look like secrets and keys the schema does not
@@ -370,6 +444,8 @@ func (c *Config) set(dotted, raw string, source Source) error {
 	return nil
 }
 
+// parseInto never quotes raw in an error: an override comes from the
+// environment, and a value there may be a secret under the wrong name.
 func parseInto(field reflect.Value, raw string) error {
 	switch field.Interface().(type) {
 	case string:
@@ -377,25 +453,25 @@ func parseInto(field reflect.Value, raw string) error {
 	case bool:
 		v, err := strconv.ParseBool(raw)
 		if err != nil {
-			return fmt.Errorf("want true or false, got %q", raw)
+			return errors.New("want true or false")
 		}
 		field.SetBool(v)
 	case int, int64:
 		v, err := strconv.ParseInt(raw, 10, field.Type().Bits())
 		if err != nil {
-			return fmt.Errorf("want a whole number, got %q", raw)
+			return errors.New("want a whole number")
 		}
 		field.SetInt(v)
 	case float64:
 		v, err := strconv.ParseFloat(raw, 64)
 		if err != nil {
-			return fmt.Errorf("want a number, got %q", raw)
+			return errors.New("want a number")
 		}
 		field.SetFloat(v)
 	case time.Duration:
 		v, err := time.ParseDuration(raw)
 		if err != nil {
-			return fmt.Errorf(`want a duration such as "30m", got %q`, raw)
+			return errors.New(`want a duration such as "30m"`)
 		}
 		field.SetInt(int64(v))
 	case []string:
