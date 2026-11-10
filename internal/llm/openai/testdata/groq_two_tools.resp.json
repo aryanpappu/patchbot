@@ -1,0 +1,42 @@
+{
+  "id": "chatcmpl_synthetic",
+  "model": "fixture-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "first",
+            "type": "function",
+            "function": {
+              "name": "read_file",
+              "arguments": "{\"path\":\"a.txt\"}"
+            }
+          },
+          {
+            "id": "second",
+            "type": "function",
+            "function": {
+              "name": "read_file",
+              "arguments": "{\"path\":\"b.txt\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 20,
+    "completion_tokens": 5,
+    "prompt_tokens_details": {
+      "cached_tokens": 4
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 2
+    }
+  }
+}

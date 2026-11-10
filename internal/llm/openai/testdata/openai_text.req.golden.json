@@ -1,0 +1,15 @@
+{
+  "max_completion_tokens": 128,
+  "messages": [
+    {
+      "content": "Be precise.",
+      "role": "system"
+    },
+    {
+      "content": "Inspect a.txt and b.txt.",
+      "role": "user"
+    }
+  ],
+  "model": "fixture-model",
+  "temperature": 0
+}

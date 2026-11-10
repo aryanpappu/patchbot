@@ -1,0 +1,16 @@
+{
+  "model": "fixture-model",
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "function_call": {
+          "name": "read_file",
+          "arguments": "{\"path\":\"a.txt\"}"
+        }
+      },
+      "finish_reason": "function_call"
+    }
+  ]
+}

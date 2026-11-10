@@ -9,6 +9,7 @@ import (
 	"github.com/aryanpappu/patchbot/internal/llm"
 	"github.com/aryanpappu/patchbot/internal/llm/anthropic"
 	"github.com/aryanpappu/patchbot/internal/llm/fake"
+	"github.com/aryanpappu/patchbot/internal/llm/openai"
 )
 
 // Options select which adapters Constructors returns.
@@ -31,7 +32,9 @@ func Constructors(opts Options) llm.Constructors {
 		anthropic.Kind: func(cfg llm.ProviderConfig) (llm.Provider, error) {
 			return anthropic.NewWithOptions(cfg, anthropic.Options{HTTPClient: opts.HTTPClient})
 		},
-		// M8: "openai":    openai.New,
+		openai.Kind: func(cfg llm.ProviderConfig) (llm.Provider, error) {
+			return openai.NewWithOptions(cfg, openai.Options{HTTPClient: opts.HTTPClient})
+		},
 		// M9: "gemini":    gemini.New,
 	}
 	if opts.Fake {

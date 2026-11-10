@@ -1,0 +1,36 @@
+{
+  "max_tokens": 128,
+  "messages": [
+    {
+      "content": "Be precise.",
+      "role": "system"
+    },
+    {
+      "content": "Inspect a.txt and b.txt.",
+      "role": "user"
+    }
+  ],
+  "model": "fixture-model",
+  "temperature": 0,
+  "tools": [
+    {
+      "function": {
+        "description": "Read a file.",
+        "name": "read_file",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ]
+}
