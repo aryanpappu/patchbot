@@ -1,0 +1,12 @@
+/bin/
+/dist/
+/data/
+*.sqlite
+*.sqlite-*
+.env
+.env.*
+!.env.example
+patchbot.toml
+coverage.out
+.DS_Store
+docs/planning/codex.log
