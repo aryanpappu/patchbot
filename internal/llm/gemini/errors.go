@@ -24,23 +24,28 @@ func (p *Provider) statusError(status int, header http.Header, data []byte) erro
 			} `json:"details"`
 		} `json:"error"`
 	}
-	if err := json.Unmarshal(data, &envelope); err != nil {
-		return p.failure(llm.ErrMalformed, "invalid Gemini error JSON", err)
-	}
-	e := p.failure(llm.KindFromStatus(status), "Gemini API request failed", nil)
+	decodeErr := json.Unmarshal(data, &envelope)
+	// An unreadable diagnostic body must not override the HTTP error or make a
+	// retryable status terminal. Keep the decoding cause private for inspection.
+	e := p.failure(llm.KindFromStatus(status), "Gemini API request failed", decodeErr)
 	e.Status = status
 	rpc := envelope.Error
 	// HTTP status wins. RPC code supplies classification for proxies that use an
 	// uninformative HTTP code; known status names are never echoed verbatim.
-	if rpc.Code >= 400 && (status < 400 || status >= 600) {
-		e.Kind = llm.KindFromStatus(rpc.Code)
+	if decodeErr == nil {
+		if rpc.Code >= 400 && (status < 400 || status >= 600) {
+			e.Kind = llm.KindFromStatus(rpc.Code)
+		}
+		if status == http.StatusBadRequest && (contextLimit.MatchString(rpc.Message) || strings.Contains(strings.ToLower(rpc.Status), "context_length")) {
+			e.Kind = llm.ErrContextTooLong
+			e.Message = "Gemini input exceeds the context token limit"
+		}
 	}
-	if status == http.StatusBadRequest && (contextLimit.MatchString(rpc.Message) || strings.Contains(strings.ToLower(rpc.Status), "context_length")) {
-		e.Kind = llm.ErrContextTooLong
-		e.Message = "Gemini input exceeds the context token limit"
-	}
-	if e.Kind == llm.ErrRateLimit {
+	if e.Retryable() {
 		e.RetryAfter = llm.ParseRetryAfter(header.Get("Retry-After"), time.Now())
+		if decodeErr != nil {
+			return e
+		}
 		for _, detail := range rpc.Details {
 			if detail.Type != "type.googleapis.com/google.rpc.RetryInfo" {
 				continue

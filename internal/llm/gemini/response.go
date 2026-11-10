@@ -149,6 +149,15 @@ func (p *Provider) decodePart(raw json.RawMessage, suppressCalls bool) (llm.Part
 		if err := json.Unmarshal(text, &value); err != nil || bytes.Equal(bytes.TrimSpace(text), []byte("null")) {
 			return llm.Part{}, p.failure(llm.ErrMalformed, "invalid Gemini text part", err)
 		}
+		var thought bool
+		if rawThought, ok := fields["thought"]; ok {
+			if err := json.Unmarshal(rawThought, &thought); err != nil {
+				return llm.Part{}, p.failure(llm.ErrMalformed, "invalid Gemini thought flag", err)
+			}
+		}
+		if thought {
+			return part, nil // Thought summaries are provider data, not answer text.
+		}
 		if value != "" {
 			part.Type, part.Text = llm.PartText, value
 		}

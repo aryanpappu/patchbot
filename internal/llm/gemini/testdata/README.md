@@ -49,6 +49,8 @@ Decisions at the adapter boundary:
   responses; actual wire IDs are echoed in both.
 - ProviderMeta holds the entire raw part when metadata is present, and for every
   function call (to remember whether it had an ID). Unknown parts remain opaque.
+  Text parts marked `thought:true` also remain opaque, so thought summaries are
+  excluded from answer text and from requests to other provider instances.
   Only the originating instance replays its metadata. Replay rejects changed
   normalized text/call fields. In-memory raw bytes, including signatures and
   unknown fields, are copied directly into requests, bypassing JSON compaction.
@@ -66,9 +68,11 @@ Decisions at the adapter boundary:
   to recognize context overflow. Raw API diagnostics are never exposed, because
   they can echo secrets or request bodies. Transport/decoder causes are retained
   behind llm.Error.WithCause and llm.SafeText remains safe. RetryInfo and the
-  Retry-After header use the longer positive delay. Malformed JSON is malformed,
-  even on error statuses; early body-read failures are unavailable. Every response
-  body (including errors) is capped at 10 MB. Pagination cycles fail explicitly.
+  Retry-After header use the longer positive delay for all retryable error kinds.
+  Invalid error JSON retains its HTTP classification and any Retry-After delay;
+  invalid success JSON is malformed. Early body-read failures are unavailable.
+  Every response body (including errors) is capped at 10 MB. Pagination cycles
+  fail explicitly.
 
 Limits: these tests establish the adapter's wire contract without live API/model
 validation. No model capabilities are inferred beyond models.list's

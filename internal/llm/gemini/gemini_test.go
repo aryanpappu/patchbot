@@ -250,6 +250,12 @@ func TestToolResultsGoldens(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if name == "signature" {
+				want := expected([]llm.Part{{Type: llm.PartOpaque, ProviderMeta: retained[0]}, callPart(t, "signature", 1, "call_0_0", "one"), {Type: llm.PartOpaque, ProviderMeta: retained[2]}}, llm.StopToolUse, "STOP", nil)
+				if diff := cmp.Diff(want, first); diff != "" {
+					t.Errorf("signature response (-want +got):\n%s", diff)
+				}
+			}
 			results := llm.Message{Role: llm.RoleTool}
 			for i, c := range first.Message.ToolCalls() {
 				text := fmt.Sprintf("result %d", i)
