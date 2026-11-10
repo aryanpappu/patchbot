@@ -1,0 +1,11 @@
+# Every change needs review from the owner. Security-sensitive paths are listed
+# explicitly so the rule survives if the default line is ever loosened.
+*                       @aryanpappu
+/.github/               @aryanpappu
+/internal/workspace/    @aryanpappu
+/internal/execx/        @aryanpappu
+/internal/gitx/         @aryanpappu
+/internal/secret/       @aryanpappu
+/internal/agent/        @aryanpappu
+/go.mod                 @aryanpappu
+/go.sum                 @aryanpappu
