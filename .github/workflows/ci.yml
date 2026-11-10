@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+    branches: [main, development]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: CI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Check formatting and vet
+        run: make fmt-check vet
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.15.0
+      - name: Test and build
+        run: make race build
+      - name: Check vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
