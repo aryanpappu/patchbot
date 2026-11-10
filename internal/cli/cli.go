@@ -7,6 +7,7 @@ import (
 	"io"
 
 	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/llm/providers"
 	"github.com/aryanpappu/patchbot/internal/version"
 )
 
@@ -19,7 +20,7 @@ Commands:
   reject   Reject a run (planned)
   cancel   Cancel a run (planned)
   runs     List runs (planned)
-  models   List available models (planned)
+  models   List available models
   config   Check or show configuration
   serve    Start the web interface (planned)
   version  Print version and build information
@@ -41,6 +42,8 @@ type App struct {
 	// Config holds the config search settings. Its Path and Flags are set
 	// from the command line. The zero value reads the real environment.
 	Config config.Options
+	// Providers injects optional transports and test providers.
+	Providers providers.Options
 }
 
 // Run runs one command and returns the process exit code: 0 for success, 1
@@ -74,7 +77,9 @@ func (a *App) Run(args []string) int {
 		return 0
 	case "config":
 		return a.runConfig(flags.Args()[1:])
-	case "run", "approve", "revise", "reject", "cancel", "runs", "models", "serve":
+	case "models":
+		return a.runModels(flags.Args()[1:])
+	case "run", "approve", "revise", "reject", "cancel", "runs", "serve":
 		_, _ = fmt.Fprintf(stderr, "patchbot %s: not implemented yet\n", name)
 		return 1
 	default:

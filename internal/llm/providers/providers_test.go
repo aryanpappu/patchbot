@@ -2,7 +2,6 @@ package providers_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/aryanpappu/patchbot/internal/config"
@@ -21,9 +20,8 @@ func TestConstructors(t *testing.T) {
 		t.Fatal("Options.Fake did not register the fake provider")
 	}
 
-	// Until M7 to M9 land, the real kinds have no adapter. When one is
-	// added, move its kind out of this list.
-	for _, kind := range []string{config.KindAnthropic, config.KindGemini, config.KindOpenAI} {
+	// M8 and M9 have not landed.
+	for _, kind := range []string{config.KindGemini, config.KindOpenAI} {
 		if _, ok := c[kind]; ok {
 			t.Errorf("kind %q has an adapter; update this test and the registry wiring notes", kind)
 		}
@@ -46,10 +44,10 @@ func TestRegistryFromDefaultConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The Anthropic provider is configured but has no adapter yet. It is
-	// listed, reports why it cannot be used, and still offers its models.
-	if _, err := reg.Provider("anthropic"); !errors.Is(err, llm.ErrNoAdapter) {
-		t.Errorf("Provider(anthropic) = %v, want ErrNoAdapter", err)
+	// The Anthropic adapter is registered, and missing credentials produce
+	// a config model fallback without making an HTTP request.
+	if p, err := reg.Provider("anthropic"); err != nil || p.Name() != "anthropic" {
+		t.Fatalf("Provider(anthropic) = %v, %v", p, err)
 	}
 	model, err := reg.ResolveModel("anthropic", "")
 	if err != nil || model != "claude-sonnet-5-5" {

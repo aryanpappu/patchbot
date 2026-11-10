@@ -1,0 +1,7 @@
+{
+  "type": "error",
+  "error": {
+    "type": "overloaded_error",
+    "message": "Overloaded: dummy-key request-private-text"
+  }
+}
