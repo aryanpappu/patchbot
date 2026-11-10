@@ -75,3 +75,48 @@ func TestLoopStoreRecorderUnknownUsage(t *testing.T) {
 		t.Fatalf("events=%d err=%v", len(events), err)
 	}
 }
+
+func TestRecordersRedactAuditMetadata(t *testing.T) {
+	t.Parallel()
+	const value = "ghp_0123456789abcdefghij"
+	for _, useStore := range []bool{false, true} {
+		t.Run(map[bool]string{false: "loop", true: "store"}[useStore], func(t *testing.T) {
+			step := store.Step{Phase: store.PhaseVerify, Kind: "tool", Tool: value, Status: "ok", StopReason: value}
+			var saved []store.Step
+			var kind string
+			if useStore {
+				db, run := database(t)
+				r := &StoreRecorder{Store: db, RunID: run.ID}
+				if err := r.Record(t.Context(), step); err != nil {
+					t.Fatal(err)
+				}
+				if err := r.Event(t.Context(), value, json.RawMessage(`{}`)); err != nil {
+					t.Fatal(err)
+				}
+				var err error
+				saved, err = db.ListSteps(t.Context(), run.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				events, err := db.EventsAfter(t.Context(), run.ID, 0, 10)
+				if err != nil || len(events) != 1 {
+					t.Fatalf("events=%v err=%v", events, err)
+				}
+				kind = events[0].Type
+			} else {
+				l, _, r, _ := setup(t)
+				if err := l.record(t.Context(), step); err != nil {
+					t.Fatal(err)
+				}
+				if err := l.event(t.Context(), value, map[string]any{}); err != nil {
+					t.Fatal(err)
+				}
+				saved, kind = r.steps, r.events[0]
+			}
+			raw, _ := json.Marshal(saved)
+			if len(saved) != 1 || strings.Contains(string(raw), value) || strings.Contains(kind, value) || !strings.Contains(string(raw), "redacted") {
+				t.Fatalf("audit metadata leaked: %s %s", raw, kind)
+			}
+		})
+	}
+}

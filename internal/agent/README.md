@@ -5,8 +5,9 @@ ordered tool dispatch, and bounded endings. Supply a raw provider with adapter
 retries disabled. `Env.Redactor` is shared with the registry and executor; configure
 it before constructing them. A session belongs to one goroutine.
 
-The stage methods replace any caller-supplied registry with the appropriate fixed
-set. `Refine` saves a spec version and returns `awaiting_approval` or `needs_info`.
+The registry is private and only stage constructors can install the appropriate
+fixed set. A bare `Loop.Run` fails before contacting the provider. `Refine` saves
+a spec version and returns `awaiting_approval` or `needs_info`.
 `Investigate` returns a report. Neither stage can execute commands or write files.
 
 Coding requires a capability:
@@ -32,6 +33,8 @@ cannot construct a valid token. A failed check returns a zero token, which is
 rejected again at runtime if a caller ignores its error.
 Code rechecks the persisted approval at entry and immediately before building its
 write registry, and verifies the canonical spec content and absence of questions.
+The code-stage registry wrapper itself requires the private token; a raw
+`tools.NewCodeRegistry` cannot be installed in a `Loop`.
 The runner must leave the run `approved` until this entry check has completed.
 
 The harness uses `Changes.HasChanges`, not model claims, and runs the configured

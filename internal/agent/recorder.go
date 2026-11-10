@@ -50,6 +50,7 @@ func (r *StoreRecorder) Record(ctx context.Context, step store.Step) error {
 	if step.Phase == "" {
 		step.Phase = r.Phase
 	}
+	redactStepMetadata(&step, r.Redactor)
 	step.InputJSON = redactJSON([]byte(step.InputJSON), r.Redactor)
 	step.OutputText = redactJSON([]byte(step.OutputText), r.Redactor)
 	_, err := r.Store.RecordStep(ctx, step)
@@ -61,7 +62,7 @@ func (r *StoreRecorder) Event(ctx context.Context, kind string, data json.RawMes
 	if r.Store == nil {
 		return errors.New("recorder store is missing")
 	}
-	event := store.Event{RunID: r.RunID, Type: kind, PayloadJSON: json.RawMessage(redactJSON(data, r.Redactor)), CreatedAt: time.Now().UTC()}
+	event := store.Event{RunID: r.RunID, Type: tools.CapOutput(r.Redactor.Redact(kind), 256), PayloadJSON: json.RawMessage(redactJSON(data, r.Redactor)), CreatedAt: time.Now().UTC()}
 	seq, err := r.Store.AppendEvent(ctx, event)
 	if err != nil {
 		return err
@@ -82,6 +83,7 @@ func (l *Loop) record(ctx context.Context, step store.Step) error {
 	if step.Kind == "test" || step.Tool == "run_cmd" {
 		capBytes = 256 << 10
 	}
+	redactStepMetadata(&step, l.redactor())
 	step.OutputText = tools.CapOutput(l.redactor().Redact(step.OutputText), capBytes)
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
@@ -107,10 +109,18 @@ func (l *Loop) event(ctx context.Context, kind string, data any) error {
 	}
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	if err := l.Recorder.Event(recordCtx, kind, json.RawMessage(safe)); err != nil {
+	if err := l.Recorder.Event(recordCtx, tools.CapOutput(l.redactor().Redact(kind), 256), json.RawMessage(safe)); err != nil {
 		return &Error{Kind: "internal", Message: "recording event failed"}
 	}
 	return nil
+}
+
+func redactStepMetadata(step *store.Step, redactor *secret.Redactor) {
+	step.Phase = store.Phase(tools.CapOutput(redactor.Redact(string(step.Phase)), 256))
+	step.Kind = tools.CapOutput(redactor.Redact(step.Kind), 256)
+	step.Tool = tools.CapOutput(redactor.Redact(step.Tool), 256)
+	step.Status = tools.CapOutput(redactor.Redact(step.Status), 256)
+	step.StopReason = tools.CapOutput(redactor.Redact(step.StopReason), 256)
 }
 
 func redactJSON(raw []byte, redactor *secret.Redactor) string {
@@ -143,7 +153,7 @@ func redactStrings(value any, redactor *secret.Redactor) any {
 
 // recordedMessages omits opaque provider data from records. It remains intact
 // in the live conversation for provider signatures and thinking round trips.
-func recordedMessages(messages []llm.Message) []llm.Message {
+func recordedMessages(messages []llm.Message, redactor *secret.Redactor) []llm.Message {
 	out := llm.CloneMessages(messages)
 	for i := range out {
 		parts := out[i].Parts[:0]
@@ -152,6 +162,14 @@ func recordedMessages(messages []llm.Message) []llm.Message {
 				continue
 			}
 			part.ProviderMeta = nil
+			if part.ToolCall != nil {
+				part.ToolCall.ID = redactIdentifier(part.ToolCall.ID, redactor)
+				part.ToolCall.Name = redactIdentifier(part.ToolCall.Name, redactor)
+			}
+			if part.ToolResult != nil {
+				part.ToolResult.CallID = redactIdentifier(part.ToolResult.CallID, redactor)
+				part.ToolResult.Name = redactIdentifier(part.ToolResult.Name, redactor)
+			}
 			if part.ToolCall != nil && !json.Valid(part.ToolCall.Args) {
 				part.ToolCall.Args, _ = json.Marshal(string(part.ToolCall.Args))
 			}

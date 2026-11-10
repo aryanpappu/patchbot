@@ -97,10 +97,11 @@ type Engine interface {
 
 // Loop is immutable during Run. A provider supplied here must have its own
 // retries disabled: Loop applies llm.WithRetry and records every attempt.
+// Only the stage methods can install tools; callers cannot inject a registry.
 type Loop struct {
 	Provider    llm.Provider
 	Model       string
-	Tools       *tools.Registry
+	tools       *stageRegistry
 	Env         *tools.Env
 	Pricing     llm.Pricing
 	Recorder    Recorder

@@ -11,6 +11,39 @@ import (
 	"github.com/aryanpappu/patchbot/internal/tools"
 )
 
+// stageRegistry cannot be supplied by a caller or replaced by a raw tools
+// registry. Its constructors fix the stage's capabilities.
+type stageRegistry struct{ *tools.Registry }
+
+func newRefineRegistry(env *tools.Env) (*stageRegistry, error) {
+	r, err := tools.NewReadOnlyRegistry(env, tools.SubmitSpec{})
+	if err != nil {
+		return nil, err
+	}
+	return &stageRegistry{r}, nil
+}
+
+func newInvestigateRegistry(env *tools.Env) (*stageRegistry, error) {
+	r, err := tools.NewReadOnlyRegistry(env, tools.SubmitReport{})
+	if err != nil {
+		return nil, err
+	}
+	return &stageRegistry{r}, nil
+}
+
+// No write-capable stage registry can be constructed without Check's private
+// token. Revalidate it immediately before registering writes and commands.
+func newCodeRegistry(ctx context.Context, approval approvalToken, env *tools.Env, runID int64, issueHash string, criteria []string) (*stageRegistry, error) {
+	if _, err := validateApproval(ctx, approval, runID, issueHash); err != nil {
+		return nil, err
+	}
+	r, err := tools.NewCodeRegistry(env, tools.RunCmd{}, tools.Submit{Criteria: criteria})
+	if err != nil {
+		return nil, &Error{Kind: "internal", Message: "build code tools failed"}
+	}
+	return &stageRegistry{r}, nil
+}
+
 // SpecStore appends an immutable spec version. store.Store implements it.
 type SpecStore interface {
 	SaveSpec(context.Context, store.Spec) (store.Spec, error)
@@ -45,7 +78,7 @@ func (l *Loop) Refine(ctx context.Context, req RefineRequest) (SpecResult, error
 	}
 	stage := *l
 	var err error
-	stage.Tools, err = tools.NewReadOnlyRegistry(stage.Env, tools.SubmitSpec{})
+	stage.tools, err = newRefineRegistry(stage.Env)
 	if err != nil {
 		return SpecResult{}, &Error{Kind: "internal", Message: "build refine tools failed"}
 	}
@@ -106,7 +139,7 @@ type ReportResult struct {
 func (l *Loop) Investigate(ctx context.Context, req InvestigateRequest) (ReportResult, error) {
 	stage := *l
 	var err error
-	stage.Tools, err = tools.NewReadOnlyRegistry(stage.Env, tools.SubmitReport{})
+	stage.tools, err = newInvestigateRegistry(stage.Env)
 	if err != nil {
 		return ReportResult{}, &Error{Kind: "internal", Message: "build investigation tools failed"}
 	}
@@ -167,13 +200,9 @@ func (l *Loop) Code(ctx context.Context, approval approvalToken, req CodeRequest
 		return CodeResult{}, &Error{Kind: "internal", Message: "code requires harness change detection"}
 	}
 	stage := *l
-	if _, err := validateApproval(ctx, approval, req.RunID, IssueHash(req.Title, req.Body)); err != nil {
-		return CodeResult{}, err
-	}
-	// Gate validation above is the only route to constructing the code registry.
-	stage.Tools, err = tools.NewCodeRegistry(stage.Env, tools.RunCmd{}, tools.Submit{Criteria: draft.AcceptanceCriteria})
+	stage.tools, err = newCodeRegistry(ctx, approval, stage.Env, req.RunID, IssueHash(req.Title, req.Body), draft.AcceptanceCriteria)
 	if err != nil {
-		return CodeResult{}, &Error{Kind: "internal", Message: "build code tools failed"}
+		return CodeResult{}, err
 	}
 	session := startStage(req.Session, codePrompt, issueData(stage.redactor().Redact(req.Title), stage.redactor().Redact(req.Body))+"\nApproved specification:\n"+untrusted("approved specification", stage.redactor().Redact(spec.BodyMD)))
 	lim := req.Limits.defaults()
@@ -181,12 +210,13 @@ func (l *Loop) Code(ctx context.Context, approval approvalToken, req CodeRequest
 	for {
 		result.CanPublish, result.Salvage, result.Draft = false, false, false
 		outcome, loopErr := stage.Run(ctx, session, lim)
-		result.Outcome = outcome
 		if outcome.Synthesized && outcome.Submission != nil {
 			for _, text := range draft.AcceptanceCriteria {
 				outcome.Submission.Criteria = append(outcome.Submission.Criteria, tools.CriterionResult{Text: text, Note: "No structured assessment was submitted."})
 			}
+			outcome.Submission = outcome.Submission.Redacted(stage.redactor())
 		}
+		result.Outcome = outcome
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}

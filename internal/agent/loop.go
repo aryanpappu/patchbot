@@ -36,7 +36,7 @@ func (l *Loop) Run(ctx context.Context, s *Session, lim Limits) (Outcome, error)
 	if err := ctx.Err(); err != nil {
 		return Outcome{}, err
 	}
-	if s == nil || l.Provider == nil || l.Tools == nil || l.Model == "" {
+	if s == nil || l.Provider == nil || l.tools == nil || l.Model == "" {
 		return Outcome{}, &Error{Kind: "internal", Message: "loop requires a session, provider, model and tools"}
 	}
 	lim = lim.defaults()
@@ -140,7 +140,7 @@ func (l *Loop) attempt(ctx context.Context, s *Session, lim Limits) (*llm.ChatRe
 		return nil, &limitError{reason}
 	}
 	redactConversation(s.Messages, l.redactor())
-	req := llm.ChatRequest{Model: l.Model, System: s.System, Messages: s.Messages, Tools: l.Tools.Specs(), MaxTokens: lim.MaxOutputTokens}
+	req := llm.ChatRequest{Model: l.Model, System: s.System, Messages: s.Messages, Tools: l.tools.Specs(), MaxTokens: lim.MaxOutputTokens}
 	// One token per serialized byte, plus envelope overhead, is a conservative
 	// first-call estimate without depending on any provider's tokenizer. Never
 	// reserve less than the last reported input, including cached input.
@@ -190,7 +190,7 @@ func (l *Loop) attempt(ctx context.Context, s *Session, lim Limits) (*llm.ChatRe
 	}
 	finish := l.now()
 	duration, turn := finish.Sub(start).Milliseconds(), int64(s.Turns)
-	inputJSON, _ := json.Marshal(map[string]any{"model": l.Model, "messages": recordedMessages(req.Messages), "reserved_tokens": tokens, "reserved_cost_micros": reserve, "usage_missing": usage == nil})
+	inputJSON, _ := json.Marshal(map[string]any{"model": l.Model, "messages": recordedMessages(req.Messages, l.redactor()), "reserved_tokens": tokens, "reserved_cost_micros": reserve, "usage_missing": usage == nil})
 	step := store.Step{Kind: "llm", Tool: "chat", Status: "ok", Turn: &turn, InputJSON: string(inputJSON), StartedAt: start, FinishedAt: &finish, DurationMS: &duration}
 	if known {
 		step.CostMicros = &cost
@@ -201,7 +201,7 @@ func (l *Loop) attempt(ctx context.Context, s *Session, lim Limits) (*llm.ChatRe
 	}
 	if resp != nil {
 		step.StopReason = string(resp.StopReason)
-		out, _ := json.Marshal(recordedMessages([]llm.Message{resp.Message}))
+		out, _ := json.Marshal(recordedMessages([]llm.Message{resp.Message}, l.redactor()))
 		step.OutputText = redactJSON(out, l.redactor())
 	}
 	if callErr != nil {
@@ -228,6 +228,11 @@ func (l *Loop) validateResponse(s *Session, resp *llm.ChatResponse) error {
 		return &llm.Error{Kind: llm.ErrMalformed, Message: "empty provider response"}
 	}
 	msg := replyMessage(resp)
+	for _, call := range msg.ToolCalls() {
+		if err := tools.ValidateToolIdentifiers(call); err != nil || l.redactor().Redact(call.Name) != call.Name {
+			return &llm.Error{Kind: llm.ErrMalformed, Message: "unsafe tool identifiers"}
+		}
+	}
 	candidate := append(llm.CloneMessages(s.Messages), msg)
 	redactConversation(candidate, l.redactor())
 	if msg.Role != llm.RoleAssistant || llm.Validate(candidate) != nil {
@@ -269,7 +274,8 @@ func (l *Loop) consume(ctx context.Context, s *Session, resp *llm.ChatResponse) 
 		s.malformed = 0
 		s.endTurns++
 		if s.endTurns >= 2 {
-			return Outcome{Reason: EndSubmitted, Synthesized: true, Submission: &tools.Submission{Summary: msg.Text(), PRTitle: "Proposed change", Report: msg.Text()}}, true, nil
+			submission := (&tools.Submission{Summary: msg.Text(), PRTitle: "Proposed change", Report: msg.Text()}).Redacted(l.redactor())
+			return Outcome{Reason: EndSubmitted, Synthesized: true, Submission: submission}, true, nil
 		}
 		feedback(s, "Call the stage's terminal tool to finish, or continue working.")
 	default:
@@ -290,6 +296,7 @@ func (l *Loop) dispatch(ctx context.Context, s *Session, calls []llm.ToolCall) (
 	var dispatchErr error
 	warn := false
 	for _, call := range calls {
+		call.ID = redactIdentifier(call.ID, l.redactor())
 		start := l.now()
 		eventArgs, argsErr := jsonValue(call.Args)
 		if argsErr != nil {
@@ -307,7 +314,7 @@ func (l *Loop) dispatch(ctx context.Context, s *Session, calls []llm.ToolCall) (
 			result = llm.ToolResult{CallID: call.ID, Name: call.Name, Content: "Skipped: the stage has already ended.", IsError: true}
 			detail = tools.Result{Content: result.Content, RecordOutput: result.Content, IsError: true}
 		} else {
-			result, detail, err = l.Tools.DispatchDetailed(ctx, call)
+			result, detail, err = l.tools.DispatchDetailed(ctx, call)
 			if err != nil {
 				result = llm.ToolResult{CallID: call.ID, Name: call.Name, Content: "Tool execution failed in the harness.", IsError: true}
 				detail = tools.Result{IsError: true, RecordOutput: result.Content}
@@ -409,9 +416,20 @@ func compact(messages []llm.Message, keepTurns int) {
 func withoutCalls(msg llm.Message) llm.Message {
 	parts := msg.Parts[:0]
 	for _, part := range msg.Parts {
-		if part.Type != llm.PartToolCall {
-			parts = append(parts, part)
+		if part.Type == llm.PartToolCall {
+			continue
 		}
+		if part.Type == llm.PartOpaque {
+			// Adapters may preserve an incomplete action as an opaque block.
+			// Inspect only its discriminator, retaining thinking and signatures.
+			var block struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(part.ProviderMeta, &block) == nil && block.Type == "tool_use" {
+				continue
+			}
+		}
+		parts = append(parts, part)
 	}
 	msg.Parts = parts
 	return msg
@@ -491,6 +509,8 @@ func redactConversation(messages []llm.Message, redactor interface{ Redact(strin
 				part.Text = redactor.Redact(part.Text)
 			case llm.PartToolCall:
 				if part.ToolCall != nil {
+					part.ToolCall.ID = redactIdentifier(part.ToolCall.ID, redactor)
+					part.ToolCall.Name = redactIdentifier(part.ToolCall.Name, redactor)
 					value, err := jsonValue(part.ToolCall.Args)
 					if _, object := value.(map[string]any); err == nil && object {
 						// Redact string leaves without changing JSON numbers.
@@ -503,12 +523,25 @@ func redactConversation(messages []llm.Message, redactor interface{ Redact(strin
 				}
 			case llm.PartToolResult:
 				if part.ToolResult != nil {
+					part.ToolResult.CallID = redactIdentifier(part.ToolResult.CallID, redactor)
+					part.ToolResult.Name = redactIdentifier(part.ToolResult.Name, redactor)
 					part.ToolResult.Content = redactor.Redact(part.ToolResult.Content)
 				}
 			}
 		}
 	}
 }
+
+// A shared deterministic alias keeps call/result pairs and distinct sensitive
+// identifiers intact. A plain redaction mask would collapse different call IDs.
+func redactIdentifier(value string, redactor interface{ Redact(string) string }) string {
+	if redactor.Redact(value) == value {
+		return value
+	}
+	hash := sha256.Sum256([]byte(value))
+	return fmt.Sprintf("redacted_%x", hash[:24])
+}
+
 func redactWith(value any, r interface{ Redact(string) string }) any {
 	switch v := value.(type) {
 	case string:

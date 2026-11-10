@@ -99,13 +99,13 @@ func setup(t *testing.T, steps ...fake.Step) (*Loop, *fake.Provider, *recorder, 
 	env := &tools.Env{WS: ws, RunDir: base, Policy: policy, Redactor: secret.NewRedactor()}
 	ex := &executor{}
 	env.Exec = ex
-	registry, err := tools.NewReadOnlyRegistry(env, tools.SubmitReport{})
+	registry, err := newInvestigateRegistry(env)
 	if err != nil {
 		t.Fatal(err)
 	}
 	p := fake.New("fake", steps...)
 	r := &recorder{}
-	l := &Loop{Provider: p, Model: "model", Tools: registry, Env: env, Pricing: llm.Pricing{Free: true}, Recorder: r, RetryClock: &testClock{now: time.Now()}}
+	l := &Loop{Provider: p, Model: "model", tools: registry, Env: env, Pricing: llm.Pricing{Free: true}, Recorder: r, RetryClock: &testClock{now: time.Now()}}
 	return l, p, r, ex
 }
 func session() *Session {
@@ -190,12 +190,13 @@ func TestLoopRefusalAndTruncation(t *testing.T) {
 	for _, reason := range []llm.StopReason{llm.StopRefusal, llm.StopMaxTokens} {
 		t.Run(string(reason), func(t *testing.T) {
 			cut := fake.Step{Stop: reason, ToolCalls: []llm.ToolCall{{Name: "write_file", Args: json.RawMessage(`{"path":"README.md","content":`)}}}
-			l, p, _, _ := setup(t, cut, reportStep())
-			reg, err := tools.NewCodeRegistry(l.Env, tools.SubmitReport{})
+			l, p, _, _ := setup(t, cut, submitStep())
+			token, _, run := approved(t)
+			reg, err := newCodeRegistry(t.Context(), token, l.Env, run.ID, IssueHash("title", "body"), draftSpec().AcceptanceCriteria)
 			if err != nil {
 				t.Fatal(err)
 			}
-			l.Tools = reg
+			l.tools = reg
 			out, err := l.Run(t.Context(), session(), Limits{})
 			if err != nil {
 				t.Fatal(err)
@@ -347,16 +348,17 @@ func TestLoopUnknownUsageAndPrices(t *testing.T) {
 func TestLoopSecretsNeverReachRecorderOrNextRequest(t *testing.T) {
 	t.Parallel()
 	const key = "private-password-with-newline\nsecond-line"
-	l, p, r, ex := setup(t, turn(call("run_cmd", map[string]any{"name": "test"})), reportStep())
+	l, p, r, ex := setup(t, turn(call("run_cmd", map[string]any{"name": "test"})), submitStep())
 	l.Env.Redactor = secret.NewRedactor(key)
 	ex.run = func(context.Context, execx.Spec) (execx.Result, error) {
 		return execx.Result{Output: strings.Repeat("a", 1900) + key + strings.Repeat("a", 6200) + key + strings.Repeat("z", 280000), ExitCode: 1}, nil
 	}
-	registry, err := tools.NewCodeRegistry(l.Env, tools.RunCmd{}, tools.SubmitReport{})
+	token, _, run := approved(t)
+	registry, err := newCodeRegistry(t.Context(), token, l.Env, run.ID, IssueHash("title", "body"), draftSpec().AcceptanceCriteria)
 	if err != nil {
 		t.Fatal(err)
 	}
-	l.Tools = registry
+	l.tools = registry
 	s := session()
 	_, err = l.Run(t.Context(), s, Limits{})
 	if err != nil {

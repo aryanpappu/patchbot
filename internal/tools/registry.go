@@ -136,6 +136,12 @@ func (r *Registry) DispatchDetailed(ctx context.Context, call llm.ToolCall) (llm
 	if err := ctx.Err(); err != nil {
 		return llm.ToolResult{}, Result{}, err
 	}
+	if err := ValidateToolIdentifiers(call); err != nil {
+		return llm.ToolResult{}, Result{}, err
+	}
+	if r.env.Redactor.Redact(call.Name) != call.Name {
+		return llm.ToolResult{}, Result{}, errors.New("unsafe tool name")
+	}
 	start := time.Now()
 	res, err := r.run(ctx, call)
 	if err != nil {
