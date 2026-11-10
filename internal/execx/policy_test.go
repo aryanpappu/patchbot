@@ -77,7 +77,8 @@ func TestPolicyRejectsExecutables(t *testing.T) {
 
 func TestPolicyIgnoresAmbientPath(t *testing.T) {
 	root := t.TempDir()
-	fake := filepath.Join(root, "go")
+	// "true" lives in /usr/bin on every supported OS. "go" does not: CI runners install it outside TrustedPath.
+	fake := filepath.Join(root, "true")
 	if err := os.WriteFile(fake, []byte("not an executable format"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +86,7 @@ func TestPolicyIgnoresAmbientPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", root)
-	p, err := NewPolicy(root, map[string][]string{"test": {"go", "test", "./..."}})
+	p, err := NewPolicy(root, map[string][]string{"test": {"true"}})
 	if err != nil {
 		t.Fatal(err)
 	}

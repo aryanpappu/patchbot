@@ -18,6 +18,12 @@ linters:
   settings:
     revive:
       enable-default-rules: true
+  exclusions:
+    rules:
+      # agent.Check returns a private approval token on purpose: callers can pass it on but never build one.
+      - path: internal/agent/gate\.go
+        linters: [revive]
+        text: unexported-return
 
 formatters:
   enable:

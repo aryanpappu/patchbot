@@ -39,8 +39,6 @@ type approvalToken struct {
 // Check returns a capability only for the latest approved version and issue.
 // The concrete return type and all its fields are private. A caller can pass
 // the inferred value to Loop.Code, but cannot construct one itself.
-//
-//nolint:revive // Returning a private capability prevents callers from constructing a token.
 func Check(ctx context.Context, s ApprovalStore, runID int64, issueHash string, options ...ApprovalOptions) (approvalToken, error) {
 	if err := ctx.Err(); err != nil {
 		return approvalToken{}, err
