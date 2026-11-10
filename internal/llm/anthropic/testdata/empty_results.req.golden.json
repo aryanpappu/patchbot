@@ -1,0 +1,99 @@
+{
+  "max_tokens": 1024,
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "request-private-text",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "id": "tool_1",
+          "input": {
+            "path": "README.md"
+          },
+          "name": "read_file",
+          "type": "tool_use"
+        },
+        {
+          "id": "tool_2",
+          "input": {
+            "query": "TODO"
+          },
+          "name": "search",
+          "type": "tool_use"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "is_error": false,
+          "tool_use_id": "tool_1",
+          "type": "tool_result"
+        },
+        {
+          "cache_control": {
+            "type": "ephemeral"
+          },
+          "is_error": true,
+          "tool_use_id": "tool_2",
+          "type": "tool_result"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "claude-test",
+  "system": [
+    {
+      "cache_control": {
+        "type": "ephemeral"
+      },
+      "text": "Be helpful.",
+      "type": "text"
+    }
+  ],
+  "tools": [
+    {
+      "description": "Read a file",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "read_file"
+    },
+    {
+      "cache_control": {
+        "type": "ephemeral"
+      },
+      "description": "Search text",
+      "input_schema": {
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "search"
+    }
+  ]
+}

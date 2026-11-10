@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -145,6 +146,7 @@ func TestChatGoldens(t *testing.T) {
 		{name: "one_tool", parts: []llm.Part{call1()}, stop: llm.StopToolUse},
 		{name: "two_tools", parts: []llm.Part{call1(), call2()}, stop: llm.StopToolUse},
 		{name: "two_results", parts: []llm.Part{llm.Text("Hello.")}},
+		{name: "empty_results", parts: []llm.Part{llm.Text("Hello.")}},
 		{name: "mixed", parts: []llm.Part{llm.Text("First."), call1(), llm.Text("Then."), call2()}, stop: llm.StopToolUse},
 		{name: "thinking", parts: []llm.Part{op(thinking), op(redacted), call1()}, stop: llm.StopToolUse},
 		{name: "unknown", parts: []llm.Part{op(unknown), llm.Text("Hello.")}},
@@ -152,6 +154,7 @@ func TestChatGoldens(t *testing.T) {
 		{name: "refusal", parts: []llm.Part{llm.Text("I cannot help.")}, stop: llm.StopRefusal},
 		{name: "missing_usage", parts: []llm.Part{llm.Text("Hello.")}, noUsage: true},
 		{name: "null_usage", parts: []llm.Part{llm.Text("Hello.")}, noUsage: true},
+		{name: "empty_usage", parts: []llm.Part{llm.Text("Hello.")}, noUsage: true},
 		{name: "stop_sequence", parts: []llm.Part{llm.Text("Hello.")}, rawStop: "stop_sequence"},
 		{name: "context_window", parts: []llm.Part{llm.Text("Hello.")}, stop: llm.StopMaxTokens, rawStop: "model_context_window_exceeded"},
 		{name: "unknown_stop", parts: []llm.Part{llm.Text("Hello.")}, stop: llm.StopOther, rawStop: "future_stop"},
@@ -186,6 +189,14 @@ func TestChatGoldens(t *testing.T) {
 				req.Messages = append(req.Messages, assistant(call1(), call2()),
 					llm.Message{Role: llm.RoleTool, Parts: []llm.Part{llm.Result("tool_1", "read_file", "file contents", false)}},
 					llm.Message{Role: llm.RoleTool, Parts: []llm.Part{llm.Result("tool_2", "search", "search failed", true)}}, llm.UserText("Please continue."))
+			}
+			if tc.name == "empty_results" {
+				req.Tools = tools()
+				req.Messages = append(req.Messages, assistant(call1(), call2()),
+					llm.Message{Role: llm.RoleTool, Parts: []llm.Part{
+						llm.Result("tool_1", "read_file", "", false),
+						llm.Result("tool_2", "search", "", true),
+					}})
 			}
 			got, err := provider(t, server).Chat(context.Background(), req)
 			if err != nil {
@@ -421,6 +432,127 @@ func TestMalformedResponses(t *testing.T) {
 				t.Errorf("error=%v, want malformed", err)
 			}
 		})
+	}
+}
+
+func TestUsageTokenPresence(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		usage string
+		want  *llm.Usage
+	}{
+		{name: "missing_input", usage: `{"output_tokens":7}`},
+		{name: "missing_output", usage: `{"input_tokens":12}`},
+		{name: "null_input", usage: `{"input_tokens":null,"output_tokens":7}`},
+		{name: "null_output", usage: `{"input_tokens":12,"output_tokens":null}`},
+		{name: "both_null", usage: `{"input_tokens":null,"output_tokens":null}`},
+		{name: "zero_tokens", usage: `{"input_tokens":0,"output_tokens":0}`, want: &llm.Usage{}},
+		{name: "missing_cache", usage: `{"input_tokens":12,"output_tokens":7}`, want: &llm.Usage{InputTokens: 12, OutputTokens: 7}},
+		{name: "null_cache", usage: `{"input_tokens":12,"output_tokens":7,"cache_creation_input_tokens":null,"cache_read_input_tokens":null}`, want: &llm.Usage{InputTokens: 12, OutputTokens: 7}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var body map[string]json.RawMessage
+			if err := json.Unmarshal(fixture(t, "text"), &body); err != nil {
+				t.Fatal(err)
+			}
+			body["usage"] = json.RawMessage(tc.usage)
+			server := testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if err := json.NewEncoder(w).Encode(body); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			got, err := provider(t, server).Chat(context.Background(), request())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tc.want, got.Usage); diff != "" {
+				t.Errorf("usage (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestInterruptedResponseBody(t *testing.T) {
+	t.Parallel()
+	for _, partialBody := range []string{"", `{"content":`} {
+		t.Run(fmt.Sprintf("partial_bytes_%d", len(partialBody)), func(t *testing.T) {
+			t.Parallel()
+			var calls atomic.Int32
+			body := fixture(t, "text")
+			server := testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				checkHTTP(t, r, http.MethodPost, "/v1/messages")
+				w.Header().Set("Content-Type", "application/json")
+				if calls.Add(1) > 1 {
+					_, _ = w.Write(body)
+					return
+				}
+				w.Header().Set("request-id", "req_interrupted")
+				w.Header().Set("Content-Length", "1000")
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(w, partialBody)
+				w.(http.Flusher).Flush()
+				conn, _, err := w.(http.Hijacker).Hijack()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				_ = conn.Close()
+			}))
+			defer server.Close()
+			var retries int
+			p := llm.WithRetry(provider(t, server), llm.RetryPolicy{
+				MaxAttempts: 2,
+				Jitter:      func(time.Duration) time.Duration { return 0 },
+				OnRetry: func(info llm.RetryInfo) {
+					retries++
+					e, ok := errors.AsType[*llm.Error](info.Err)
+					if !ok || e.Kind != llm.ErrUnavailable || e.RequestID != "req_interrupted" || !errors.Is(info.Err, io.ErrUnexpectedEOF) {
+						t.Errorf("interrupted response error = %v, want unavailable with unexpected EOF and request ID", info.Err)
+					}
+				},
+			}, nil)
+			got, err := p.Chat(context.Background(), request())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Message.Text() != "Hello." || calls.Load() != 2 || retries != 1 {
+				t.Errorf("response=%+v, calls=%d, retries=%d", got, calls.Load(), retries)
+			}
+		})
+	}
+}
+
+type failingBody struct{ err error }
+
+func (b failingBody) Read([]byte) (int, error) { return 0, b.err }
+func (failingBody) Close() error               { return nil }
+
+func TestTransportAndBodyReadErrors(t *testing.T) {
+	t.Parallel()
+	for _, cause := range []error{io.ErrUnexpectedEOF, syscall.ECONNRESET} {
+		for _, headersReceived := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%v/headers_%t", cause, headersReceived), func(t *testing.T) {
+				t.Parallel()
+				client := &http.Client{Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
+					if !headersReceived {
+						return nil, cause
+					}
+					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: failingBody{cause}, Request: r}, nil
+				})}
+				p, err := anthropic.NewWithOptions(llm.ProviderConfig{Name: "test", APIKey: secret.New("dummy-key"), BaseURL: "http://configured.invalid"}, anthropic.Options{HTTPClient: client})
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = p.Chat(context.Background(), request())
+				if !errors.Is(err, cause) || !errors.Is(err, &llm.Error{Kind: llm.ErrUnavailable}) || !llm.IsRetryable(err) {
+					t.Errorf("error=%v, want retryable unavailable with cause %v", err, cause)
+				}
+			})
+		}
 	}
 }
 

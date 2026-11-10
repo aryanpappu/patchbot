@@ -82,14 +82,27 @@ func (p *Provider) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatResp
 		return nil, p.failure(llm.ErrBadRequest, "request exceeds SDK non-streaming limits or has invalid options", err)
 	}
 	var raw *http.Response
-	msg, err := p.messages.New(ctx, params, option.WithResponseInto(&raw))
+	var body []byte
+	// Let the SDK finish reading the body before decoding it. A dropped
+	// connection and incomplete JSON can both report io.ErrUnexpectedEOF;
+	// only a decoding failure of a complete body is malformed.
+	_, err = p.messages.New(ctx, params, option.WithResponseInto(&raw), option.WithResponseBodyInto(&body))
 	if err != nil {
 		return nil, p.mapError(ctx, err, raw)
 	}
-	if msg == nil {
-		return nil, p.failure(llm.ErrMalformed, "missing message", nil)
+	var msg sdk.Message
+	if err := json.Unmarshal(body, &msg); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		failure := p.failure(llm.ErrMalformed, "invalid provider response", err)
+		if raw != nil {
+			failure.RequestID = raw.Header.Get("request-id")
+			failure.RetryAfter = llm.ParseRetryAfter(raw.Header.Get("retry-after"), time.Now())
+		}
+		return nil, failure
 	}
-	return p.response(msg, raw)
+	return p.response(&msg, raw)
 }
 
 // Consecutive normalized tool messages can be supplied by callers that produce
@@ -133,7 +146,11 @@ func (p *Provider) params(req llm.ChatRequest) (sdk.MessageNewParams, error) {
 				blocks = append(blocks, sdk.NewToolUseBlock(c.ID, c.Args, c.Name))
 			case llm.PartToolResult:
 				r := part.ToolResult
-				blocks = append(blocks, sdk.NewToolResultBlock(r.CallID, r.Content, r.IsError))
+				block := sdk.NewToolResultBlock(r.CallID, r.Content, r.IsError)
+				if r.Content == "" {
+					block.OfToolResult.Content = nil
+				}
+				blocks = append(blocks, block)
 			case llm.PartOpaque:
 				if m.Origin != p.Name() {
 					continue
@@ -182,7 +199,7 @@ func (p *Provider) response(msg *sdk.Message, raw *http.Response) (*llm.ChatResp
 	if raw != nil {
 		out.RequestID = raw.Header.Get("request-id")
 	}
-	if msg.JSON.Usage.Valid() {
+	if msg.JSON.Usage.Valid() && msg.Usage.JSON.InputTokens.Valid() && msg.Usage.JSON.OutputTokens.Valid() {
 		out.Usage = &llm.Usage{InputTokens: msg.Usage.InputTokens, OutputTokens: msg.Usage.OutputTokens, CacheReadTokens: msg.Usage.CacheReadInputTokens, CacheWriteTokens: msg.Usage.CacheCreationInputTokens}
 	}
 	for _, b := range msg.Content {
@@ -295,9 +312,6 @@ func (p *Provider) mapError(ctx context.Context, err error, raw *http.Response) 
 			}
 		}
 		out.Message = "provider rejected the request"
-	} else if raw != nil && raw.StatusCode >= 200 && raw.StatusCode < 300 {
-		out.Kind = llm.ErrMalformed
-		out.Message = "invalid provider response"
 	}
 	if raw != nil {
 		out.RequestID = raw.Header.Get("request-id")
