@@ -1,0 +1,20 @@
+{
+  "id": "msg_synthetic",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-test",
+  "content": [
+    {
+      "type": "text",
+      "text": "I cannot help."
+    }
+  ],
+  "stop_reason": "refusal",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 12,
+    "output_tokens": 7,
+    "cache_creation_input_tokens": 20,
+    "cache_read_input_tokens": 30
+  }
+}

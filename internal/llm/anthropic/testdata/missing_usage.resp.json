@@ -1,0 +1,14 @@
+{
+  "id": "msg_synthetic",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-test",
+  "content": [
+    {
+      "type": "text",
+      "text": "Hello."
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null
+}

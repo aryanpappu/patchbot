@@ -1,0 +1,40 @@
+{
+  "id": "msg_synthetic",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-test",
+  "content": [
+    {
+      "type": "text",
+      "text": "First."
+    },
+    {
+      "type": "tool_use",
+      "id": "tool_1",
+      "name": "read_file",
+      "input": {
+        "path": "README.md"
+      }
+    },
+    {
+      "type": "text",
+      "text": "Then."
+    },
+    {
+      "type": "tool_use",
+      "id": "tool_2",
+      "name": "search",
+      "input": {
+        "query": "TODO"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 12,
+    "output_tokens": 7,
+    "cache_creation_input_tokens": 20,
+    "cache_read_input_tokens": 30
+  }
+}

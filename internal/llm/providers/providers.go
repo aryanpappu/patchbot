@@ -4,7 +4,10 @@
 package providers
 
 import (
+	"net/http"
+
 	"github.com/aryanpappu/patchbot/internal/llm"
+	"github.com/aryanpappu/patchbot/internal/llm/anthropic"
 	"github.com/aryanpappu/patchbot/internal/llm/fake"
 )
 
@@ -13,6 +16,8 @@ type Options struct {
 	// Fake adds the scripted fake provider under kind "fake". It is for
 	// tests and demos and is off by default.
 	Fake bool
+	// HTTPClient overrides the Anthropic transport; nil uses its default client.
+	HTTPClient *http.Client
 }
 
 // Constructors returns the adapters by provider kind, for llm.NewRegistry.
@@ -23,7 +28,9 @@ type Options struct {
 // only, so the other providers keep working.
 func Constructors(opts Options) llm.Constructors {
 	c := llm.Constructors{
-		// M7: "anthropic": anthropic.New,
+		anthropic.Kind: func(cfg llm.ProviderConfig) (llm.Provider, error) {
+			return anthropic.NewWithOptions(cfg, anthropic.Options{HTTPClient: opts.HTTPClient})
+		},
 		// M8: "openai":    openai.New,
 		// M9: "gemini":    gemini.New,
 	}

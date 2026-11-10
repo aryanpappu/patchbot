@@ -1,0 +1,13 @@
+{
+  "data": [
+    {
+      "id": "claude-a",
+      "display_name": "Claude A",
+      "created_at": "2026-01-01T00:00:00Z",
+      "type": "model"
+    }
+  ],
+  "has_more": true,
+  "first_id": "claude-a",
+  "last_id": "claude-a"
+}

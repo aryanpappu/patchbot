@@ -1,0 +1,63 @@
+{
+  "max_tokens": 1024,
+  "messages": [
+    {
+      "content": [
+        {
+          "cache_control": {
+            "type": "ephemeral"
+          },
+          "text": "request-private-text",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "claude-test",
+  "system": [
+    {
+      "cache_control": {
+        "type": "ephemeral"
+      },
+      "text": "Be helpful.",
+      "type": "text"
+    }
+  ],
+  "tools": [
+    {
+      "description": "Read a file",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "read_file"
+    },
+    {
+      "cache_control": {
+        "type": "ephemeral"
+      },
+      "description": "Search text",
+      "input_schema": {
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "search"
+    }
+  ]
+}
