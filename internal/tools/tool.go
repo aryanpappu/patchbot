@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	"github.com/aryanpappu/patchbot/internal/execx"
 	"github.com/aryanpappu/patchbot/internal/llm"
 	"github.com/aryanpappu/patchbot/internal/secret"
 	"github.com/aryanpappu/patchbot/internal/workspace"
@@ -34,12 +36,23 @@ type Result struct {
 	Content string
 	// IsError marks a failure the model should read and react to.
 	IsError bool
+	// Submission is set only after a terminal tool validates its arguments.
+	Submission *Submission
+	// RecordOutput holds the full capped output when Content is a shorter view.
+	RecordOutput   string
+	ExitCode       *int
+	TimedOut       bool
+	SecurityDenied bool
 }
 
 // Env is what a tool may use.
 type Env struct {
 	// WS is the jailed checkout. Required.
-	WS workspace.Workspace
+	WS     workspace.Workspace
+	Exec   execx.Executor
+	Policy *execx.Policy
+	// RunDir holds private command HOME/TMP directories outside the checkout.
+	RunDir string
 	// Limits caps what the tools read and return. Zero fields take the
 	// defaults.
 	Limits Limits
@@ -52,6 +65,9 @@ type Env struct {
 
 // Limits caps what the file tools read and return.
 type Limits struct {
+	CmdTimeout     time.Duration
+	CmdStoreBytes  int
+	CmdOutputBytes int
 	// ReadDefaultLines and ReadMaxLines bound the lines of one read_file.
 	ReadDefaultLines int
 	ReadMaxLines     int
@@ -85,6 +101,9 @@ type Limits struct {
 // DefaultLimits returns the limits used when Env.Limits is zero.
 func DefaultLimits() Limits {
 	return Limits{
+		CmdTimeout:           execx.DefaultTimeout,
+		CmdStoreBytes:        execx.DefaultOutputCap,
+		CmdOutputBytes:       8 << 10,
 		ReadDefaultLines:     400,
 		ReadMaxLines:         2000,
 		MaxLineBytes:         2000,
@@ -103,6 +122,9 @@ func DefaultLimits() Limits {
 
 func (l Limits) withDefaults() Limits {
 	d := DefaultLimits()
+	if l.CmdTimeout <= 0 {
+		l.CmdTimeout = d.CmdTimeout
+	}
 	pick := func(v *int, def int) {
 		if *v <= 0 {
 			*v = def
@@ -114,6 +136,10 @@ func (l Limits) withDefaults() Limits {
 		}
 	}
 	pick(&l.ReadDefaultLines, d.ReadDefaultLines)
+	pick(&l.CmdStoreBytes, d.CmdStoreBytes)
+	l.CmdStoreBytes = max(execx.MinOutputCap, min(l.CmdStoreBytes, execx.DefaultOutputCap))
+	pick(&l.CmdOutputBytes, d.CmdOutputBytes)
+	l.CmdOutputBytes = min(l.CmdOutputBytes, 8<<10)
 	pick(&l.ReadMaxLines, d.ReadMaxLines)
 	pick(&l.MaxLineBytes, d.MaxLineBytes)
 	pick(&l.MaxOutputBytes, d.MaxOutputBytes)
@@ -168,7 +194,13 @@ func failure(ctx context.Context, err error) (Result, error) {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return Result{}, err
 	}
-	return failed("%s", describe(err))
+	res, _ := failed("%s", describe(err))
+	res.SecurityDenied = isPolicyError(err)
+	return res, nil
+}
+
+func isPolicyError(err error) bool {
+	return errors.Is(err, workspace.ErrPathEscape) || errors.Is(err, workspace.ErrPathProtected) || errors.Is(err, workspace.ErrSymlink) || errors.Is(err, workspace.ErrInvalidPath)
 }
 
 // describe renders a workspace error for the model. A *workspace.PathError

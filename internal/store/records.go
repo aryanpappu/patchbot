@@ -231,7 +231,11 @@ func (s *SQLite) RecordStep(ctx context.Context, step Step) (Step, error) {
 		return Step{}, errors.New("step sequence must be non-negative")
 	}
 	step.InputJSON = cappedText(step.InputJSON, 16*1024)
-	step.OutputText = cappedText(step.OutputText, 64*1024)
+	outputCap := 64 * 1024
+	if step.Kind == "test" || (step.Kind == "tool" && step.Tool == "run_cmd") {
+		outputCap = 256 * 1024
+	}
+	step.OutputText = cappedText(step.OutputText, outputCap)
 	var saved Step
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		args := []any{step.Phase, step.Kind, step.Tool, step.Status, step.Turn, step.InputJSON, step.OutputText,

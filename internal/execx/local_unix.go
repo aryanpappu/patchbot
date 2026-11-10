@@ -6,12 +6,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/aryanpappu/patchbot/internal/secret"
 )
 
 // Run starts one process group. Timeout/cancel signals TERM, then KILL after the
@@ -35,11 +38,17 @@ func (e *LocalExecutor) Run(ctx context.Context, spec Spec) (result Result, runE
 		return result, nil
 	}
 	output := newCapWriter(spec.OutputCap)
+	var sink io.Writer = output
+	var filtered *redactedOutput
+	if spec.Redactor != nil {
+		filtered = &redactedOutput{writer: secret.NewWriter(output, spec.Redactor)}
+		sink = filtered
+	}
 	// Equal Writer values make os/exec use a single shared pipe. This preserves
 	// write order across stdout/stderr rather than merging two reader goroutines.
 	cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...) // #nosec G204 -- argv is operator-owned, never a shell string.
 	cmd.Dir, cmd.Env = spec.Dir, env
-	cmd.Stdout, cmd.Stderr = output, output
+	cmd.Stdout, cmd.Stderr = sink, sink
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = e.WaitDelay
 	if cmd.WaitDelay == 0 {
@@ -63,7 +72,13 @@ func (e *LocalExecutor) Run(ctx context.Context, spec Spec) (result Result, runE
 		waitErr = <-waited
 	}
 	result.ExitCode = cmd.ProcessState.ExitCode()
+	if filtered != nil {
+		runErr = errors.Join(runErr, filtered.writer.Flush())
+	}
 	result.Output, result.TotalBytes, result.Truncated = output.snapshot()
+	if filtered != nil {
+		result.TotalBytes = filtered.total
+	}
 	var exitErr *exec.ExitError
 	if waitErr != nil && !errors.As(waitErr, &exitErr) {
 		if !errors.Is(waitErr, exec.ErrWaitDelay) || (!result.Cancelled && !result.TimedOut) {
@@ -71,6 +86,17 @@ func (e *LocalExecutor) Run(ctx context.Context, spec Spec) (result Result, runE
 		}
 	}
 	return result, runErr
+}
+
+// os/exec uses one copy goroutine for the shared stdout/stderr writer.
+type redactedOutput struct {
+	writer *secret.Writer
+	total  int64
+}
+
+func (w *redactedOutput) Write(p []byte) (int, error) {
+	w.total += int64(len(p))
+	return w.writer.Write(p)
 }
 
 func (e *LocalExecutor) validate(spec *Spec) error {
