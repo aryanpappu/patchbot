@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 503,
+    "status": "UNAVAILABLE",
+    "message": "Service overloaded."
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "models": [
+    {
+      "name": "models/fixture-a",
+      "displayName": "Fixture A",
+      "inputTokenLimit": 1000,
+      "supportedGenerationMethods": [
+        "generateContent",
+        "countTokens"
+      ]
+    },
+    {
+      "name": "models/embedding",
+      "supportedGenerationMethods": [
+        "embedContent"
+      ]
+    }
+  ],
+  "nextPageToken": "page +/2"
+}

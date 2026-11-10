@@ -1,0 +1,28 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "functionCall": {
+              "name": "lookup",
+              "args": {
+                "q": "one"
+              }
+            }
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "modelVersion": "fixture-model",
+  "responseId": "fixture-response",
+  "usageMetadata": {
+    "promptTokenCount": 20,
+    "candidatesTokenCount": 5,
+    "cachedContentTokenCount": 4,
+    "thoughtsTokenCount": 3
+  }
+}

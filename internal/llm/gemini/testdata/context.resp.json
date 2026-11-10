@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 400,
+    "status": "INVALID_ARGUMENT",
+    "message": "Input token count exceeds the maximum number of tokens allowed."
+  }
+}

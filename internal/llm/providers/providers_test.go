@@ -16,14 +16,17 @@ func TestConstructors(t *testing.T) {
 	if _, ok := providers.Constructors(providers.Options{})[fake.Kind]; ok {
 		t.Error("the fake provider is registered without being asked for")
 	}
+	if _, ok := providers.Constructors(providers.Options{})[config.KindGemini]; !ok {
+		t.Error("Gemini adapter is not registered")
+	}
 	c := providers.Constructors(providers.Options{Fake: true})
 	if _, ok := c[fake.Kind]; !ok {
 		t.Fatal("Options.Fake did not register the fake provider")
 	}
 
-	// Until M7 to M9 land, the real kinds have no adapter. When one is
+	// Until M7 and M8 land, these real kinds have no adapter. When one is
 	// added, move its kind out of this list.
-	for _, kind := range []string{config.KindAnthropic, config.KindGemini, config.KindOpenAI} {
+	for _, kind := range []string{config.KindAnthropic, config.KindOpenAI} {
 		if _, ok := c[kind]; ok {
 			t.Errorf("kind %q has an adapter; update this test and the registry wiring notes", kind)
 		}

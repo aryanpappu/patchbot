@@ -1,0 +1,12 @@
+{
+  "models": [
+    {
+      "name": "models/fixture-b",
+      "displayName": "Fixture B",
+      "inputTokenLimit": 2000,
+      "supportedGenerationMethods": [
+        "generateContent"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "generationConfig": {
+    "maxOutputTokens": 100
+  },
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Hello"
+        }
+      ]
+    }
+  ]
+}
