@@ -88,6 +88,27 @@ func NewCodeRegistry(env *Env, extra ...Tool) (*Registry, error) {
 // Names returns the tool names in registration order.
 func (r *Registry) Names() []string { return slices.Clone(r.order) }
 
+// TerminalNames lists the tools that can finish a stage, in registration order.
+func (r *Registry) TerminalNames() []string {
+	var names []string
+	for _, name := range r.order {
+		if r.IsTerminal(name) {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// IsTerminal reports whether name is a registered terminal tool.
+func (r *Registry) IsTerminal(name string) bool {
+	e, ok := r.entries[name]
+	if !ok {
+		return false
+	}
+	t, ok := e.tool.(interface{ Terminal() bool })
+	return ok && t.Terminal()
+}
+
 // Specs returns the tool definitions to send to the model, in registration
 // order.
 func (r *Registry) Specs() []llm.ToolSpec {
@@ -105,13 +126,20 @@ func (r *Registry) Specs() []llm.ToolSpec {
 // results with IsError set, so the model can correct the call. Every result
 // is redacted and capped. A non-nil error means the run must stop.
 func (r *Registry) Dispatch(ctx context.Context, call llm.ToolCall) (llm.ToolResult, error) {
+	result, _, err := r.DispatchDetailed(ctx, call)
+	return result, err
+}
+
+// DispatchDetailed also returns the redacted record and terminal submission.
+// Keeping this separate preserves the small Dispatch API used by file tools.
+func (r *Registry) DispatchDetailed(ctx context.Context, call llm.ToolCall) (llm.ToolResult, Result, error) {
 	if err := ctx.Err(); err != nil {
-		return llm.ToolResult{}, err
+		return llm.ToolResult{}, Result{}, err
 	}
 	start := time.Now()
 	res, err := r.run(ctx, call)
 	if err != nil {
-		return llm.ToolResult{}, fmt.Errorf("tool %s: %w", call.Name, err)
+		return llm.ToolResult{}, Result{}, fmt.Errorf("tool %s: %w", call.Name, err)
 	}
 	content := r.env.Redactor.Redact(strings.ToValidUTF8(res.Content, "�"))
 	if len(content) > maxResultBytes {
@@ -120,11 +148,23 @@ func (r *Registry) Dispatch(ctx context.Context, call llm.ToolCall) (llm.ToolRes
 	if content == "" {
 		content = "(no output)"
 	}
+	res.Content = content
+	res.RecordOutput = r.env.Redactor.Redact(strings.ToValidUTF8(res.RecordOutput, "�"))
+	if res.RecordOutput == "" {
+		res.RecordOutput = content
+	}
+	res.RecordOutput = CapOutput(res.RecordOutput, r.env.Limits.CmdStoreBytes)
+	if res.IsError || !r.IsTerminal(call.Name) {
+		res.Submission = nil
+	}
+	if res.Submission != nil {
+		res.Submission = res.Submission.Redacted(r.env.Redactor)
+	}
 	if r.env.Log != nil {
 		r.env.Log.DebugContext(ctx, "tool call",
 			"tool", call.Name, "is_error", res.IsError, "bytes", len(content), "duration", time.Since(start))
 	}
-	return llm.ToolResult{CallID: call.ID, Name: call.Name, Content: content, IsError: res.IsError}, nil
+	return llm.ToolResult{CallID: call.ID, Name: call.Name, Content: content, IsError: res.IsError}, res, nil
 }
 
 func (r *Registry) run(ctx context.Context, call llm.ToolCall) (Result, error) {

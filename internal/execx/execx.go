@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/aryanpappu/patchbot/internal/secret"
 )
 
 const (
@@ -48,6 +50,9 @@ type Spec struct {
 	Env       []string
 	Timeout   time.Duration
 	OutputCap int
+	// Redactor, when set, masks the stream before the output cap can split a
+	// secret. Nil preserves the raw executor API for non-agent callers.
+	Redactor *secret.Redactor
 }
 
 // Result describes an attempted execution. ExitCode is -1 if no process exited
