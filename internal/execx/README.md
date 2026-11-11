@@ -3,16 +3,24 @@
 Construct `NewPolicy(root, commands)` from operator-owned per-repository config.
 Call `Resolve(commandID, extraArgs)` and use the returned argv in a `Spec` passed
 to `NewLocalExecutor(root).Run`. Configure `Dir`, private `HOME` and `TMPDIR`
-directories, and `Env: MinimalEnv(home, tmp, extras)` in the harness. Directory
+directories, and `Env: policy.MinimalEnv(home, tmp, extras)` in the harness. Directory
 creation and cleanup belong to the caller. Neither config parsing nor the
 model-facing tool registry belongs to this package.
 
 The policy copies configuration and returns fresh argv slices. Bare executable
 names are resolved once with `exec.LookPath` over absolute candidates from
-`TrustedPath`, without changing or reading the parent's PATH. Explicit absolute
+`PolicyOptions.TrustedPath`, without changing or reading the parent's PATH.
+Nil selects `TrustedPath`. An empty list is invalid. Config supplies
+`limits.trusted_path` to both lookup and the child environment. Explicit absolute
 executables are accepted outside the workspace. Existing symlinks are resolved
 before checking workspace containment and shell restrictions. The operator must
-control installed executables and the directories in `TrustedPath`.
+control installed executables and the configured directories. Entries must be
+absolute, contain no parent traversal or empty items, and stay outside data and
+workspace roots, including symlink aliases. Entries must exist and resolve to
+directories. Every directory from `/` down, including unresolved symlink
+locations, must be owned by root/current user and have no group/world write
+bits. Sticky directories are rejected. Defaults are `/usr/bin` and `/bin`;
+operators must add existing secure toolchain directories.
 
 `PolicyOptions.AllowArgs` opts individual command IDs into additional arguments.
 `AllowLeadingDash` separately permits flags for an opted-in ID. Defaults allow
@@ -39,9 +47,12 @@ pipes held beyond `WaitDelay` on ordinary completion produce `exec.ErrWaitDelay`
 wrapped with the partial result. After cancellation, that drain error is subsumed
 by the cancellation result. The direct child is always waited on after start.
 
-On timeout/cancel the executor sends TERM to the process group, waits the grace
-period, then sends KILL even if its leader has already exited. Ordinary exits
-also clean up remaining group members. All cleanup and drain time contributes
+On timeout/cancel the executor sends TERM, waits the full grace period, then
+sends KILL to the process group. Exit observation never reaps the leader until
+all group signaling is finished. The zombie leader reserves its PID/PGID so a
+later signal cannot hit a reused group. Its presence also prevents existence
+polling from proving that all live members exited. Ordinary exits immediately
+KILL remaining members before Wait. Git and doctor share this lifecycle. All cleanup and drain time contributes
 to `Duration`, so return can occur after the configured command timeout.
 
 `MinimalEnv` never reads the parent environment. It fixes PATH, HOME, TMPDIR,

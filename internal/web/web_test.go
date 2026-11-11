@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
 	"html"
@@ -80,5 +81,17 @@ func TestNoUnsafeHTMLRendering(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestVendoredVueMatchesIntegrity(t *testing.T) {
+	data, err := files.ReadFile("assets/vue.global.prod.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := sha512.Sum384(data)
+	actual := "sha384-" + base64.StdEncoding.EncodeToString(hash[:])
+	if actual != VueIntegrity {
+		t.Fatalf("embedded Vue SRI: got %s, want %s", actual, VueIntegrity)
 	}
 }

@@ -8,5 +8,6 @@ import (
 )
 
 func main() {
+	privateUmask()
 	os.Exit(cli.Main(os.Args[1:], os.Stdout, os.Stderr))
 }

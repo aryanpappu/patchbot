@@ -96,7 +96,7 @@ func (h *Handler) Handle(ctx context.Context, rec slog.Record) error {
 	inner := h.inner
 	for _, b := range h.bound {
 		if b.attrs == nil {
-			inner = inner.WithGroup(h.r.Redact(b.group))
+			inner = inner.WithGroup(b.group)
 			continue
 		}
 		redacted := make([]slog.Attr, len(b.attrs))
@@ -135,7 +135,7 @@ func (h *Handler) bind(b binding) *Handler {
 }
 
 func (h *Handler) attr(a slog.Attr) slog.Attr {
-	return slog.Attr{Key: h.r.Redact(a.Key), Value: h.value(a.Value)}
+	return slog.Attr{Key: a.Key, Value: h.value(a.Value)}
 }
 
 // value redacts one attribute value. Numbers, booleans, times and durations

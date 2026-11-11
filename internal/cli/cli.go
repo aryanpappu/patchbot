@@ -6,10 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/aryanpappu/patchbot/internal/config"
 	"github.com/aryanpappu/patchbot/internal/llm/providers"
 	"github.com/aryanpappu/patchbot/internal/runner"
+	"github.com/aryanpappu/patchbot/internal/secret"
 	"github.com/aryanpappu/patchbot/internal/version"
 )
 
@@ -24,6 +26,7 @@ Commands:
   runs     List runs and optionally sync GitHub comments
   retry    Start a new run linked to a failed run
   models   List available models
+  doctor   Check local setup (offline unless --online)
   config   Check or show configuration
   serve    Serve the local JSON API and event streams
   version  Print version and build information
@@ -50,15 +53,28 @@ type App struct {
 	// Providers injects optional transports and test providers.
 	Providers providers.Options
 	// RunnerOptions injects local git remotes, GitHub and fake LLMs in tests.
-	RunnerOptions runner.Options
+	RunnerOptions  runner.Options
+	outputRedactor *secret.Redactor
 }
 
 // Run runs one command and returns the process exit code: 0 for success, 1
 // for failure and 2 for a usage error.
 func (a *App) Run(args []string) int {
+	lookup := a.Config.LookupEnv
+	if lookup == nil {
+		lookup = os.LookupEnv
+	}
+	r := secret.NewRedactor()
+	for _, name := range []string{"GITHUB_TOKEN", "PATCHBOT_UI_TOKEN"} {
+		value, _ := lookup(name)
+		r.AddExact(value)
+	}
+	previousRedactor := a.outputRedactor
+	a.outputRedactor = r
+	defer func() { a.outputRedactor = previousRedactor }()
 	stdout, stderr := a.Stdout, a.Stderr
 	flags := flag.NewFlagSet("patchbot", flag.ContinueOnError)
-	flags.SetOutput(stderr)
+	flags.SetOutput(io.Discard)
 	flags.Usage = func() {
 		_, _ = fmt.Fprint(stderr, usage)
 	}
@@ -75,6 +91,7 @@ func (a *App) Run(args []string) int {
 	}
 
 	if err := flags.Parse(args); err != nil {
+		flags.Usage()
 		return 2
 	}
 
@@ -84,6 +101,8 @@ func (a *App) Run(args []string) int {
 		return 0
 	case "config":
 		return a.runConfig(flags.Args()[1:])
+	case "doctor":
+		return a.runDoctor(flags.Args()[1:])
 	case "models":
 		return a.runModels(flags.Args()[1:])
 	case "run", "approve", "revise", "reject", "cancel", "runs", "retry":

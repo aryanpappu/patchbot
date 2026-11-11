@@ -96,7 +96,7 @@ func ExecuteCommand(ctx context.Context, env *Env, name string, args []string, t
 	if redactor == nil {
 		redactor = secret.NewRedactor()
 	}
-	result, err := env.Exec.Run(ctx, execx.Spec{Argv: argv, Dir: env.WS.Dir(), Env: execx.MinimalEnv(home, tmp, nil), Timeout: timeout, OutputCap: limits.CmdStoreBytes, Redactor: redactor})
+	result, err := env.Exec.Run(ctx, execx.Spec{Argv: argv, Dir: env.WS.Dir(), Env: env.Policy.MinimalEnv(home, tmp, nil), Timeout: timeout, OutputCap: limits.CmdStoreBytes, Redactor: redactor})
 	result.Output = redactor.Redact(strings.ToValidUTF8(result.Output, "�"))
 	result.Truncated = result.Truncated || len(result.Output) > limits.CmdStoreBytes
 	result.Output = CapOutput(result.Output, limits.CmdStoreBytes)

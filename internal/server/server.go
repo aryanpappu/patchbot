@@ -119,7 +119,7 @@ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) 
 	s.redactor.AddSecrets(secret.New(os.Getenv("GITHUB_TOKEN")))
 	if opts.Runner.Tokens != nil {
 		if value, err := opts.Runner.Tokens.Token(ctx); err == nil {
-			s.redactor.Add(value)
+			s.redactor.AddExact(value)
 		}
 	}
 	if source, ok := db.(interface {
@@ -130,6 +130,7 @@ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) 
 	opts.Runner.Dispatch = s.manager.submit
 	opts.Runner.Admit = s.manager.reserve
 	opts.Runner.ActionChannel = "ui"
+	s.redactor.Extend(opts.Runner.Redactor)
 	opts.Runner.Redactor = s.redactor
 	var err error
 	s.runner, err = runner.New(ctx, cfg, db, opts.Runner)

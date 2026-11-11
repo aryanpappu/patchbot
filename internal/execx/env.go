@@ -9,7 +9,7 @@ import (
 
 // TrustedPath is independent of the caller's PATH and excludes the checkout.
 // These directories must be controlled by the operator, as must their binaries.
-const TrustedPath = "/usr/local/go/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+const TrustedPath = "/usr/bin:/bin"
 
 var errInvalidEnv = errors.New("invalid explicit environment entry")
 
@@ -19,8 +19,12 @@ var errInvalidEnv = errors.New("invalid explicit environment entry")
 // settings or introduce secret-like names. Dependency downloads remain allowed;
 // automatic toolchain downloads and ambient Go configuration are disabled.
 func MinimalEnv(home, tmp string, extra map[string]string) []string {
+	return minimalEnv(home, tmp, extra, TrustedPath)
+}
+
+func minimalEnv(home, tmp string, extra map[string]string, path string) []string {
 	values := map[string]string{
-		"PATH": TrustedPath, "HOME": home, "TMPDIR": tmp, "LANG": "C.UTF-8",
+		"PATH": path, "HOME": home, "TMPDIR": tmp, "LANG": "C.UTF-8",
 		"GOTOOLCHAIN": "local", "GOENV": "off", "GOFLAGS": "", "GOWORK": "off",
 		"GOCACHE": filepath.Join(home, "go-cache"), "GOPATH": filepath.Join(home, "go"), "CI": "1",
 	}

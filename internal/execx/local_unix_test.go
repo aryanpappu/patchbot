@@ -92,16 +92,18 @@ func helperMain() int {
 		_ = ready.Close()
 		<-term
 	case "tree":
-		return helperTree(args[1], false)
+		return helperTree(args[1], false, false)
 	case "pipe":
-		return helperTree(args[1], true)
+		return helperTree(args[1], true, false)
+	case "escaped-pipe":
+		return helperTree(args[1], true, true)
 	default:
 		return 96
 	}
 	return 0
 }
 
-func helperTree(pidFile string, exitEarly bool) int {
+func helperTree(pidFile string, exitEarly, escape bool) int {
 	term := make(chan os.Signal, 1)
 	signal.Notify(term, syscall.SIGTERM)
 	read, write, err := os.Pipe()
@@ -109,6 +111,9 @@ func helperTree(pidFile string, exitEarly bool) int {
 		return 97
 	}
 	child := exec.Command(os.Args[0], "leaf") // #nosec G204 G702 -- the test executable is the only child binary.
+	if escape {
+		child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
 	child.Env = os.Environ()
 	child.Stdout, child.Stderr = os.Stdout, os.Stderr
 	child.ExtraFiles = []*os.File{write}
@@ -376,7 +381,7 @@ func TestLocalWaitDelayAndEarlyExitCleanup(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "pids")
 	e, spec := helperSpec(t, "pipe", pidFile)
 	result, err := e.Run(t.Context(), spec)
-	if !errors.Is(err, exec.ErrWaitDelay) || result.Duration > 3*time.Second || result.TimedOut || result.Cancelled {
+	if err != nil || result.Duration > 3*time.Second || result.TimedOut || result.Cancelled {
 		t.Fatalf("inherited pipe: %+v, %v", result, err)
 	}
 	// The direct child is reaped by Wait. The grandchild has been terminated;
@@ -473,4 +478,55 @@ func TestLocalRedactsStreamBeforeCap(t *testing.T) {
 	if result.TotalBytes != int64(246+len("private-command-secret")+4000+4) {
 		t.Fatal("raw byte accounting changed")
 	}
+}
+
+func TestCancellationGracePollingAndEscalation(t *testing.T) {
+	for _, mode := range []string{"sleep", "stubborn"} {
+		t.Run(mode, func(t *testing.T) {
+			pidFile := filepath.Join(t.TempDir(), "pid")
+			e, spec := helperSpec(t, mode, pidFile)
+			e.GracePeriod = time.Second
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				result, err := e.Run(ctx, spec)
+				if err == nil && !result.Cancelled {
+					err = errors.New("not cancelled")
+				}
+				done <- err
+			}()
+			pids := waitPIDFile(t, pidFile)
+			started := time.Now()
+			cancel()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("cancellation did not finish")
+			}
+			elapsed := time.Since(started)
+			if elapsed < e.GracePeriod {
+				t.Fatalf("leader anchor released before grace ended: %s", elapsed)
+			}
+			if mode == "stubborn" && elapsed < e.GracePeriod {
+				t.Fatalf("KILL escalated before grace: %s", elapsed)
+			}
+			assertGone(t, pids)
+		})
+	}
+}
+
+func TestWaitDelayBoundsPipeFromEscapedChild(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "pids")
+	e, spec := helperSpec(t, "escaped-pipe", pidFile)
+	result, err := e.Run(t.Context(), spec)
+	pids := waitPIDFile(t, pidFile)
+	defer func() { _ = syscall.Kill(pids[1], syscall.SIGKILL) }()
+	if !errors.Is(err, exec.ErrWaitDelay) || result.Duration > time.Second || result.ExitCode != 0 {
+		t.Fatalf("escaped pipe: %+v %v", result, err)
+	}
+	assertGone(t, pids[:1])
 }

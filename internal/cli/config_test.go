@@ -202,10 +202,10 @@ func TestConfigFlagAndUsage(t *testing.T) {
 		{name: "--config=FILE form", args: []string{"config", "show", "--config=" + other}, wantCode: 1, wantStdout: `provider = "nope"`},
 		{name: "--config names a missing file", args: []string{"config", "check", "--config", missing}, wantCode: 1, wantStderr: "error: config file: "},
 		{name: "no subcommand", args: []string{"config"}, wantCode: 2, wantStderr: "Usage: patchbot config"},
-		{name: "unknown subcommand", args: []string{"config", "edit"}, wantCode: 2, wantStderr: `unknown command "edit"`},
-		{name: "unknown flag", args: []string{"config", "check", "--verbose"}, wantCode: 2, wantStderr: "flag provided but not defined"},
-		{name: "extra argument", args: []string{"config", "check", "now"}, wantCode: 2, wantStderr: `unexpected argument "now"`},
-		{name: "flag without a value", args: []string{"config", "check", "--config"}, wantCode: 2, wantStderr: "flag needs an argument"},
+		{name: "unknown subcommand", args: []string{"config", "edit"}, wantCode: 2, wantStderr: `unknown command`},
+		{name: "unknown flag", args: []string{"config", "check", "--verbose"}, wantCode: 2, wantStderr: "invalid command options"},
+		{name: "extra argument", args: []string{"config", "check", "now"}, wantCode: 2, wantStderr: `unexpected argument`},
+		{name: "flag without a value", args: []string{"config", "check", "--config"}, wantCode: 2, wantStderr: "invalid command options"},
 		{name: "help", args: []string{"config", "help"}, wantStdout: "Usage: patchbot config"},
 		{name: "subcommand --help", args: []string{"config", "show", "--help"}, wantStdout: "Usage: patchbot config"},
 	}
@@ -267,5 +267,19 @@ func TestConfigCommandsNeverPrintAKey(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestConfigShortCredentialWarnsWithoutCorruptingTOML(t *testing.T) {
+	for _, value := range []string{"code", "max_turns"} {
+		vars := map[string]string{"ANTHROPIC_API_KEY": value}
+		code, out, errs := runApp(t, validConfig, vars, "config", "show")
+		if code != 0 || !strings.Contains(out, "code_model =") || !strings.Contains(out, "max_turns") {
+			t.Fatalf("schema corrupted: %d %s %s", code, out, errs)
+		}
+	}
+	code, out, errs := runApp(t, validConfig, map[string]string{"ANTHROPIC_API_KEY": "code"}, "config", "check")
+	if code != 0 || !strings.Contains(errs, "cannot be masked") || !strings.Contains(errs, "ANTHROPIC_API_KEY") {
+		t.Fatalf("short credential warning missing: %d %s %s", code, out, errs)
 	}
 }

@@ -59,7 +59,7 @@ func New(t testing.TB) Fixture {
 	}
 	for name, content := range files {
 		p := filepath.Join(base, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
@@ -87,7 +87,7 @@ func New(t testing.TB) Fixture {
 		"chain":     "ok-dir",
 	}
 	linkDir := filepath.Join(f.Repo, "links")
-	if err := os.Mkdir(linkDir, 0o750); err != nil {
+	if err := os.Mkdir(linkDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	for name, target := range links {

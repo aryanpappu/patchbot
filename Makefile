@@ -6,7 +6,7 @@ DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 VERSION_PACKAGE := github.com/aryanpappu/patchbot/internal/version
 LDFLAGS := -s -w -X $(VERSION_PACKAGE).Version=$(VERSION) -X $(VERSION_PACKAGE).Commit=$(COMMIT) -X $(VERSION_PACKAGE).Date=$(DATE)
 
-.PHONY: help fmt fmt-check vet lint test race build ci clean vendor-vue
+.PHONY: help fmt fmt-check vet lint test race build ci clean vendor-vue smoke
 
 help:
 	@printf '%s\n' \
@@ -18,6 +18,7 @@ help:
 		'race       Run tests with the race detector' \
 		'build      Build bin/patchbot with version metadata' \
 		'ci         Run formatting, vet, lint, race tests and build' \
+		'smoke      Build and run the offline CLI acceptance flow' \
 		'vendor-vue Download pinned Vue and verify SRI before embedding' \
 		'clean      Remove build artifacts'
 
@@ -40,8 +41,10 @@ race:
 	go test -race ./...
 
 build:
-	mkdir -p bin
+	mkdir -p -m 700 bin
+	chmod 700 bin
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o bin/patchbot ./cmd/patchbot
+	chmod 700 bin/patchbot
 
 ci: fmt-check vet lint race build
 
@@ -50,3 +53,6 @@ vendor-vue:
 
 clean:
 	rm -rf bin
+
+smoke:
+	./scripts/smoke.sh

@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha512"
 	"encoding/base64"
 	"fmt"
@@ -15,7 +16,13 @@ import (
 )
 
 func install(client *http.Client, integrity, dir string) error {
-	response, err := client.Get(web.VueURL)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, web.VueURL, http.NoBody)
+	if err != nil {
+		return err
+	}
+	response, err := client.Do(req)
 	if err != nil {
 		return err
 	}

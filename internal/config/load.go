@@ -152,7 +152,7 @@ func Load(opts Options) (*Config, error) {
 		redactor := c.Redactor()
 		for _, name := range c.rejectedKeyEnvs {
 			if value, ok := lookupEnv(name); ok && envNameRE.MatchString(name) {
-				redactor.Add(strings.TrimSpace(value))
+				redactor.AddExact(strings.TrimSpace(value))
 			}
 		}
 		return nil, &redactedError{msg: redactor.Redact(err.Error()), err: err}

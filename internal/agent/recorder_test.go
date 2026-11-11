@@ -114,9 +114,32 @@ func TestRecordersRedactAuditMetadata(t *testing.T) {
 				saved, kind = r.steps, r.events[0]
 			}
 			raw, _ := json.Marshal(saved)
-			if len(saved) != 1 || strings.Contains(string(raw), value) || strings.Contains(kind, value) || !strings.Contains(string(raw), "redacted") {
+			if len(saved) != 1 || strings.Contains(string(raw), value) || !strings.HasPrefix(kind, value) || !strings.Contains(string(raw), "redacted") {
 				t.Fatalf("audit metadata leaked: %s %s", raw, kind)
 			}
 		})
+	}
+}
+
+func TestRecorderPreservesHarnessSchemaWithCredentialCollisions(t *testing.T) {
+	db, run := database(t)
+	r := &StoreRecorder{Store: db, RunID: run.ID, Phase: store.PhaseCode, Redactor: secret.NewRedactor("tool.result", "input_tokens", "baseline")}
+	r.Redactor.AddSecrets(secret.New("code"), secret.New("ok"))
+	if err := r.Record(t.Context(), store.Step{Kind: "tool", Status: "ok", InputJSON: `{"input_tokens":"input_tokens"}`, OutputText: "code ok"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Event(t.Context(), "tool.result", json.RawMessage(`{"input_tokens":"input_tokens"}`)); err != nil {
+		t.Fatal(err)
+	}
+	steps, err := db.ListSteps(t.Context(), run.ID)
+	if err != nil || len(steps) != 1 {
+		t.Fatalf("steps: %v %v", steps, err)
+	}
+	if steps[0].Phase != store.PhaseCode || steps[0].Status != "ok" || steps[0].InputJSON != `{"input_tokens":"[redacted]"}` {
+		t.Fatalf("schema corrupted: %+v", steps[0])
+	}
+	events, err := db.EventsAfter(t.Context(), run.ID, 0, 10)
+	if err != nil || len(events) != 1 || events[0].Type != "tool.result" {
+		t.Fatalf("events: %+v %v", events, err)
 	}
 }

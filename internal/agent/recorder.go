@@ -62,7 +62,7 @@ func (r *StoreRecorder) Event(ctx context.Context, kind string, data json.RawMes
 	if r.Store == nil {
 		return errors.New("recorder store is missing")
 	}
-	event := store.Event{RunID: r.RunID, Type: tools.CapOutput(r.Redactor.Redact(kind), 256), PayloadJSON: json.RawMessage(redactJSON(data, r.Redactor)), CreatedAt: time.Now().UTC()}
+	event := store.Event{RunID: r.RunID, Type: tools.CapOutput(kind, 256), PayloadJSON: json.RawMessage(redactJSON(data, r.Redactor)), CreatedAt: time.Now().UTC()}
 	seq, err := r.Store.AppendEvent(ctx, event)
 	if err != nil {
 		return err
@@ -84,7 +84,7 @@ func (l *Loop) record(ctx context.Context, step store.Step) error {
 		capBytes = 256 << 10
 	}
 	redactStepMetadata(&step, l.redactor())
-	step.OutputText = tools.CapOutput(l.redactor().Redact(step.OutputText), capBytes)
+	step.OutputText = tools.CapOutput(redactJSON([]byte(step.OutputText), l.redactor()), capBytes)
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	if err := l.Recorder.Record(recordCtx, step); err != nil {
@@ -109,17 +109,16 @@ func (l *Loop) event(ctx context.Context, kind string, data any) error {
 	}
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	if err := l.Recorder.Event(recordCtx, tools.CapOutput(l.redactor().Redact(kind), 256), json.RawMessage(safe)); err != nil {
+	if err := l.Recorder.Event(recordCtx, tools.CapOutput(kind, 256), json.RawMessage(safe)); err != nil {
 		return &Error{Kind: "internal", Message: "recording event failed"}
 	}
 	return nil
 }
 
+// Phase, Kind, Status and event types are harness schema identifiers.
+// Tool and StopReason can originate in provider responses.
 func redactStepMetadata(step *store.Step, redactor *secret.Redactor) {
-	step.Phase = store.Phase(tools.CapOutput(redactor.Redact(string(step.Phase)), 256))
-	step.Kind = tools.CapOutput(redactor.Redact(step.Kind), 256)
 	step.Tool = tools.CapOutput(redactor.Redact(step.Tool), 256)
-	step.Status = tools.CapOutput(redactor.Redact(step.Status), 256)
 	step.StopReason = tools.CapOutput(redactor.Redact(step.StopReason), 256)
 }
 
@@ -144,7 +143,12 @@ func redactStrings(value any, redactor *secret.Redactor) any {
 	case map[string]any:
 		out := make(map[string]any, len(x))
 		for key, v := range x {
-			out[redactor.Redact(key)] = redactStrings(v, redactor)
+			text, isString := v.(string)
+			if isString && store.IsSchemaIdentifier(key, text) {
+				out[key] = v
+			} else {
+				out[key] = redactStrings(v, redactor)
+			}
 		}
 		return out
 	}

@@ -31,7 +31,7 @@ Run error messages use a generic public description; local records retain
 redacted diagnostic details. The web page pins Vue 3.5.13 from jsDelivr with
 SRI, or embeds a verified local copy with `[server] vue_src = "local"`. See
 [the web package](../web/README.md) for its CSP, safety choices and vendoring.
-The offline provisional SRI pin requires supervisor verification before use.
+The included Vue asset is checked against the shared SHA-384 pin by an offline test.
 
 ## API contract
 

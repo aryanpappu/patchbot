@@ -89,11 +89,11 @@ func TestWriteFileCreatesAndReplaces(t *testing.T) {
 	if got := hostFile(t, p); string(got) != "one\n" {
 		t.Errorf("content = %q", got)
 	}
-	if got := modeOf(t, p).Perm(); got != 0o644 {
-		t.Errorf("new file mode = %v, want 0644", got)
+	if got := modeOf(t, p).Perm(); got != 0o600 {
+		t.Errorf("new file mode = %v, want 0600", got)
 	}
-	if got := modeOf(t, filepath.Dir(p)).Perm(); got != 0o755 {
-		t.Errorf("new directory mode = %v, want 0755", got)
+	if got := modeOf(t, filepath.Dir(p)).Perm(); got != 0o700 {
+		t.Errorf("new directory mode = %v, want 0700", got)
 	}
 	if err := ws.WriteFile("a/b/c/new.txt", nil); err != nil {
 		t.Fatal(err)
@@ -116,8 +116,8 @@ func TestWriteFileKeepsMode(t *testing.T) {
 		if err := ws.WriteFile(name, []byte("new\n")); err != nil {
 			t.Fatalf("mode %v: %v", mode, err)
 		}
-		if got := modeOf(t, p).Perm(); got != mode {
-			t.Errorf("mode after write = %v, want %v", got, mode)
+		if got := modeOf(t, p).Perm(); got != mode&0o700 {
+			t.Errorf("mode after write = %v, want %v", got, mode&0o700)
 		}
 		if got := hostFile(t, p); string(got) != "new\n" {
 			t.Errorf("mode %v: content = %q", mode, got)

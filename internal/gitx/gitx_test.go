@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aryanpappu/patchbot/internal/execx"
 )
 
 const fakeToken = "ghp_m10_fake_credential_never_expose_123456789" // #nosec G101 -- deliberately fake regression-test credential.
@@ -515,7 +517,8 @@ func TestOutputCapTimeoutAndClose(t *testing.T) {
 	if _, _, err := r.run(context.Background(), false, "status"); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("timeout = %v", err)
 	}
-	if time.Since(start) > 3*time.Second {
+	// Cleanup retains the leader through the full TERM grace period.
+	if time.Since(start) > execx.DefaultGracePeriod+2*time.Second {
 		t.Fatal("timeout did not bound helpers and pipe draining")
 	}
 	if err := r.Close(); err != nil {

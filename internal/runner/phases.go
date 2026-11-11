@@ -67,7 +67,7 @@ func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha
 	}()
 	err = r.operation(ctx, run, "git", "clone", func() error {
 		var cloneErr error
-		repo, cloneErr = r.opts.Clone(ctx, gitx.CloneOptions{Dir: filepath.Join(dir, "repo"), Host: "github.com", Owner: ref(run.Repo).Owner, Name: ref(run.Repo).Name, Branch: meta.DefaultBranch, DefaultBranch: meta.DefaultBranch, Token: token})
+		repo, cloneErr = r.opts.Clone(ctx, gitx.CloneOptions{Dir: filepath.Join(dir, "repo"), Host: "github.com", Owner: ref(run.Repo).Owner, Name: ref(run.Repo).Name, Branch: meta.DefaultBranch, DefaultBranch: meta.DefaultBranch, Token: token, TrustedPath: r.cfg.Limits.TrustedPath, ExcludedRoots: []string{r.cfg.DataDir()}})
 		return cloneErr
 	})
 	if err != nil {
@@ -87,7 +87,7 @@ func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha
 			_ = ws.Close(false)
 		}
 	}()
-	policy, err := execx.NewPolicy(ws.Dir(), r.cfg.Repos[run.Repo].Commands)
+	policy, err := execx.NewPolicy(ws.Dir(), r.cfg.Repos[run.Repo].Commands, execx.PolicyOptions{TrustedPath: r.cfg.Limits.TrustedPath, ExcludedRoots: []string{r.cfg.DataDir()}})
 	if err != nil {
 		return nil, err
 	}

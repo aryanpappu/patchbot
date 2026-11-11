@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/aryanpappu/patchbot/internal/execx"
 	"github.com/aryanpappu/patchbot/internal/secret"
 )
 
@@ -102,6 +103,9 @@ func (c *Config) validateDefaults(v *validator) {
 
 func (c *Config) validateLimits(v *validator) {
 	l := c.Limits
+	if err := execx.ValidateTrustedPath(l.TrustedPath, c.DataDir()); err != nil {
+		v.addf("limits.trusted_path: %s", err)
+	}
 	v.check(validMoney(l.HardMaxCostUSD) && l.HardMaxCostUSD > 0, "limits.hard_max_cost_usd: must be greater than 0")
 	for _, f := range []struct {
 		key   string
@@ -254,6 +258,8 @@ func (c *Config) Warnings() []string {
 		switch {
 		case p.APIKeyEnv == "" && p.Kind != KindOpenAI:
 			warnf("provider %q: api_key_env is not set, so requests carry no API key", name)
+		case p.APIKey.IsSet() && len(p.APIKey.Reveal()) < secret.MinValueLen:
+			warnf("provider %q: credential in %s is shorter than %d characters and cannot be masked; use a longer credential", name, p.APIKeyEnv, secret.MinValueLen)
 		case p.APIKeyEnv != "" && envNameRE.MatchString(p.APIKeyEnv) && !p.APIKey.IsSet():
 			warnf("provider %q: environment variable %s is not set; the provider cannot be used until it is",
 				name, p.APIKeyEnv)

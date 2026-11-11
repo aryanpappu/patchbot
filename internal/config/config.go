@@ -9,6 +9,7 @@ package config
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -85,6 +86,8 @@ type Limits struct {
 	CmdOutputBytes int  `toml:"cmd_output_bytes"`
 	CmdStoreBytes  int  `toml:"cmd_store_bytes"`
 	BaselineTests  bool `toml:"baseline_tests"`
+	// TrustedPath contains operator-controlled absolute tool directories.
+	TrustedPath []string `toml:"trusted_path"`
 }
 
 // Approval controls the spec approval gate.
@@ -264,4 +267,20 @@ func (c *Config) Secrets() []secret.Secret {
 		}
 	}
 	return out
+}
+
+// EnsureDataDir creates private storage and refuses an existing public directory
+// or symlink. Doctor reports the same policy without changing the filesystem.
+func (c *Config) EnsureDataDir() error {
+	if err := os.MkdirAll(c.DataDir(), 0o700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(c.DataDir())
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode().Perm() != 0o700 {
+		return errors.New("data directory must be a real directory with mode 0700")
+	}
+	return nil
 }

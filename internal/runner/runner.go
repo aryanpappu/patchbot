@@ -35,7 +35,7 @@ type Options struct {
 	Admit func(context.Context) (context.Context, func(), error)
 	// ActionChannel is ui for the local web server; otherwise local actions use cli.
 	ActionChannel string
-	// Redactor adds server credentials to the runner persistence boundary.
+	// Redactor adds CLI/server credentials to model and persistence boundaries.
 	Redactor *secret.Redactor
 
 	GitHub            github.Client
@@ -371,6 +371,13 @@ func (r *Runner) dispatch(ctx context.Context, id int64, work func(context.Conte
 }
 
 func (r *Runner) transition(ctx context.Context, run *store.Run, status store.Status, phase store.Phase, patch store.RunPatch) error {
+	// Free text from provider/GitHub responses must be redacted before SQLite,
+	// not only when displayed by the API or CLI.
+	for _, field := range []*string{patch.IssueTitle, patch.ErrorMessage, patch.PRURL, patch.Summary} {
+		if field != nil {
+			*field = r.redactor.Redact(*field)
+		}
+	}
 	patch.Phase = phase
 	patch.ExpectedGeneration = &run.Generation
 	if err := r.db.SetRunStatus(ctx, run.ID, run.Status, status, patch); err != nil {

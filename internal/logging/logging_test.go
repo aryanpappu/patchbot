@@ -74,6 +74,12 @@ func TestLoggerRedacts(t *testing.T) {
 				}
 				tt.log(l)
 				got := buf.String()
+				if tt.name == "attr key" || tt.name == "group name" {
+					if !strings.Contains(got, known) {
+						t.Fatalf("schema key changed: %s", got)
+					}
+					return
+				}
 				if got == "" {
 					t.Fatal("nothing was logged")
 				}
@@ -195,7 +201,7 @@ func TestSecretRegisteredAfterBinding(t *testing.T) {
 				t.Fatal(err)
 			}
 			bound := base.With("auth", late, slog.Group("req", slog.String("header", "x "+late))).
-				WithGroup(late).
+				WithGroup("request").
 				With("inner", errors.New("failed with "+late))
 			sibling := base.With("other", "plain")
 

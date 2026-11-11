@@ -532,3 +532,18 @@ func TestForeignMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestInjectedClientStillGetsContextDeadline(t *testing.T) {
+	p, err := NewWithClient(llm.ProviderConfig{Name: "test", APIKey: secret.New(testKey)}, &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if _, ok := r.Context().Deadline(); !ok {
+			t.Error("outbound HTTP has no deadline")
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"models":[]}`)), Request: r}, nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.ListModels(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}

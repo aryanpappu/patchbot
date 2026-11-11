@@ -73,7 +73,7 @@ func TestDefaults(t *testing.T) {
 		MaxTurns: 40, RefineMaxTurns: 20, MaxOutputTokens: 8192, MaxTotalTokens: 2_000_000,
 		HardMaxCostUSD: 10, MaxTestAttempts: 3,
 		RunTimeout: 30 * time.Minute, CmdTimeout: 2 * time.Minute, TestTimeout: 10 * time.Minute,
-		CmdOutputBytes: 8 << 10, CmdStoreBytes: 256 << 10, BaselineTests: true,
+		CmdOutputBytes: 8 << 10, CmdStoreBytes: 256 << 10, BaselineTests: true, TrustedPath: []string{"/usr/bin", "/bin"},
 	}
 	if diff := cmp.Diff(want, c.Limits); diff != "" {
 		t.Errorf("default limits (-want +got):\n%s", diff)

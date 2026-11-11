@@ -37,6 +37,13 @@ func Open(ctx context.Context, path string) (*SQLite, error) {
 	if err != nil {
 		return nil, fmt.Errorf("database path: %w", err)
 	}
+	if info, err := os.Lstat(abs); err == nil {
+		if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+			return nil, errors.New("database must be a regular file with mode 0600")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	//nolint:gosec // G304: opening the caller-selected database file is the purpose of Open.
 	file, err := os.OpenFile(abs, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {

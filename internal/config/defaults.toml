@@ -26,6 +26,7 @@ test_timeout = "10m"
 cmd_output_bytes = 8192
 cmd_store_bytes = 262144
 baseline_tests = true
+trusted_path = ["/usr/bin", "/bin"]
 
 [approval]
 local_actor = "local"

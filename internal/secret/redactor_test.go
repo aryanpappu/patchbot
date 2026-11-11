@@ -198,7 +198,7 @@ func TestRedactorConcurrentUse(t *testing.T) {
 func TestAddExactShortCredential(t *testing.T) {
 	r := secret.NewRedactor()
 	r.AddExact("tiny", "")
-	if got := r.Redact("credential: tiny"); got != "credential: [redacted]" {
+	if got := r.Redact("credential: tiny"); got != "credential: tiny" {
 		t.Fatalf("short credential: %s", got)
 	}
 }

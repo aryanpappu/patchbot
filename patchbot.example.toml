@@ -1,91 +1,92 @@
-# patchbot example configuration.
-#
-# Copy this file to ./patchbot.toml (or to patchbot/config.toml inside your
-# user config directory) and edit it. Check it with:
-#
-#   patchbot config check     # validates the file and lists warnings
-#   patchbot config show      # prints every effective value and where it came from
-#
-# Precedence: command-line flag > PATCHBOT_* environment variable > this file >
-# built-in defaults. Unknown keys are errors.
-#
-# Secrets never go in this file. Name the environment variable that holds an
-# API key with api_key_env. A key called api_key, token, password or secret is
-# rejected.
+# Copy to patchbot.toml. Run `patchbot config check` and `patchbot doctor`.
+# Precedence: flags > supported PATCHBOT_* variables > file > embedded defaults.
+# Unknown keys fail. Secrets belong in env vars, never in this file.
 
 [defaults]
-provider = "anthropic"
-refine_model = "claude-opus-5-5"     # writes the spec
-code_model = "claude-sonnet-5-5"     # writes the code
-max_cost_usd = 2.0                   # budget of one run, across every stage
-approvers = ["aryanpappu"]           # GitHub logins whose /approve comments count
-# mode = "fix"                       # fix, refine or investigate
+provider = "anthropic"              # name of a provider table below
+mode = "fix"                        # fix, refine, investigate
+refine_model = "claude-opus-5-5"     # empty uses the provider's default_model
+code_model = "claude-sonnet-5-5"     # empty uses the provider's default_model
+max_cost_usd = 2.0                   # one budget for refine, revisions and code
+approvers = ["aryanpappu"]           # replace with GitHub logins; collaborator required
+comment_on_failure = true           # short issue diagnostic; excludes cancel/auth
+
+[limits]
+max_turns = 40                      # code turns; shared run accounting still applies
+refine_max_turns = 20                # turns per refinement
+max_output_tokens = 8192             # maximum output reserved before each LLM call
+max_total_tokens = 2000000           # whole run, including every revision
+hard_max_cost_usd = 10.0             # ceiling for any per-run dollar budget
+max_test_attempts = 3                # may tighten; at most 3
+run_timeout = "30m"                 # active execution time; excludes waiting
+cmd_timeout = "2m"                  # agent command deadline
+test_timeout = "10m"               # harness test deadline
+cmd_output_bytes = 8192              # maximum command output sent to the model
+cmd_store_bytes = 262144             # maximum command output stored
+baseline_tests = true               # test the approved base before coding
+# Add your toolchain directory here when Go lives outside these directories.
+# Absolute directories only. No empty items, .., data/workspace paths or
+# group/world-writable ancestors (sticky bits do not exempt them). Every entry
+# must exist; ancestors and symlink locations must be root/current-user owned.
+# Add your existing secure Go/git directories. Child PATH uses exactly this list.
+trusted_path = ["/usr/bin", "/bin"]
+
+[approval]
+local_actor = "local"               # name recorded for local CLI/UI actions
+poll_interval = "60s"               # serve polls only waiting runs
+ttl = "336h"                       # waiting/approval lifetime; at most 14 days
+max_revisions = 5                    # may tighten; at most 5
+
+[log]
+level = "info"                      # debug, info, warn, error
+format = "text"                     # text or json
+
+[server]
+addr = "127.0.0.1:8080"              # non-loopback requires PATCHBOT_UI_TOKEN
+max_concurrent_runs = 2              # executing jobs
+max_queued_runs = 16                 # pending jobs; excess requests return 429
+vue_src = "cdn"                     # cdn or local (vendored Vue is included)
+
+[data]
+dir = "~/.patchbot"                 # private 0700 directory; SQLite is 0600
 
 [providers.anthropic]
-kind = "anthropic"
-api_key_env = "ANTHROPIC_API_KEY"
-# models and default_model for Anthropic come from the built-in defaults.
-
-# No prices are shipped. Without a price a model's cost is unknown and only the
-# token limit applies. Copy the numbers from the provider's official pricing
-# page, in US dollars per million tokens, and record the day you checked.
-#
+kind = "anthropic"                  # anthropic, gemini, openai
+base_url = ""                       # empty uses the adapter's official endpoint
+api_key_env = "ANTHROPIC_API_KEY"    # variable name; never put its value here
+models = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"]
+default_model = "claude-sonnet-5-5"   # model ID; use `patchbot models` to check
+price_free = false                   # explicit true for free local providers only
+# No prices are shipped. Unpriced models use only the token limit.
+# All price keys are shown below. Replace the example rates before enabling.
+# Rates are USD per million tokens. input/output are required, including zero.
 # [providers.anthropic.prices."claude-sonnet-5-5"]
-# input = <dollars per million input tokens>
-# output = <dollars per million output tokens>
-# cache_read = <optional; defaults to input>
-# cache_write = <optional; defaults to input>
-# checked = 2026-11-10
+# input = 0.0                        # replace with the provider's checked rate
+# output = 0.0                       # replace with the provider's checked rate
+# cache_read = 0.0                   # optional; omitted uses input
+# cache_write = 0.0                  # optional; omitted uses input
+# checked = 2026-11-11               # date you checked the provider's price page
 
+# Optional providers. Remove tables you do not use: doctor checks every table.
 [providers.gemini]
 kind = "gemini"
+base_url = ""                       # official Gemini REST endpoint by default
 api_key_env = "GEMINI_API_KEY"
-# default_model = "..."              # pick one from `patchbot models --provider gemini`
+models = []                         # fill from `patchbot models --provider gemini`
+default_model = ""                  # choose before selecting this provider
+price_free = false
 
 [providers.ollama]
-kind = "openai"                      # any OpenAI-compatible server
+kind = "openai"                     # OpenAI-compatible Chat Completions
 base_url = "http://localhost:11434/v1"
-models = ["qwen3-coder"]             # example only, your own local model
-price_free = true                    # a local model costs nothing; say so explicitly
+api_key_env = ""                    # unauthenticated local endpoint
+models = ["qwen3-coder"]            # example; use a model installed locally
+default_model = "qwen3-coder"
+price_free = true                    # explicit zero cost; no prices table
 
-# Only repositories listed here can run.
+# Only repositories in this allowlist can run. Replace this repository.
 [repos."aryanpappu/demo-app"]
-# The agent can run these commands by ID and nothing else. Each one is an argv
-# array that runs without a shell: no pipes, redirection or variables.
+# Literal argv, without a shell. The agent selects an ID and cannot add args.
 commands = { test = ["go", "test", "./..."], lint = ["go", "vet", "./..."] }
-protected = ["migrations/"]          # extra paths the agent may not read or write
-# test_command = "test"              # the command that verifies a change; "test" by default
-
-# The tables below show the built-in defaults.
-
-# [limits]
-# max_turns = 40
-# refine_max_turns = 20
-# max_output_tokens = 8192
-# max_total_tokens = 2000000
-# hard_max_cost_usd = 10.0           # ceiling for any per-run budget
-# max_test_attempts = 3
-# run_timeout = "30m"
-# cmd_timeout = "2m"
-# test_timeout = "10m"
-# cmd_output_bytes = 8192            # sent to the model per command
-# cmd_store_bytes = 262144           # stored per command
-# baseline_tests = true
-
-# [approval]
-# local_actor = "local"              # name recorded for CLI and UI approvals
-# poll_interval = "60s"
-# ttl = "336h"                       # a waiting run expires after 14 days
-# max_revisions = 5
-
-# [log]
-# level = "info"                     # debug, info, warn or error
-# format = "text"                    # text or json
-
-# [server]
-# addr = "127.0.0.1:8080"
-# max_concurrent_runs = 2
-# vue_src = "cdn"                    # or "local"
-
-# [data]
-# dir = "~/.patchbot"                # database and workspaces
+protected = ["migrations/"]          # extra paths denied for reads and writes
+test_command = "test"              # harness command ID; inferred if named test

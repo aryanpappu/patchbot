@@ -8,13 +8,15 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/aryanpappu/patchbot/internal/execx"
 )
 
-const trustedPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+const trustedPath = execx.TrustedPath
 
 // command builds the entire environment explicitly. Credentials are deliberately
 // absent from argv, including -c arguments, and from all non-publication calls.
-func (r *Repo) command(ctx context.Context, authenticated bool, args ...string) (*exec.Cmd, error) {
+func (r *Repo) command(_ context.Context, authenticated bool, args ...string) (*exec.Cmd, error) {
 	if authenticated && (len(args) == 0 || (args[0] != "clone" && args[0] != "push")) {
 		return nil, errors.New("credentials are restricted to clone and push")
 	}
@@ -47,10 +49,10 @@ func (r *Repo) command(ctx context.Context, authenticated bool, args ...string) 
 		"-c", "tag.gpgSign=false",
 	}
 	argv = append(argv, args...)
-	cmd := exec.CommandContext(ctx, r.git, argv...) // #nosec G204 -- executable is resolved from a fixed trusted PATH; literal git subcommands, no shell.
+	cmd := exec.Command(r.git, argv...) // #nosec G204 -- executable is resolved from the configured trusted PATH; literal git subcommands, no shell.
 	cmd.Dir = r.dir
 	cmd.Env = []string{
-		"PATH=" + trustedPath, "HOME=" + r.home, "TMPDIR=" + r.temp,
+		"PATH=" + r.path, "HOME=" + r.home, "TMPDIR=" + r.temp,
 		"LANG=C", "LC_ALL=C", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_TERMINAL_PROMPT=0", "GIT_ATTR_NOSYSTEM=1", "GIT_NO_REPLACE_OBJECTS=1",
 		"GIT_AUTHOR_NAME=" + r.author.Name, "GIT_AUTHOR_EMAIL=" + r.author.Email,
@@ -63,7 +65,6 @@ func (r *Repo) command(ctx context.Context, authenticated bool, args ...string) 
 			"GIT_CONFIG_VALUE_0=AUTHORIZATION: basic "+encoded)
 	}
 	cmd.WaitDelay = time.Second
-	configureProcess(cmd)
 	return cmd, nil
 }
 
@@ -92,8 +93,7 @@ func (r *Repo) runIndexLimit(ctx context.Context, authenticated bool, index stri
 	}
 	out, diagnostic := &cappedBuffer{limit: limit}, &cappedBuffer{limit: r.outputCap}
 	cmd.Stdout, cmd.Stderr = out, diagnostic
-	err = cmd.Run()
-	cleanupProcess(cmd)
+	err = execx.RunProcessGroup(ctx, cmd, execx.DefaultGracePeriod)
 	if ctx.Err() != nil {
 		return "", false, fmt.Errorf("git command: %w", ctx.Err())
 	}

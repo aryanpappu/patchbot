@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aryanpappu/patchbot/internal/execx"
 )
 
 const (
@@ -54,6 +56,10 @@ type CloneOptions struct {
 	Token         string
 	Timeout       time.Duration
 	OutputCap     int
+	// TrustedPath is shared with command policies and doctor. Nil selects defaults.
+	TrustedPath []string
+	// ExcludedRoots includes the application data and workspace roots.
+	ExcludedRoots []string
 	// TestOnlyLocalRemote explicitly enables file transport. Only tests should
 	// set it, to an absolute local bare repository path. No local hard links.
 	TestOnlyLocalRemote string
@@ -76,6 +82,7 @@ type Repo struct {
 	timeout                                               time.Duration
 	outputCap                                             int
 	closed                                                bool
+	path                                                  string
 	// observeCommand is a per-repository test seam, called under mu.
 	observeCommand func([]string)
 }
@@ -130,16 +137,15 @@ func Clone(ctx context.Context, opts CloneOptions) (_ *Repo, cloneErr error) {
 		}
 		r.remote = "https://" + opts.Host + "/" + opts.Owner + "/" + opts.Name + ".git"
 	}
-	// Resolve from a fixed PATH, never the checkout or inherited PATH.
-	for _, dir := range filepath.SplitList(trustedPath) {
-		path := filepath.Join(dir, "git")
-		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {
-			r.git = path
-			break
-		}
+	dirs := opts.TrustedPath
+	if dirs == nil {
+		dirs = filepath.SplitList(execx.TrustedPath)
 	}
-	if r.git == "" {
-		return nil, errors.New("git executable not found in trusted PATH")
+	r.path = strings.Join(dirs, string(filepath.ListSeparator))
+	var err error
+	r.git, err = ResolveGit(dirs, append([]string{opts.Dir}, opts.ExcludedRoots...)...)
+	if err != nil {
+		return nil, err
 	}
 	private, err := os.MkdirTemp("", "patchbot-git-")
 	if err != nil {
@@ -310,4 +316,9 @@ func (r *Repo) noSubmodules(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// ResolveGit is the single git lookup used by clone/push and doctor.
+func ResolveGit(dirs []string, excluded ...string) (string, error) {
+	return execx.ResolveExecutable("git", dirs, excluded...)
 }

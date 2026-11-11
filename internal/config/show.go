@@ -17,17 +17,20 @@ import (
 // WriteEffective prints the effective configuration as TOML, with the source
 // of every value in a trailing comment. Secrets are never printed: each API
 // key appears as a comment that says only whether it is set.
-func (c *Config) WriteEffective(w io.Writer) error {
+func (c *Config) WriteEffective(w io.Writer, extra ...*secret.Redactor) error {
 	p := &printer{sources: c.sources, redactor: secret.NewRedactor()}
 	p.redactor.AddSecrets(c.Secrets()...)
+	for _, r := range extra {
+		p.redactor.Extend(r)
+	}
 
 	if c.path == "" {
 		p.linef("# config file: none found (built-in defaults)")
 	} else {
-		p.linef("# config file: %s", c.path)
+		p.linef("# config file: %s", p.redactor.Redact(c.path))
 	}
 	p.table(nil, reflect.ValueOf(c).Elem())
-	_, err := io.WriteString(w, p.redactor.Redact(p.b.String()))
+	_, err := io.WriteString(w, p.b.String())
 	return err
 }
 
@@ -70,7 +73,7 @@ func (p *printer) table(key toml.Key, v reflect.Value) {
 		}
 	case reflect.Map:
 		for _, name := range sortedKeys(mapOfValues(v)) {
-			add(name, v.MapIndex(reflect.ValueOf(name)))
+			add(p.redactor.Redact(name), v.MapIndex(reflect.ValueOf(name)))
 		}
 	}
 
@@ -85,7 +88,7 @@ func (p *printer) table(key toml.Key, v reflect.Value) {
 	width := 0
 	rendered := make([]string, len(leaves))
 	for i, leaf := range leaves {
-		text, ok := formatValue(leaf.value)
+		text, ok := formatValue(leaf.value, p.redactor)
 		if !ok {
 			continue
 		}
@@ -94,18 +97,18 @@ func (p *printer) table(key toml.Key, v reflect.Value) {
 			text = strconv.Quote(secret.Mask) // most likely a key pasted into the wrong field
 		}
 		if isProvider && name == "base_url" {
-			text = strconv.Quote(displayURL(provider.BaseURL))
+			text = strconv.Quote(p.redactor.Redact(displayURL(provider.BaseURL)))
 		}
 		rendered[i] = fmt.Sprintf("%s = %s", toml.Key{name}, text)
 		width = max(width, len(rendered[i]))
 	}
 	for i, leaf := range leaves {
 		if rendered[i] != "" {
-			p.linef("%-*s  # %s", width, rendered[i], p.sources[leaf.key.String()])
+			p.linef("%-*s  # %s", width, rendered[i], p.redactor.Redact(p.sources[leaf.key.String()].String()))
 		}
 	}
 	if isProvider {
-		p.linef("%s", apiKeyStatus(provider))
+		p.linef("%s", p.redactor.Redact(apiKeyStatus(provider)))
 	}
 	for _, t := range tables {
 		value := t.value
@@ -181,7 +184,7 @@ func isTable(v reflect.Value) bool {
 
 // formatValue renders a value as TOML. It reports false for an optional value
 // that is not set, which has no TOML form.
-func formatValue(v reflect.Value) (string, bool) {
+func formatValue(v reflect.Value, r *secret.Redactor) (string, bool) {
 	if v.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return "", false
@@ -190,7 +193,7 @@ func formatValue(v reflect.Value) (string, bool) {
 	}
 	switch x := v.Interface().(type) {
 	case string:
-		return strconv.Quote(x), true
+		return strconv.Quote(r.Redact(x)), true
 	case bool:
 		return strconv.FormatBool(x), true
 	case int:
@@ -213,10 +216,10 @@ func formatValue(v reflect.Value) (string, bool) {
 	case []string:
 		quoted := make([]string, len(x))
 		for i, item := range x {
-			quoted[i] = strconv.Quote(item)
+			quoted[i] = strconv.Quote(r.Redact(item))
 		}
 		return "[" + strings.Join(quoted, ", ") + "]", true
 	default:
-		return strconv.Quote(fmt.Sprint(x)), true
+		return strconv.Quote(r.Redact(fmt.Sprint(x))), true
 	}
 }

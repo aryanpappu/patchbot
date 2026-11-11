@@ -20,11 +20,11 @@ import (
 // runs into it.
 const maxSymlinkHops = 32
 
-// The modes of files and directories the agent creates. A checkout is meant
-// to be read by the build and test commands, so they are the usual ones.
+// New files and directories are private. Rewrites retain owner permissions,
+// including executable bits needed by repository scripts.
 const (
-	newFileMode fs.FileMode = 0o644
-	newDirMode  fs.FileMode = 0o755
+	newFileMode fs.FileMode = 0o600
+	newDirMode  fs.FileMode = 0o700
 )
 
 // Local is a Workspace on a local directory. It is safe for concurrent use.
@@ -187,7 +187,7 @@ func (l *Local) WriteFile(name string, data []byte) error {
 		if err := needRegular(r.info); err != nil {
 			return l.fail(op, name, err)
 		}
-		mode = r.info.Mode().Perm()
+		mode = r.info.Mode().Perm() & 0o700
 	}
 	pinned, err := l.pinDir(r, path.Dir(r.path), true)
 	if err != nil {

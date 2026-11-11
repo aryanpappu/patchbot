@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -79,7 +80,7 @@ func containsKey(target, key string) bool {
 
 // Chat implements llm.Provider.
 func (p *Provider) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
-	if err := ctx.Err(); err != nil {
+	if err := p.contextFailure(ctx); err != nil {
 		return nil, err
 	}
 	if err := req.Validate(); err != nil {
@@ -103,6 +104,8 @@ func (p *Provider) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatResp
 var modelID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 func (p *Provider) request(ctx context.Context, method, path, page string, body []byte, out any) error {
+	ctx, cancel := context.WithTimeoutCause(ctx, 2*time.Minute, errRequestTimeout)
+	defer cancel()
 	target := *p.base
 	target.Path = strings.TrimRight(target.Path, "/") + path
 	target.RawPath = ""
@@ -130,7 +133,7 @@ func (p *Provider) request(ctx context.Context, method, path, page string, body 
 	if err != nil {
 		return p.ioFailure(ctx, err)
 	}
-	if err := ctx.Err(); err != nil {
+	if err := p.contextFailure(ctx); err != nil {
 		return err
 	}
 	if len(data) > maxResponseBody {
@@ -146,8 +149,8 @@ func (p *Provider) request(ctx context.Context, method, path, page string, body 
 }
 
 func (p *Provider) ioFailure(ctx context.Context, err error) error {
-	if ctx.Err() != nil {
-		return ctx.Err()
+	if err := p.contextFailure(ctx); err != nil {
+		return err
 	}
 	return p.failure(llm.ErrUnavailable, "Gemini transport or body read failed", err)
 }
@@ -158,7 +161,7 @@ func (p *Provider) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
 	seenPages := map[string]bool{}
 	page := ""
 	for {
-		if err := ctx.Err(); err != nil {
+		if err := p.contextFailure(ctx); err != nil {
 			return nil, err
 		}
 		var response struct {
@@ -191,4 +194,16 @@ func (p *Provider) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
 		}
 		seenPages[response.Next], page = true, response.Next
 	}
+}
+
+var errRequestTimeout = errors.New("adapter request timeout")
+
+func (p *Provider) contextFailure(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		if errors.Is(context.Cause(ctx), errRequestTimeout) {
+			return p.failure(llm.ErrUnavailable, "Gemini request timed out", err)
+		}
+		return err
+	}
+	return nil
 }

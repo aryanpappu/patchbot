@@ -61,12 +61,11 @@ scrollable, and layout wraps at phone width.
 
 ## Vue vendoring
 
-The single `VueIntegrity` constant in `web.go` is **provisional offline**.
-The supervisor must verify and correct it outside this sandbox before either
-CDN use or vendoring can work. Its comment records that `make vendor-vue`
-verifies it; no download or guessed success is claimed here.
+The single `VueIntegrity` constant in `web.go` pins the included Vue 3.5.13
+asset. Its comment records verification against jsDelivr and unpkg on 2026-11-11.
+An offline test verifies that the embedded bytes match this SHA-384 pin.
 
-After that verification, from the repository root on a networked machine:
+To refresh that exact asset from a networked machine:
 
 ```sh
 make vendor-vue
@@ -77,8 +76,7 @@ The Go downloader uses the same version/URL/hash as the shell, bounds the
 response to 2 MiB, checks SHA-384, and atomically installs
 `assets/vue.global.prod.js` only on a match. Errors preserve the previous
 vendor file. Rebuilding embeds the installed copy. No build is downloaded by
-`make ci`. The clearly named `vue.global.prod.js.placeholder` records the
-offline state and is not served as JavaScript. Missing local Vue returns 503
+`make ci`. The historical `vue.global.prod.js.placeholder` is never served as JavaScript. Missing local Vue returns 503
 with instructions, and the shell shows a loading diagnostic.
 
 Select the mode in your TOML config (the key already existed in M1):

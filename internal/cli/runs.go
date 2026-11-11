@@ -75,7 +75,10 @@ func (a *App) parseRunCommand(name string, args []string) (runCommand, config.Op
 		args = args[1:]
 	}
 	if err := flags.Parse(args); err != nil {
-		return cmd, opts, err
+		if errors.Is(err, flag.ErrHelp) {
+			return cmd, opts, err
+		}
+		return cmd, opts, errors.New("invalid command options")
 	}
 	if flags.NArg() > 0 {
 		return cmd, opts, errors.New("unexpected positional argument")
@@ -125,7 +128,7 @@ func (a *App) runControl(name string, args []string) int {
 			opts.Flags = append(opts.Flags, override)
 		}
 	}
-	cfg, err := config.Load(opts)
+	cfg, err := a.loadConfig(opts)
 	if err != nil {
 		a.printProblems(nil, err)
 		return 1
@@ -134,7 +137,7 @@ func (a *App) runControl(name string, args []string) int {
 		a.printProblems(cfg.Redactor(), err)
 		return 1
 	}
-	if err := os.MkdirAll(cfg.DataDir(), 0700); err != nil {
+	if err := cfg.EnsureDataDir(); err != nil {
 		a.printProblems(cfg.Redactor(), errors.New("could not create data directory"))
 		return 1
 	}
@@ -147,6 +150,10 @@ func (a *App) runControl(name string, args []string) int {
 	}
 	defer func() { _ = db.Close() }()
 	runnerOpts := a.RunnerOptions
+	fullRedactor := secret.NewRedactor()
+	fullRedactor.Extend(runnerOpts.Redactor)
+	fullRedactor.Extend(a.outputRedactor)
+	runnerOpts.Redactor = fullRedactor
 	if runnerOpts.Constructors == nil {
 		runnerOpts.Constructors = providers.Constructors(a.Providers)
 	}
@@ -163,7 +170,7 @@ func (a *App) runControl(name string, args []string) int {
 		a.printProblems(cfg.Redactor(), err)
 		return 1
 	}
-	redactor := cfg.Redactor()
+	redactor := fullRedactor
 	if token, err := runnerOpts.Tokens.Token(ctx); err == nil {
 		redactor.AddSecrets(secret.New(token))
 	}

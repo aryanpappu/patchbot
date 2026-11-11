@@ -283,3 +283,22 @@ type Store interface {
 	GetArtifact(ctx context.Context, runID int64, kind string, attempt int64) (Artifact, error)
 	Close() error
 }
+
+// IsSchemaIdentifier reports fixed phase/status values owned by the harness.
+// Redaction boundaries preserve these enums while still masking arbitrary text.
+func IsSchemaIdentifier(key, value string) bool {
+	switch key {
+	case "phase":
+		switch Phase(value) {
+		case PhasePreflight, PhaseRefine, PhaseClone, PhaseBaseline, PhaseCode, PhaseVerify, PhasePublish:
+			return true
+		}
+	case "status":
+		switch Status(value) {
+		case StatusQueued, StatusRunning, StatusNeedsInfo, StatusAwaitingApproval, StatusApproved, StatusSucceeded, StatusFailed, StatusCancelled, StatusRejected:
+			return true
+		}
+		return value == "ok" || value == "error"
+	}
+	return false
+}

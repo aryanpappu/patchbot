@@ -93,7 +93,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return
 			}
-			if !write(fmt.Sprintf("id: %d\nevent: %s\ndata: %s\n\n", event.Seq, eventName(s.safeText(event.Type)), payload)) {
+			if !write(fmt.Sprintf("id: %d\nevent: %s\ndata: %s\n\n", event.Seq, eventName(event.Type), payload)) {
 				return
 			}
 			after = event.Seq

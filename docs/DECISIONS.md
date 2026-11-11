@@ -20,3 +20,29 @@ engineering questions together and record them here.
 - `execx` tests use `true`, not `go`, because CI runners install Go outside `TrustedPath`.
 - Follow-up for M15: make `TrustedPath` configurable (an absolute-dirs-only `[limits] trusted_path`) so toolchains
   installed through asdf, mise or a toolcache can run repo tests.
+
+## 2026-11-11: M15 release hardening
+
+- `limits.trusted_path` defaults to the old execx path. Missing directories are
+  allowed for portable configs. Existing entries must be directories without
+  world writes. Validation resolves existing prefixes and symlinks, including
+  dangling aliases, and checks data and actual workspace roots. The immutable
+  policy supplies both executable lookup and child PATH.
+- Doctor is offline unless `--online` is explicit. It reports absent fresh
+  storage as a warning. It never creates a database or migrates an existing one.
+  Existing pending, modified, gapped or newer migration ledgers fail inspection.
+  Online probes only call provider ListModels and GitHub /user, with deadlines.
+- Startup sets Unix umask 077 before work so git and child commands inherit
+  private creation defaults. App-owned files and directories use 0600/0700.
+  File rewrites retain only owner permission bits, including existing execute
+  permission. Existing public data directories/databases are refused.
+- The smoke script builds the production binary and tests its doctor command.
+  The Go integration uses the same CLI dispatcher with injected fake provider,
+  httptest GitHub and local bare remote. No production fake-provider flag or
+  alternative approval path is added. The fixture includes its actual Go bin
+  directory for setup-go/toolcache portability.
+- CLI usage errors omit unparsed values. Loaded provider credentials plus
+  GitHub/UI credentials are masked at the final output stream too. Registered
+  credentials are masked even below the generic redactor's eight-byte threshold.
+- This task does not create a release commit, tag or push. An offline cached
+  scanner without a vulnerability database is not evidence of a clean scan.

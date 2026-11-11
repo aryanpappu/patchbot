@@ -111,7 +111,12 @@ func (s *Server) redactValue(value any) any {
 	case map[string]any:
 		out := make(map[string]any, len(value))
 		for key, item := range value {
-			out[s.safeText(key)] = s.redactValue(item)
+			text, isString := item.(string)
+			if isString && store.IsSchemaIdentifier(key, text) {
+				out[key] = item
+			} else {
+				out[key] = s.redactValue(item)
+			}
 		}
 		return out
 	default:

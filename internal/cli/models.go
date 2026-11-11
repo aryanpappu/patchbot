@@ -33,7 +33,7 @@ func (a *App) runModels(args []string) int {
 			_, _ = fmt.Fprint(a.Stdout, modelsUsage)
 			return 0
 		}
-		_, _ = fmt.Fprintf(a.Stderr, "patchbot models: %v\n\n%s", err, modelsUsage)
+		_, _ = fmt.Fprintf(a.Stderr, "patchbot models: invalid command options\n\n%s", modelsUsage)
 		return 2
 	}
 	if flags.NArg() > 0 {
@@ -43,7 +43,7 @@ func (a *App) runModels(args []string) int {
 	if provider != "" {
 		opts.Flags = append(append([]config.Override(nil), opts.Flags...), config.Override{Key: "defaults.provider", Value: provider, Flag: "--provider"})
 	}
-	cfg, err := config.Load(opts)
+	cfg, err := a.loadConfig(opts)
 	if err != nil {
 		a.printProblems(nil, err)
 		return 1
@@ -67,7 +67,7 @@ func (a *App) runModels(args []string) int {
 		a.printProblems(cfg.Redactor(), err)
 		return 1
 	}
-	redactor := cfg.Redactor()
+	redactor := a.outputRedactor
 	if list.Warning != "" {
 		_, _ = fmt.Fprintf(a.Stderr, "warning: %s\n", redactor.Redact(list.Warning))
 	}

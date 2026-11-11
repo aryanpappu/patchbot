@@ -11,15 +11,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/aryanpappu/patchbot/internal/secret"
 )
 
 // Run starts one process group. Timeout/cancel signals TERM, then KILL after the
-// grace period, even if the leader has already exited. Wait reaps the direct
-// child; descendant parents (or the OS reaper) reap their own children.
+// grace period, even if the leader has already exited. The leader is not reaped
+// until all group signaling finishes: its zombie pins the PGID against reuse.
+// Descendant parents (or the OS reaper) reap their own children.
 func (e *LocalExecutor) Run(ctx context.Context, spec Spec) (result Result, runErr error) {
 	started := time.Now()
 	result.ExitCode = -1
@@ -49,27 +49,17 @@ func (e *LocalExecutor) Run(ctx context.Context, spec Spec) (result Result, runE
 	cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...) // #nosec G204 -- argv is operator-owned, never a shell string.
 	cmd.Dir, cmd.Env = spec.Dir, env
 	cmd.Stdout, cmd.Stderr = sink, sink
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = e.WaitDelay
 	if cmd.WaitDelay == 0 {
 		cmd.WaitDelay = DefaultWaitDelay
 	}
-	if err := cmd.Start(); err != nil {
-		return result, fmt.Errorf("start command: %w", err)
-	}
-	waited := make(chan error, 1)
-	go func() { waited <- cmd.Wait() }()
-	var waitErr error
-	select {
-	case waitErr = <-waited:
-		// Also clean descendants of a leader that returns before its children.
-		if groupExists(cmd.Process.Pid) {
-			runErr = e.stopGroup(cmd.Process.Pid)
-		}
-	case <-ctx.Done():
+	interrupted, waitErr, processErr := runProcessGroup(ctx, cmd, e.GracePeriod)
+	runErr = processErr
+	if interrupted {
 		setCancellation(ctx, &result)
-		runErr = e.stopGroup(cmd.Process.Pid)
-		waitErr = <-waited
+	}
+	if cmd.ProcessState == nil {
+		return result, runErr
 	}
 	result.ExitCode = cmd.ProcessState.ExitCode()
 	if filtered != nil {
@@ -157,29 +147,4 @@ func (e *LocalExecutor) validate(spec *Spec) error {
 func setCancellation(ctx context.Context, result *Result) {
 	result.TimedOut = errors.Is(ctx.Err(), context.DeadlineExceeded)
 	result.Cancelled = errors.Is(ctx.Err(), context.Canceled)
-}
-
-func groupExists(pid int) bool {
-	return !errors.Is(syscall.Kill(-pid, 0), syscall.ESRCH)
-}
-
-func (e *LocalExecutor) stopGroup(pid int) error {
-	termErr := syscall.Kill(-pid, syscall.SIGTERM)
-	if errors.Is(termErr, syscall.ESRCH) {
-		return nil
-	}
-	grace := e.GracePeriod
-	if grace == 0 {
-		grace = DefaultGracePeriod
-	}
-	// Do not stop this timer when Wait returns: a descendant may ignore TERM
-	// after the leader exits, including when it has closed its output handles.
-	timer := time.NewTimer(grace)
-	defer timer.Stop()
-	<-timer.C
-	killErr := syscall.Kill(-pid, syscall.SIGKILL)
-	if errors.Is(killErr, syscall.ESRCH) {
-		killErr = nil
-	}
-	return errors.Join(termErr, killErr)
 }

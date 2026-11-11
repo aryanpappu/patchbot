@@ -368,8 +368,8 @@ func TestEditFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	ok(t, reg, "edit_file", obj{"path": "run.sh", "old_string": "old", "new_string": "new"})
-	if info, _ := os.Stat(script); info.Mode().Perm() != 0o755 {
-		t.Errorf("mode after edit = %v, want 0755", info.Mode().Perm())
+	if info, _ := os.Stat(script); info.Mode().Perm() != 0o700 {
+		t.Errorf("mode after edit = %v, want 0700", info.Mode().Perm())
 	}
 }
 

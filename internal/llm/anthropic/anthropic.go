@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -45,6 +46,14 @@ func NewWithOptions(cfg llm.ProviderConfig, opts Options) (*Provider, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Minute}
 	}
+	copyClient := *client
+	transport := copyClient.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	copyClient.Transport = boundedTransport{base: transport}
+	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client = &copyClient
 	// Service constructors avoid NewClient's environment/profile credential chain.
 	options := []option.RequestOption{option.WithBaseURL(base), option.WithAPIKey(cfg.APIKey.Reveal()), option.WithHTTPClient(client), option.WithMaxRetries(0)}
 	return &Provider{cfg: cfg, messages: sdk.NewMessageService(options...), models: sdk.NewModelService(options...)}, nil
@@ -54,7 +63,7 @@ func NewWithOptions(cfg llm.ProviderConfig, opts Options) (*Provider, error) {
 func (p *Provider) Name() string { return p.cfg.Name }
 
 func (p *Provider) ready(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
+	if err := p.contextFailure(ctx); err != nil {
 		return err
 	}
 	if !p.cfg.APIKey.IsSet() {
@@ -65,6 +74,8 @@ func (p *Provider) ready(ctx context.Context) error {
 
 // Chat sends a non-streaming Messages request.
 func (p *Provider) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+	ctx, cancel := context.WithTimeoutCause(ctx, 10*time.Minute, errRequestTimeout)
+	defer cancel()
 	if err := p.ready(ctx); err != nil {
 		return nil, err
 	}
@@ -92,7 +103,7 @@ func (p *Provider) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatResp
 	}
 	var msg sdk.Message
 	if err := json.Unmarshal(body, &msg); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
+		if ctxErr := p.contextFailure(ctx); ctxErr != nil {
 			return nil, ctxErr
 		}
 		failure := p.failure(llm.ErrMalformed, "invalid provider response", err)
@@ -265,6 +276,8 @@ func stopReason(s string) llm.StopReason {
 
 // ListModels lists every page of models offered by this provider.
 func (p *Provider) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
+	ctx, cancel := context.WithTimeoutCause(ctx, 30*time.Second, errRequestTimeout)
+	defer cancel()
 	if err := p.ready(ctx); err != nil {
 		return nil, err
 	}
@@ -285,8 +298,11 @@ func (p *Provider) failure(kind llm.ErrorKind, message string, cause error) *llm
 }
 
 func (p *Provider) mapError(ctx context.Context, err error, raw *http.Response) error {
-	if ctxErr := ctx.Err(); ctxErr != nil {
+	if ctxErr := p.contextFailure(ctx); ctxErr != nil {
 		return ctxErr
+	}
+	if errors.Is(err, errResponseTooLarge) {
+		return p.failure(llm.ErrMalformed, "provider response exceeds 10 MB", nil)
 	}
 	if errors.Is(err, context.Canceled) {
 		return context.Canceled
@@ -318,4 +334,50 @@ func (p *Provider) mapError(ctx context.Context, err error, raw *http.Response) 
 		out.RetryAfter = llm.ParseRetryAfter(raw.Header.Get("retry-after"), time.Now())
 	}
 	return out
+}
+
+const maxResponseBody = 10 << 20
+
+var errResponseTooLarge = errors.New("provider response exceeds 10 MB")
+
+// The SDK reads bodies internally. Bound every response, including error and
+// paginated model responses, before handing it to the SDK decoder.
+type boundedTransport struct{ base http.RoundTripper }
+
+func (t boundedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	response, err := t.base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	response.Body = &boundedBody{ReadCloser: response.Body, remaining: maxResponseBody}
+	return response, nil
+}
+
+type boundedBody struct {
+	io.ReadCloser
+	remaining int
+}
+
+func (b *boundedBody) Read(p []byte) (int, error) {
+	if b.remaining < 0 {
+		return 0, errResponseTooLarge
+	}
+	n, err := b.ReadCloser.Read(p[:min(len(p), b.remaining+1)])
+	b.remaining -= n
+	if b.remaining < 0 {
+		return n, errResponseTooLarge
+	}
+	return n, err
+}
+
+var errRequestTimeout = errors.New("adapter request timeout")
+
+func (p *Provider) contextFailure(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		if errors.Is(context.Cause(ctx), errRequestTimeout) {
+			return p.failure(llm.ErrUnavailable, "provider request timed out", err)
+		}
+		return err
+	}
+	return nil
 }

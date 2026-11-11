@@ -26,6 +26,11 @@ func parseGitVersion(out string) ([3]int, error) {
 	return version, nil
 }
 
+// CheckVersion validates the git --version output against the clone safety floor.
+func CheckVersion(out string) error {
+	return checkGitVersion(out)
+}
+
 func checkGitVersion(out string) error {
 	found, err := parseGitVersion(out)
 	if err == nil {

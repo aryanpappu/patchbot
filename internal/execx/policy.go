@@ -25,6 +25,10 @@ type PolicyOptions struct {
 	MaxExtraArgs     int
 	MaxArgLength     int
 	MaxExtraBytes    int
+	// TrustedPath defaults to TrustedPath when nil; an empty list is invalid.
+	TrustedPath []string
+	// ExcludedRoots adds data/workspace roots to the checkout exclusion.
+	ExcludedRoots []string
 }
 
 type command struct {
@@ -40,9 +44,10 @@ type Policy struct {
 	maxArgs  int
 	maxLen   int
 	maxBytes int
+	path     []string
 }
 
-// NewPolicy resolves executables once using only TrustedPath. An absolute
+// NewPolicy resolves executables once using only the configured trusted path. An absolute
 // operator-supplied executable is also accepted, but must be outside root.
 // At most one options value may be supplied.
 func NewPolicy(root string, commands map[string][]string, options ...PolicyOptions) (*Policy, error) {
@@ -60,7 +65,15 @@ func NewPolicy(root string, commands map[string][]string, options ...PolicyOptio
 	if opts.MaxExtraArgs < 0 || opts.MaxArgLength < 0 || opts.MaxExtraBytes < 0 {
 		return nil, errors.New("argument limits must not be negative")
 	}
-	p := &Policy{commands: make(map[string]command), maxArgs: opts.MaxExtraArgs,
+	dirs := opts.TrustedPath
+	if dirs == nil {
+		dirs = filepath.SplitList(TrustedPath)
+	}
+	roots := append([]string{root}, opts.ExcludedRoots...)
+	if err := ValidateTrustedPath(dirs, roots...); err != nil {
+		return nil, err
+	}
+	p := &Policy{path: append([]string(nil), dirs...), commands: make(map[string]command), maxArgs: opts.MaxExtraArgs,
 		maxLen: opts.MaxArgLength, maxBytes: opts.MaxExtraBytes}
 	if p.maxArgs == 0 {
 		p.maxArgs = defaultMaxExtraArgs
@@ -80,7 +93,7 @@ func NewPolicy(root string, commands map[string][]string, options ...PolicyOptio
 				return nil, fmt.Errorf("command %q contains NUL", name)
 			}
 		}
-		binary, resolveErr := resolveExecutable(root, argv[0], opts.AllowShells)
+		binary, resolveErr := resolveExecutable(roots, argv[0], opts.AllowShells, dirs)
 		if resolveErr != nil {
 			return nil, fmt.Errorf("command %q: %w", name, resolveErr)
 		}
@@ -89,6 +102,11 @@ func NewPolicy(root string, commands map[string][]string, options ...PolicyOptio
 		p.commands[name] = command{copyArgv, opts.AllowArgs[name], opts.AllowLeadingDash[name]}
 	}
 	return p, nil
+}
+
+// MinimalEnv uses the same immutable PATH that resolved this policy.
+func (p *Policy) MinimalEnv(home, tmp string, extra map[string]string) []string {
+	return minimalEnv(home, tmp, extra, strings.Join(p.path, string(filepath.ListSeparator)))
 }
 
 // Resolve returns a fresh argv slice. Additional arguments require explicit
@@ -129,7 +147,7 @@ func shellLike(name string) bool {
 	}
 }
 
-func resolveExecutable(root, name string, allowShells map[string]bool) (string, error) {
+func resolveExecutable(roots []string, name string, allowShells map[string]bool, dirs []string) (string, error) {
 	base := filepath.Base(name)
 	explicitShell := shellLike(base) && allowShells[base]
 	if shellLike(base) && !explicitShell {
@@ -139,12 +157,12 @@ func resolveExecutable(root, name string, allowShells map[string]bool) (string, 
 		return "", errors.New("relative executable paths are not allowed")
 	}
 	var path string
-	var err error
+	err := errors.New("executable not found in trusted path")
 	if filepath.IsAbs(name) {
 		path, err = exec.LookPath(name)
 	} else {
 		// LookPath receives absolute candidates so it never reads ambient PATH.
-		for _, dir := range filepath.SplitList(TrustedPath) {
+		for _, dir := range dirs {
 			candidate := filepath.Join(dir, name)
 			path, err = exec.LookPath(candidate)
 			if err == nil {
@@ -155,18 +173,42 @@ func resolveExecutable(root, name string, allowShells map[string]bool) (string, 
 	if err != nil {
 		return "", fmt.Errorf("resolve executable: %w", err)
 	}
-	if inside(root, path) {
+	if excludedExecutable(roots, path) {
 		return "", errors.New("executable is inside the workspace")
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return "", fmt.Errorf("resolve executable symlink: %w", err)
 	}
-	if !filepath.IsAbs(resolved) || inside(root, resolved) {
+	if !filepath.IsAbs(resolved) || excludedExecutable(roots, resolved) {
 		return "", errors.New("executable must be absolute and outside the workspace")
 	}
 	if target := filepath.Base(resolved); shellLike(target) && !explicitShell && !allowShells[target] {
 		return "", errors.New("executable resolves to a disallowed shell or launcher")
 	}
 	return resolved, nil
+}
+
+// ResolveExecutable uses the same trusted-path and exclusion rules as Policy.
+// It never consults the ambient PATH. A nil path selects the secure defaults.
+func ResolveExecutable(name string, dirs []string, excluded ...string) (string, error) {
+	if dirs == nil {
+		dirs = filepath.SplitList(TrustedPath)
+	}
+	if err := ValidateTrustedPath(dirs, excluded...); err != nil {
+		return "", err
+	}
+	return resolveExecutable(excluded, name, nil, dirs)
+}
+func excludedExecutable(roots []string, path string) bool {
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		resolved, err := resolveFuturePath(root)
+		if err != nil || inside(filepath.Clean(root), path) || inside(resolved, path) {
+			return true
+		}
+	}
+	return false
 }

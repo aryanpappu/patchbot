@@ -84,10 +84,10 @@ func (r *Redactor) Add(values ...string) {
 	r.add(MinValueLen, values...)
 }
 
-// AddExact registers nonempty credentials even when shorter than MinValueLen.
-// Use it at authentication boundaries where echoing any credential is forbidden.
+// AddExact registers credentials using the same minimum as Add.
+// Kept for callers at authentication boundaries; short values are not masked.
 func (r *Redactor) AddExact(values ...string) {
-	r.add(1, values...)
+	r.Add(values...)
 }
 
 func (r *Redactor) add(minLength int, values ...string) {

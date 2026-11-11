@@ -55,7 +55,7 @@ func (a *App) runServe(args []string) int {
 	githubToken, _ := lookup("GITHUB_TOKEN")
 	redactor := secret.NewRedactor(githubToken)
 	redactor.AddExact(uiToken)
-	cfg, err := config.Load(opts)
+	cfg, err := a.loadConfig(opts)
 	if err != nil {
 		a.printProblems(redactor, err)
 		return 1
@@ -69,7 +69,7 @@ func (a *App) runServe(args []string) int {
 		a.printProblems(redactor, err)
 		return 1
 	}
-	if err := os.MkdirAll(cfg.DataDir(), 0700); err != nil {
+	if err := cfg.EnsureDataDir(); err != nil {
 		a.printProblems(redactor, errors.New("could not create data directory"))
 		return 1
 	}
@@ -86,6 +86,10 @@ func (a *App) runServe(args []string) int {
 	}
 	defer func() { _ = db.Close() }()
 	runnerOpts := a.RunnerOptions
+	fullRedactor := secret.NewRedactor()
+	fullRedactor.Extend(runnerOpts.Redactor)
+	fullRedactor.Extend(a.outputRedactor)
+	runnerOpts.Redactor = fullRedactor
 	if runnerOpts.Constructors == nil {
 		runnerOpts.Constructors = providers.Constructors(a.Providers)
 	}
