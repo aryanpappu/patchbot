@@ -1,0 +1,3 @@
+Offline placeholder for Vue 3.5.13 global production build.
+Run make vendor-vue on a networked machine, then rebuild patchbot.
+The downloader verifies internal/web.VueIntegrity before installing vue.global.prod.js.

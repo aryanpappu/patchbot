@@ -36,7 +36,7 @@ func TestBindAndBearerProtection(t *testing.T) {
 	}
 	f := newFixture(t, nil, func(opts *Options) { opts.Token = secret.New("ui-secret-fixture-token") })
 	run := f.seed(store.StatusRejected)
-	for _, path := range []string{"/", "/api/providers", "/api/runs", fmt.Sprintf("/api/runs/%d/events", run.ID), fmt.Sprintf("/api/runs/%d/artifacts/diff", run.ID), "/missing"} {
+	for _, path := range []string{"/api/providers", "/api/runs", fmt.Sprintf("/api/runs/%d/events", run.ID), fmt.Sprintf("/api/runs/%d/artifacts/diff", run.ID), "/missing"} {
 		for _, auth := range []string{"", "Bearer wrong", "Basic " + f.token, "Bearer " + f.token + "x"} {
 			req := httptest.NewRequest("GET", "http://"+f.cfg.Server.Addr+path, nil)
 			req.Header.Set("Authorization", auth)

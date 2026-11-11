@@ -23,6 +23,7 @@ import (
 	"github.com/aryanpappu/patchbot/internal/runner"
 	"github.com/aryanpappu/patchbot/internal/secret"
 	"github.com/aryanpappu/patchbot/internal/store"
+	"github.com/aryanpappu/patchbot/internal/web"
 )
 
 // Options supplies trusted infrastructure. Zero values use production defaults.
@@ -272,12 +273,14 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // ServeHTTP applies authentication and security to every route and error.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+	w.Header().Set("Content-Security-Policy", web.CSP(s.cfg.Server.VueSrc == "local"))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Cache-Control", "no-store")
-	if s.authenticated {
+	// Only data-free shells and their fixed assets are public. Browser navigation
+	// cannot attach a bearer header; every API and SSE request still requires it.
+	if s.authenticated && (r.Method != http.MethodGet || !web.PublicPath(r.URL.Path)) {
 		value, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		candidate := sha256.Sum256([]byte(value))
 		if !ok || subtle.ConstantTimeCompare(candidate[:], s.tokenHash[:]) != 1 {

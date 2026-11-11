@@ -1,15 +1,21 @@
 # Local server
 
-`patchbot serve [--addr 127.0.0.1:8080] [--config FILE]` serves a placeholder
-page and the M13 API. It uses `net/http`, `encoding/json` and ordinary HTTP
-writes for SSE. The caller owns the SQLite store. Call `Shutdown` before
+`patchbot serve [--addr 127.0.0.1:8080] [--config FILE]` serves the embedded
+M14 web page and the M13 API. It uses `net/http`, `encoding/json` and ordinary
+HTTP writes for SSE. The caller owns the SQLite store. Call `Shutdown` before
 closing it. The command handles SIGINT and SIGTERM and allows 30 seconds for
 shutdown, then cancels remaining work.
 
 Without `PATCHBOT_UI_TOKEN`, only loopback IP literals and `localhost` can
-bind. With it, **every** request requires `Authorization: Bearer <token>`,
-including the page, SSE and artifact downloads. Authentication compares
-SHA-256 digests in constant time. No token is rendered in the page or logs.
+bind. With it, every API request requires `Authorization: Bearer <token>`,
+including SSE and artifact downloads. Exact page shells (`/`, `/runs`,
+`/runs/new`, `/runs/{positive-id}`) and the three fixed static asset paths are
+public GETs so a browser can load the token form. Protected shells contain no
+run data, even if the navigation supplies a bearer header. Other paths and
+methods retain bearer protection. Authentication compares SHA-256 digests in
+constant time. No token is rendered in the page or logs. The page stores a
+supplied token only in `sessionStorage` and uses fetch-based SSE with a bearer
+header.
 Every request, including GET and SSE, must use the configured hostname or the
 bound numeric address with the bound port. Loopback aliases are accepted only
 for loopback binds. On wildcard listeners the actual connection's local numeric
@@ -22,7 +28,10 @@ Responses use snake_case JSON. Errors have the shape
 to 1 MiB; unknown fields, JSON null and trailing JSON values are rejected.
 The server masks registered credentials and token-shaped text before output.
 Run error messages use a generic public description; local records retain
-redacted diagnostic details. There are no external JavaScript dependencies.
+redacted diagnostic details. The web page pins Vue 3.5.13 from jsDelivr with
+SRI, or embeds a verified local copy with `[server] vue_src = "local"`. See
+[the web package](../web/README.md) for its CSP, safety choices and vendoring.
+The offline provisional SRI pin requires supervisor verification before use.
 
 ## API contract
 
@@ -41,7 +50,13 @@ redacted diagnostic details. There are no external JavaScript dependencies.
   hard budget caps apply. Returns 202, `{"run":...}` and a Location header.
 - `GET /api/runs/{id}`: `run`, nullable `latest_spec`, ascending `spec_versions`,
   `approvals`, `steps` (summaries without input/output transcripts), and public
-  `artifacts` (`kind`, `attempt`, `bytes`, `created_at`).
+  `artifacts` (`kind`, `attempt`, `bytes`, `created_at`). Also returns
+  `capabilities`: `can_approve`, `can_edit`, `can_revise`, `can_reject`,
+  `can_cancel`, `can_retry`, computed from the runner's shared lifecycle/spec
+  rules, including expiry and the effective revision limit. The browser uses
+  these for controls and editor Save, refreshing after actions and status events.
+  Input, external issue/comment freshness, dispatch capacity and concurrent
+  changes are still validated when an action executes.
 - `PUT /api/runs/{id}/spec`: a canonical `tools.SpecDraft` object with
   `summary`, `acceptance_criteria`, `files` (`path`, `change`), `risks`,
   `test_plan`, `open_questions`. Returns `{"spec":...}`. Runner content/path,
@@ -63,7 +78,11 @@ redacted diagnostic details. There are no external JavaScript dependencies.
   Subscribe before replay to avoid a replay/live race. SQLite is authoritative:
   notifications wake a store read, and polling every second recovers missed
   notifications or an unavailable broadcaster. Heartbeats are comments every
-  15 seconds. A terminal stream drains finishing worker events before closing.
+  15 seconds. A terminal stream drains finishing worker events, then sends
+  `event: end` with JSON `{"last_seq":N}` before closing. This control frame
+  has no event ID. Lag, replay errors and interrupted connections close without
+  `end`; clients must reconnect with their last consumed `Last-Event-ID` and
+  backoff until an explicit end frame matches that sequence.
 
 ## Work and stream ownership
 

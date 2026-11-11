@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -21,13 +22,11 @@ import (
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	// Register paths without method patterns so method and 404 errors share JSON.
-	mux.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) {
-		if !s.method(w, r, http.MethodGet) {
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><title>patchbot</title><h1>patchbot</h1><p>The JSON API is ready. The web page arrives in M14.</p></html>"))
-	})
+	mux.HandleFunc("/{$}", s.page)
+	mux.HandleFunc("/runs", s.page)
+	mux.HandleFunc("/runs/new", s.page)
+	mux.HandleFunc("/runs/{id}", s.page)
+	mux.HandleFunc("/assets/{name}", s.asset)
 	mux.HandleFunc("/api/providers", s.providers)
 	mux.HandleFunc("/api/providers/{id}/models", s.providerModels)
 	mux.HandleFunc("/api/runs", s.runs)
@@ -231,30 +230,36 @@ func (s *Server) runDetail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	run, err := s.db.GetRun(r.Context(), id)
+	data, err := s.detailData(r.Context(), id)
 	if err != nil {
 		s.respondError(w, err)
 		return
 	}
-	specs, err := s.db.ListSpecs(r.Context(), id)
+	s.writeJSON(w, 200, data)
+}
+
+// Both the API and the unauthenticated loopback shell use this read model.
+// Token-protected shells never load it; their browser must authenticate first.
+func (s *Server) detailData(ctx context.Context, id int64) (map[string]any, error) {
+	run, err := s.db.GetRun(ctx, id)
 	if err != nil {
-		s.respondError(w, err)
-		return
+		return nil, err
 	}
-	approvals, err := s.db.ListApprovals(r.Context(), id)
+	specs, err := s.db.ListSpecs(ctx, id)
 	if err != nil {
-		s.respondError(w, err)
-		return
+		return nil, err
 	}
-	steps, err := s.db.ListSteps(r.Context(), id)
+	approvals, err := s.db.ListApprovals(ctx, id)
 	if err != nil {
-		s.respondError(w, err)
-		return
+		return nil, err
 	}
-	artifacts, err := s.db.ListArtifacts(r.Context(), id)
+	steps, err := s.db.ListSteps(ctx, id)
 	if err != nil {
-		s.respondError(w, err)
-		return
+		return nil, err
+	}
+	artifacts, err := s.db.ListArtifacts(ctx, id)
+	if err != nil {
+		return nil, err
 	}
 	publicArtifacts := []store.ArtifactMetadata{}
 	for _, a := range artifacts {
@@ -274,7 +279,7 @@ func (s *Server) runDetail(w http.ResponseWriter, r *http.Request) {
 	if len(specs) > 0 {
 		latest = &specs[len(specs)-1]
 	}
-	s.writeJSON(w, 200, map[string]any{"run": publicRun(run), "latest_spec": latest, "spec_versions": specs, "approvals": approvals, "steps": steps, "artifacts": publicArtifacts})
+	return map[string]any{"run": publicRun(run), "capabilities": s.runner.ActionCapabilities(run, latest), "latest_spec": latest, "spec_versions": specs, "approvals": approvals, "steps": steps, "artifacts": publicArtifacts}, nil
 }
 
 func (s *Server) editSpec(w http.ResponseWriter, r *http.Request) {

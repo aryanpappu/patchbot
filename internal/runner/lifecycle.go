@@ -76,12 +76,8 @@ func (r *Runner) checkedSpec(ctx context.Context, run store.Run) (store.Spec, er
 	if err != nil {
 		return spec, err
 	}
-	if spec.Version-1 > int64(r.gateOptions().MaxRevisions) {
-		return spec, fmt.Errorf("%w: revision limit exceeded", agent.ErrApprovalDenied)
-	}
-	draft, err := tools.ParseSpec(spec.BodyMD)
-	if err != nil || draft.Hash() != spec.Hash {
-		return spec, fmt.Errorf("%w: specification content or hash changed", agent.ErrApprovalDenied)
+	if err := r.checkStoredSpec(spec); err != nil {
+		return spec, err
 	}
 	issue, err := r.gh.GetIssue(ctx, ref(run.Repo), int(run.IssueNumber))
 	if err != nil {
@@ -141,11 +137,8 @@ func (r *Runner) approveDecision(ctx context.Context, id int64, actor, channel s
 	if err != nil {
 		return err
 	}
-	if run.Status != store.StatusAwaitingApproval {
-		return store.ErrConflict
-	}
-	if r.expired(run) {
-		return errors.Join(errors.New("run expired"), r.expire(ctx, run))
+	if err := r.requireActionState(ctx, run, "approve"); err != nil {
+		return err
 	}
 	spec, err := r.checkedSpec(ctx, run)
 	if err != nil {
@@ -154,9 +147,8 @@ func (r *Runner) approveDecision(ctx context.Context, id int64, actor, channel s
 	if expected != nil && (spec.Version != expected.Version || spec.Hash != expected.Hash) {
 		return store.ErrConflict
 	}
-	draft, _ := tools.ParseSpec(spec.BodyMD)
-	if len(draft.OpenQuestions) != 0 {
-		return fmt.Errorf("%w: specification still has open questions", agent.ErrApprovalDenied)
+	if err := r.checkActionSpec(spec, "approve"); err != nil {
+		return err
 	}
 	if strings.TrimSpace(actor) == "" {
 		return errors.New("approver name is required")
@@ -185,20 +177,16 @@ func (r *Runner) revise(ctx context.Context, id int64, notes, actor, channel str
 		lock.Unlock()
 		return err
 	}
-	if !waiting(run.Status) && run.Status != store.StatusApproved {
+	if err := r.requireActionState(ctx, run, "revise"); err != nil {
 		lock.Unlock()
-		return store.ErrConflict
-	}
-	if r.expired(run) {
-		lock.Unlock()
-		return errors.Join(errors.New("run expired"), r.expire(ctx, run))
+		return err
 	}
 	spec, err := r.db.LatestSpec(ctx, id)
 	if err == nil && expected != nil && (spec.Version != expected.Version || spec.Hash != expected.Hash) {
 		err = store.ErrConflict
 	}
-	if err == nil && spec.Version-1 >= int64(r.gateOptions().MaxRevisions) {
-		err = errors.New("maximum 5 spec revisions reached")
+	if err == nil {
+		err = r.checkActionSpec(spec, "revise")
 	}
 	if err == nil {
 		err = r.db.DecideRun(ctx, run.Status, store.StatusRunning, store.Approval{RunID: id, SpecVersion: spec.Version, SpecHash: spec.Hash, Decision: "revise", Actor: r.redactor.Redact(actor), Channel: channel, CreatedAt: r.now()}, run.Generation)
@@ -237,18 +225,15 @@ func (r *Runner) EditSpec(ctx context.Context, id int64, draft tools.SpecDraft) 
 	if err != nil {
 		return store.Spec{}, err
 	}
-	if !waiting(run.Status) && run.Status != store.StatusApproved {
-		return store.Spec{}, store.ErrConflict
-	}
-	if r.expired(run) {
-		return store.Spec{}, errors.Join(errors.New("run expired"), r.expire(ctx, run))
+	if err := r.requireActionState(ctx, run, "edit"); err != nil {
+		return store.Spec{}, err
 	}
 	prior, err := r.db.LatestSpec(ctx, id)
 	if err != nil {
 		return store.Spec{}, err
 	}
-	if prior.Version-1 >= int64(r.gateOptions().MaxRevisions) {
-		return store.Spec{}, errors.New("maximum 5 spec revisions reached")
+	if err := r.checkActionSpec(prior, "edit"); err != nil {
+		return store.Spec{}, err
 	}
 	draft = *(&tools.Submission{Spec: &draft}).Redacted(r.redactor).Spec
 	// Apply the refinement content and path rules to operator edits.
@@ -283,11 +268,8 @@ func (r *Runner) Reject(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	if !waiting(run.Status) && run.Status != store.StatusApproved {
-		return store.ErrConflict
-	}
-	if r.expired(run) {
-		return errors.Join(errors.New("run expired"), r.expire(ctx, run))
+	if err := r.requireActionState(ctx, run, "reject"); err != nil {
+		return err
 	}
 	spec, err := r.db.LatestSpec(ctx, id)
 	if err != nil {
@@ -302,8 +284,8 @@ func (r *Runner) Cancel(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	if !initial.Status.IsActive() && initial.Status != store.StatusCancelled {
-		return store.ErrConflict
+	if err := r.requireActionState(ctx, initial, "cancel"); err != nil {
+		return err
 	}
 	// Audit the operator intent before waking a worker that can win the terminal
 	// transition. Idempotent cancels are actions too, and CAS retries are not.
@@ -431,8 +413,8 @@ func (r *Runner) Retry(ctx context.Context, id int64, provider, model string) (s
 	if err != nil {
 		return store.Run{}, err
 	}
-	if old.Status != store.StatusFailed && old.Status != store.StatusCancelled && old.Status != store.StatusRejected {
-		return store.Run{}, store.ErrConflict
+	if err := r.requireActionState(ctx, old, "retry"); err != nil {
+		return store.Run{}, err
 	}
 	request := Request{Repo: old.Repo, Issue: old.IssueNumber, Mode: old.Mode, Provider: provider, Model: model, DryRun: old.DryRun}
 	if request.Provider == "" {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -91,6 +92,18 @@ func nextEvent(t *testing.T, reader *bufio.Reader) sseFrame {
 	}
 }
 
+func requireStreamEnd(t *testing.T, reader *bufio.Reader, lastSeq int64) {
+	t.Helper()
+	frame, err := readFrame(reader)
+	want := fmt.Sprintf(`{"last_seq":%d}`, lastSeq)
+	if err != nil || frame.event != "end" || frame.data != want || frame.id != 0 {
+		t.Fatalf("end frame = %+v, %v; want last_seq %d", frame, err, lastSeq)
+	}
+	if _, err := readFrame(reader); !errors.Is(err, io.EOF) {
+		t.Fatalf("terminal stream did not close after end: %v", err)
+	}
+}
+
 func (f *fixture) appendEvents(id int64, count int) {
 	f.t.Helper()
 	for range count {
@@ -134,9 +147,7 @@ func TestSSEReplayReconnectNoGapsOrDuplicates(t *testing.T) {
 			t.Fatalf("reconnected seq %d, want %d", frame.id, event.Seq)
 		}
 	}
-	if _, err := readFrame(reader); !errors.Is(err, io.EOF) {
-		t.Fatalf("terminal stream did not close: %v", err)
-	}
+	requireStreamEnd(t, reader, expected[len(expected)-1].Seq)
 	if len(expected) != 5 {
 		t.Fatalf("expected pending + new + terminal events: %d", len(expected))
 	}
@@ -159,9 +170,7 @@ func TestSSEQueryReplayBatchesAndTerminal(t *testing.T) {
 			t.Fatalf("seq %d, want %d", frame.id, seq)
 		}
 	}
-	if _, err := readFrame(reader); !errors.Is(err, io.EOF) {
-		t.Fatalf("terminal stream: %v", err)
-	}
+	requireStreamEnd(t, reader, 1101)
 }
 
 func TestSSEHeartbeatAndPollingFallback(t *testing.T) {
@@ -267,11 +276,104 @@ func TestTerminalSSEDrainsEventsFromFinishingWorker(t *testing.T) {
 	if frame := nextEvent(t, reader); frame.id != 1 {
 		t.Fatal("missing terminal event")
 	}
+	if frame, err := readFrame(reader); err != nil || frame.comment != "heartbeat" {
+		t.Fatalf("ended before the finishing worker drained: %+v, %v", frame, err)
+	}
 	close(release)
 	if frame := nextEvent(t, reader); frame.id != 2 || frame.event != "cleanup" {
 		t.Fatalf("lost finishing event: %+v", frame)
 	}
-	if _, err := readFrame(reader); !errors.Is(err, io.EOF) {
-		t.Fatalf("terminal close: %v", err)
+	requireStreamEnd(t, reader, 2)
+}
+
+type replayStore struct {
+	store.Store
+	read func(context.Context, int64, int64, int) ([]store.Event, error)
+}
+
+func (s replayStore) EventsAfter(ctx context.Context, id, after int64, limit int) ([]store.Event, error) {
+	return s.read(ctx, id, after, limit)
+}
+
+// Exercise failures even after terminal status has been observed: an empty or
+// failed replay must never turn a disconnect into false completion evidence.
+func TestSSEEndNotSentOnReplayFailureOrLag(t *testing.T) {
+	for _, failure := range []string{"replay_first", "replay_mid_batch", "replay_after_terminal", "lag_mid_batch", "lag_after_terminal"} {
+		t.Run(failure, func(t *testing.T) {
+			f := newFixture(t, nil, nil)
+			run := f.seed(store.StatusFailed)
+			if strings.HasSuffix(failure, "mid_batch") {
+				f.appendEvents(run.ID, 600)
+			}
+			// A separate handler shares the real store but owns its own stream
+			// broadcaster; no background goroutine sees the injected store.
+			s := &Server{opts: f.server.opts, redactor: f.server.redactor, manager: f.server.manager, done: f.server.done}
+			calls := 0
+			s.db = replayStore{Store: f.db, read: func(ctx context.Context, id, after int64, limit int) ([]store.Event, error) {
+				calls++
+				if (failure == "replay_first" && calls == 1) || (failure == "replay_mid_batch" && calls == 2) || (failure == "replay_after_terminal" && calls == 3) {
+					return nil, errors.New("injected replay failure")
+				}
+				if (failure == "lag_mid_batch" && calls == 2) || (failure == "lag_after_terminal" && calls == 3) {
+					for range 40 {
+						s.bus.publish(id)
+					}
+				}
+				return f.db.EventsAfter(ctx, id, after, limit)
+			}}
+			r := httptest.NewRequest("GET", "/events", nil)
+			r.SetPathValue("id", strconv.FormatInt(run.ID, 10))
+			w := httptest.NewRecorder()
+			s.events(w, r)
+			if strings.Contains(w.Body.String(), "event: end\n") {
+				t.Fatalf("failure emitted end: %s", w.Body.String())
+			}
+			if strings.Contains(failure, "mid_batch") && !strings.Contains(w.Body.String(), "id: 500\n") {
+				t.Fatal("test did not deliver the first batch before failure")
+			}
+		})
 	}
+}
+
+func TestSSEEndOnAlreadyDrainedTerminalReplay(t *testing.T) {
+	f := newFixture(t, nil, nil)
+	run := f.seed(store.StatusFailed)
+	response := f.request("GET", fmt.Sprintf("/api/runs/%d/events?after=1", run.ID), "")
+	requireStatus(t, response, 200)
+	reader := bufio.NewReader(response.Body)
+	if _, err := readFrame(reader); err != nil {
+		t.Fatal(err)
+	}
+	requireStreamEnd(t, reader, 1)
+}
+
+func TestSSEEndDrainsEventCommittedWithTerminalStatus(t *testing.T) {
+	f := newFixture(t, nil, nil)
+	run := f.seed(store.StatusAwaitingApproval)
+	s := &Server{opts: f.server.opts, redactor: f.server.redactor, manager: f.server.manager, done: f.server.done}
+	first := true
+	s.db = replayStore{Store: f.db, read: func(ctx context.Context, id, after int64, limit int) ([]store.Event, error) {
+		events, err := f.db.EventsAfter(ctx, id, after, limit)
+		if first {
+			first = false
+			// Commit the terminal status and its event after the empty replay
+			// read, before the handler observes the new status through GetRun.
+			if transitionErr := f.db.SetRunStatus(ctx, id, run.Status, store.StatusFailed, store.RunPatch{Phase: store.PhaseRefine}); transitionErr != nil {
+				t.Fatal(transitionErr)
+			}
+		}
+		return events, err
+	}}
+	r := httptest.NewRequest("GET", "/events", nil)
+	r.SetPathValue("id", strconv.FormatInt(run.ID, 10))
+	w := httptest.NewRecorder()
+	s.events(w, r)
+	reader := bufio.NewReader(w.Body)
+	if _, err := readFrame(reader); err != nil {
+		t.Fatal(err)
+	}
+	if frame := nextEvent(t, reader); frame.id != 1 || frame.event != "run.status" {
+		t.Fatalf("lost terminal transaction event: %+v", frame)
+	}
+	requireStreamEnd(t, reader, 1)
 }

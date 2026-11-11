@@ -20,8 +20,9 @@ import (
 
 const serveUsage = `Usage: patchbot serve [--addr 127.0.0.1:8080] [--config FILE]
 
-Serve the local JSON API and event streams. Non-loopback addresses require
-PATCHBOT_UI_TOKEN. When set, every request requires that bearer token.
+Serve the web page, JSON API and event streams. Non-loopback addresses require
+PATCHBOT_UI_TOKEN. When set, enter it on the page; every API request requires
+that bearer token. Page shells and static assets contain no private data.
 `
 
 func (a *App) runServe(args []string) int {

@@ -104,6 +104,18 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		// Read again after observing a terminal state: its transaction could have
 		// committed between EventsAfter and GetRun, including the final event.
 		if terminal {
+			// EOF alone is never completion evidence: lag, replay and transport
+			// failures also close the stream. Only this fully drained path emits end.
+			select {
+			case <-sub.lagged:
+				return
+			case <-s.done:
+				return
+			case <-r.Context().Done():
+				return
+			default:
+			}
+			write(fmt.Sprintf("event: end\ndata: {\"last_seq\":%d}\n\n", after))
 			return
 		}
 		run, err := s.db.GetRun(r.Context(), id)
