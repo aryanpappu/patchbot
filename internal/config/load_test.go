@@ -84,6 +84,9 @@ func TestDefaults(t *testing.T) {
 	if c.Approval.TTL != 14*24*time.Hour || c.Approval.MaxRevisions != 5 || c.Approval.PollInterval != time.Minute {
 		t.Errorf("approval = %+v", c.Approval)
 	}
+	if c.Server.MaxQueuedRuns != 16 {
+		t.Errorf("server.max_queued_runs = %d, want 16", c.Server.MaxQueuedRuns)
+	}
 	if c.Server.Addr != "127.0.0.1:8080" {
 		t.Errorf("server.addr = %q", c.Server.Addr)
 	}

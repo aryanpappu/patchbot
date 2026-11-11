@@ -121,6 +121,7 @@ func (c *Config) validateLimits(v *validator) {
 		{"approval.ttl", int64(c.Approval.TTL)},
 		{"approval.max_revisions", int64(c.Approval.MaxRevisions)},
 		{"server.max_concurrent_runs", int64(c.Server.MaxConcurrentRuns)},
+		{"server.max_queued_runs", int64(c.Server.MaxQueuedRuns)},
 	} {
 		v.check(f.value > 0, "%s: must be greater than 0", f.key)
 	}

@@ -58,7 +58,7 @@ func (s *SQLite) migrate(ctx context.Context) error {
 }
 
 func (s *SQLite) applyMigration(ctx context.Context, m migration, latest int64) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(tx *eventTx) error {
 		var maxVersion int64
 		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(version),0) FROM schema_migrations`).Scan(&maxVersion); err != nil {
 			return err

@@ -24,7 +24,7 @@ func scanSpec(row scanner) (Spec, error) {
 // event in this same transaction. Explicit stale version numbers conflict.
 func (s *SQLite) SaveSpec(ctx context.Context, spec Spec) (Spec, error) {
 	var saved Spec
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(tx *eventTx) error {
 		var status Status
 		var phase Phase
 		if err := tx.QueryRowContext(ctx, `SELECT status,phase FROM runs WHERE id=?`, spec.RunID).Scan(&status, &phase); err != nil {
@@ -89,7 +89,7 @@ func scanApproval(row scanner) (Approval, error) {
 // Status transitions and actor authorization remain the runner's responsibility.
 func (s *SQLite) RecordApproval(ctx context.Context, a Approval) (Approval, error) {
 	var saved Approval
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(tx *eventTx) error {
 		var version int64
 		var hash string
 		err := tx.QueryRowContext(ctx, `SELECT version,hash FROM specs WHERE run_id=? ORDER BY version DESC LIMIT 1`, a.RunID).Scan(&version, &hash)
@@ -245,7 +245,7 @@ func (s *SQLite) RecordStep(ctx context.Context, step Step) (Step, error) {
 	}
 	step.OutputText = cappedText(step.OutputText, outputCap)
 	var saved Step
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(tx *eventTx) error {
 		args := []any{step.Phase, step.Kind, step.Tool, step.Status, step.Turn, step.InputJSON, step.OutputText,
 			step.StopReason, step.InputTokens, step.OutputTokens, step.CacheReadTokens, step.CacheWriteTokens,
 			step.CostMicros, step.ExitCode, step.DurationMS, timestamp(step.StartedAt).UnixMilli(), optionalMillis(step.FinishedAt)}

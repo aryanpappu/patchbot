@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -24,7 +25,7 @@ Commands:
   retry    Start a new run linked to a failed run
   models   List available models
   config   Check or show configuration
-  serve    Start the web interface (planned)
+  serve    Serve the local JSON API and event streams
   version  Print version and build information
 
 Use patchbot help, -h or --help to show this usage.
@@ -39,8 +40,10 @@ func Main(args []string, stdout, stderr io.Writer) int {
 // App is the CLI with its surroundings made explicit, so tests can run it
 // without reading the real environment, working directory or user config.
 type App struct {
-	Stdout io.Writer
-	Stderr io.Writer
+	// Context optionally controls the server lifetime in embedded use and tests.
+	Context context.Context
+	Stdout  io.Writer
+	Stderr  io.Writer
 	// Config holds the config search settings. Its Path and Flags are set
 	// from the command line. The zero value reads the real environment.
 	Config config.Options
@@ -86,8 +89,7 @@ func (a *App) Run(args []string) int {
 	case "run", "approve", "revise", "reject", "cancel", "runs", "retry":
 		return a.runControl(name, flags.Args()[1:])
 	case "serve":
-		_, _ = fmt.Fprintf(stderr, "patchbot %s: not implemented yet\n", name)
-		return 1
+		return a.runServe(flags.Args()[1:])
 	default:
 		flags.Usage()
 		return 2

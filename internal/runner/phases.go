@@ -269,6 +269,32 @@ func (r *Runner) reuseSpec(ctx context.Context, run *store.Run, old store.Spec) 
 // Execute runs the approved code phase synchronously. Refine mode completes
 // approval without ever installing code tools or cloning for coding.
 func (r *Runner) Execute(ctx context.Context, id int64) error {
+	ctx, release, err := r.admit(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if r.opts.Dispatch != nil {
+		// Mark queued approved execution as heartbeat-owned so a process death
+		// before its worker acquires a slot is covered by ordinary stale recovery.
+		lock := r.control(id)
+		lock.Lock()
+		run, err := r.db.GetRun(ctx, id)
+		if err == nil && (run.Status != store.StatusApproved || run.Phase == store.PhaseClone || run.Phase == store.PhaseBaseline) {
+			err = store.ErrConflict
+		}
+		if err == nil {
+			err = r.transition(ctx, &run, store.StatusApproved, store.PhaseClone, store.RunPatch{})
+		}
+		lock.Unlock()
+		if err != nil {
+			return err
+		}
+	}
+	return r.dispatch(ctx, id, func(work context.Context) error { return r.execute(work, id) })
+}
+
+func (r *Runner) execute(ctx context.Context, id int64) error {
 	lock := r.control(id)
 	lock.Lock()
 	defer lock.Unlock()
@@ -285,7 +311,7 @@ func (r *Runner) Execute(ctx context.Context, id int64) error {
 			_, err = agent.Check(ctx, r.db, id, spec.IssueHash, r.gateOptions())
 		}
 		if err != nil {
-			return errors.Join(err, r.transition(ctx, &run, store.StatusAwaitingApproval, run.Phase, store.RunPatch{}))
+			return errors.Join(err, r.transition(ctx, &run, store.StatusAwaitingApproval, store.PhaseRefine, store.RunPatch{}))
 		}
 		outcome := "spec_approved"
 		return r.transition(ctx, &run, store.StatusSucceeded, run.Phase, store.RunPatch{Outcome: &outcome})
@@ -298,7 +324,7 @@ func (r *Runner) Execute(ctx context.Context, id int64) error {
 		return err
 	}
 	if errors.Is(err, agent.ErrApprovalDenied) {
-		return errors.Join(err, r.transition(context.WithoutCancel(ctx), &run, store.StatusAwaitingApproval, run.Phase, store.RunPatch{}))
+		return errors.Join(err, r.transition(context.WithoutCancel(ctx), &run, store.StatusAwaitingApproval, store.PhaseRefine, store.RunPatch{}))
 	}
 	if err != nil {
 		return r.fail(ctx, run, err)

@@ -107,6 +107,7 @@ type Log struct {
 type Server struct {
 	Addr              string `toml:"addr"`
 	MaxConcurrentRuns int    `toml:"max_concurrent_runs"`
+	MaxQueuedRuns     int    `toml:"max_queued_runs"`
 	VueSrc            string `toml:"vue_src"` // cdn or local
 }
 

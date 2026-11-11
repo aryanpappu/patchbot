@@ -62,33 +62,45 @@ var (
 // Generation advances on lifecycle changes and operator spec edits. Workers
 // retain their own generation to prevent stale transitions, including ABA.
 type Run struct {
-	ID                                int64
-	Generation                        int64
-	Repo                              string
-	IssueNumber                       int64
-	IssueTitle                        string
-	Mode                              string
-	RetryOf                           *int64
-	Trigger                           string
-	Provider, RefineModel, CodeModel  string
-	DryRun                            bool
-	Status                            Status
-	Phase                             Phase
-	Outcome                           string
-	BaseSHA, HeadSHA, Branch          string
-	PRNumber                          *int64
-	PRURL                             string
-	PRDraft                           bool
-	Summary, TestsStatus              string
-	TestAttempts, Turns               int64
-	InputTokens, OutputTokens         *int64
-	CacheReadTokens, CacheWriteTokens *int64
-	CostMicros                        *int64
-	LimitsJSON                        json.RawMessage
-	ErrorKind, ErrorMessage           string
-	CreatedAt, UpdatedAt              time.Time
-	StartedAt, FinishedAt             *time.Time
-	HeartbeatAt, WaitingSince         *time.Time
+	ID               int64           `json:"id"`
+	Generation       int64           `json:"generation"`
+	Repo             string          `json:"repo"`
+	IssueNumber      int64           `json:"issue_number"`
+	IssueTitle       string          `json:"issue_title"`
+	Mode             string          `json:"mode"`
+	RetryOf          *int64          `json:"retry_of"`
+	Trigger          string          `json:"trigger"`
+	Provider         string          `json:"provider"`
+	RefineModel      string          `json:"refine_model"`
+	CodeModel        string          `json:"code_model"`
+	DryRun           bool            `json:"dry_run"`
+	Status           Status          `json:"status"`
+	Phase            Phase           `json:"phase"`
+	Outcome          string          `json:"outcome"`
+	BaseSHA          string          `json:"base_sha"`
+	HeadSHA          string          `json:"head_sha"`
+	Branch           string          `json:"branch"`
+	PRNumber         *int64          `json:"pr_number"`
+	PRURL            string          `json:"prurl"`
+	PRDraft          bool            `json:"pr_draft"`
+	Summary          string          `json:"summary"`
+	TestsStatus      string          `json:"tests_status"`
+	TestAttempts     int64           `json:"test_attempts"`
+	Turns            int64           `json:"turns"`
+	InputTokens      *int64          `json:"input_tokens"`
+	OutputTokens     *int64          `json:"output_tokens"`
+	CacheReadTokens  *int64          `json:"cache_read_tokens"`
+	CacheWriteTokens *int64          `json:"cache_write_tokens"`
+	CostMicros       *int64          `json:"cost_micros"`
+	LimitsJSON       json.RawMessage `json:"limits_json"`
+	ErrorKind        string          `json:"error_kind"`
+	ErrorMessage     string          `json:"error_message"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+	StartedAt        *time.Time      `json:"started_at"`
+	FinishedAt       *time.Time      `json:"finished_at"`
+	HeartbeatAt      *time.Time      `json:"heartbeat_at"`
+	WaitingSince     *time.Time      `json:"waiting_since"`
 }
 
 // RunFilter selects runs in descending (created_at, id) order. Limit defaults
@@ -104,8 +116,8 @@ type RunFilter struct {
 
 // RunPage contains runs and a continuation cursor, empty on the final page.
 type RunPage struct {
-	Runs       []Run
-	NextCursor string
+	Runs       []Run  `json:"runs"`
+	NextCursor string `json:"next_cursor"`
 }
 
 // RunPatch changes status-related metadata along with the phase. Nil fields
@@ -129,13 +141,15 @@ type RunPatch struct {
 // spec representation (which may contain structured fields beyond BodyMD).
 // SaveSpec assigns Version when zero, otherwise requires the next version.
 type Spec struct {
-	RunID         int64
-	Version       int64
-	BodyMD, Hash  string
-	IssueHash     string
-	Source, Notes string
-	CommentID     *int64
-	CreatedAt     time.Time
+	RunID     int64     `json:"run_id"`
+	Version   int64     `json:"version"`
+	BodyMD    string    `json:"body_md"`
+	Hash      string    `json:"hash"`
+	IssueHash string    `json:"issue_hash"`
+	Source    string    `json:"source"`
+	Notes     string    `json:"notes"`
+	CommentID *int64    `json:"comment_id"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // SpecEdit guards both the source lifecycle snapshot and the prior spec. The
@@ -150,11 +164,14 @@ type SpecEdit struct {
 // Approval binds a decision (approve/revise/reject) to an exact spec version
 // and hash. Channel is ui/cli/github. The newest decision for a spec wins.
 type Approval struct {
-	ID, RunID, SpecVersion int64
-	SpecHash               string
-	Decision, Actor        string
-	Channel                string
-	CreatedAt              time.Time
+	ID          int64     `json:"id"`
+	RunID       int64     `json:"run_id"`
+	SpecVersion int64     `json:"spec_version"`
+	SpecHash    string    `json:"spec_hash"`
+	Decision    string    `json:"decision"`
+	Actor       string    `json:"actor"`
+	Channel     string    `json:"channel"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Question stores a question and, optionally, its answer and provenance.
@@ -171,24 +188,34 @@ type Question struct {
 // Seq is allocated per run when zero; a nonzero value updates that step.
 // A completed llm step's usage is included in the run totals atomically.
 type Step struct {
-	RunID, Seq                        int64
-	Phase                             Phase
-	Kind, Tool, Status                string
-	Turn                              *int64
-	InputJSON, OutputText, StopReason string
-	InputTokens, OutputTokens         *int64
-	CacheReadTokens, CacheWriteTokens *int64
-	CostMicros, ExitCode, DurationMS  *int64
-	StartedAt                         time.Time
-	FinishedAt                        *time.Time
+	RunID            int64      `json:"run_id"`
+	Seq              int64      `json:"seq"`
+	Phase            Phase      `json:"phase"`
+	Kind             string     `json:"kind"`
+	Tool             string     `json:"tool"`
+	Status           string     `json:"status"`
+	Turn             *int64     `json:"turn"`
+	InputJSON        string     `json:"input_json"`
+	OutputText       string     `json:"output_text"`
+	StopReason       string     `json:"stop_reason"`
+	InputTokens      *int64     `json:"input_tokens"`
+	OutputTokens     *int64     `json:"output_tokens"`
+	CacheReadTokens  *int64     `json:"cache_read_tokens"`
+	CacheWriteTokens *int64     `json:"cache_write_tokens"`
+	CostMicros       *int64     `json:"cost_micros"`
+	ExitCode         *int64     `json:"exit_code"`
+	DurationMS       *int64     `json:"duration_ms"`
+	StartedAt        time.Time  `json:"started_at"`
+	FinishedAt       *time.Time `json:"finished_at"`
 }
 
 // Event is a replayable event. AppendEvent assigns Seq and defaults CreatedAt.
 type Event struct {
-	RunID, Seq  int64
-	Type        string
-	PayloadJSON json.RawMessage
-	CreatedAt   time.Time
+	RunID       int64           `json:"run_id"`
+	Seq         int64           `json:"seq"`
+	Type        string          `json:"type"`
+	PayloadJSON json.RawMessage `json:"payload_json"`
+	CreatedAt   time.Time       `json:"created_at"`
 }
 
 // Artifact stores a redacted artifact for one kind and test attempt.
@@ -232,10 +259,14 @@ type Store interface {
 	SaveSpec(context.Context, Spec) (Spec, error)
 	EditSpec(context.Context, SpecEdit) (Spec, error)
 	LatestSpec(ctx context.Context, runID int64) (Spec, error)
+	ListSpecs(context.Context, int64) ([]Spec, error)
+	ListApprovals(context.Context, int64) ([]Approval, error)
+	ListArtifacts(context.Context, int64) ([]ArtifactMetadata, error)
 	RecordApproval(context.Context, Approval) (Approval, error)
 	// DecideRun atomically binds a decision to the expected latest version/hash,
 	// CASes status and generation, and appends its status event and action audit.
-	DecideRun(context.Context, Status, Status, Approval, int64) error
+	// An optional phase atomically claims approved asynchronous execution.
+	DecideRun(context.Context, Status, Status, Approval, int64, ...Phase) error
 	// StartCode claims approved work only while the exact latest approval still
 	// matches and the worker still owns generation. SaveSpec refuses edits after
 	// this atomic claim.

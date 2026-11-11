@@ -33,7 +33,7 @@ func TestCLI(t *testing.T) {
 		{name: "reject", args: []string{"reject"}, wantCode: 2, wantStderr: "run ID is required"},
 		{name: "cancel", args: []string{"cancel"}, wantCode: 2, wantStderr: "run ID is required"},
 		{name: "config", args: []string{"config"}, wantCode: 2, wantStderr: "Usage: patchbot config <check|show>"},
-		{name: "serve", args: []string{"serve"}, wantCode: 1, wantStderr: "patchbot serve: not implemented yet\n"},
+		{name: "serve help", args: []string{"serve", "--help"}, wantStdout: "Usage: patchbot serve"},
 	}
 
 	for _, tt := range tests {

@@ -104,13 +104,13 @@ func (r *Runner) syncRun(ctx context.Context, run store.Run) error {
 			if current.Status != store.StatusAwaitingApproval {
 				continue
 			}
-			if err := r.approve(ctx, run.ID, comment.Author, "github", &spec); err != nil {
+			if err := r.approve(ctx, run.ID, comment.Author, "github", &spec, true); err != nil {
 				if errors.Is(err, errCommentEdited) {
 					return errors.Join(err, r.commentEditAdvice(ctx, run, spec))
 				}
 				return err
 			}
-			return r.Execute(ctx, run.ID)
+			return nil
 		case github.CommandRevise:
 			return r.revise(ctx, run.ID, command.Notes, comment.Author, "github", &spec)
 		default:

@@ -81,10 +81,20 @@ func NewRedactor(values ...string) *Redactor {
 // The standard and URL-safe base64 forms of each value are registered too,
 // because that is how a secret appears inside a Basic auth header.
 func (r *Redactor) Add(values ...string) {
+	r.add(MinValueLen, values...)
+}
+
+// AddExact registers nonempty credentials even when shorter than MinValueLen.
+// Use it at authentication boundaries where echoing any credential is forbidden.
+func (r *Redactor) AddExact(values ...string) {
+	r.add(1, values...)
+}
+
+func (r *Redactor) add(minLength int, values ...string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, value := range values {
-		if len(value) < MinValueLen {
+		if len(value) < minLength {
 			continue
 		}
 		raw := []byte(value)

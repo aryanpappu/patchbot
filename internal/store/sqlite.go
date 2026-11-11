@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -19,7 +20,9 @@ import (
 
 // SQLite implements Store with a single writer connection and WAL persistence.
 type SQLite struct {
-	db *sql.DB
+	db         *sql.DB
+	eventMu    sync.RWMutex
+	eventSinks map[*eventSink]struct{}
 }
 
 var _ Store = (*SQLite)(nil)
@@ -68,16 +71,23 @@ func (s *SQLite) Close() error { return s.db.Close() }
 
 // withTx only accepts internal operations; no caller-controlled code is run
 // while holding the connection or SQLite write lock.
-func (s *SQLite) withTx(ctx context.Context, operation func(*sql.Tx) error) error {
+func (s *SQLite) withTx(ctx context.Context, operation func(*eventTx) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := operation(tx); err != nil {
+	tracked := &eventTx{Tx: tx}
+	if err := operation(tracked); err != nil {
 		return mapError(err)
 	}
-	return mapError(tx.Commit())
+	if err := mapError(tx.Commit()); err != nil {
+		return err
+	}
+	for _, event := range tracked.events {
+		s.publishEvent(event)
+	}
+	return nil
 }
 
 func mapError(err error) error {
@@ -296,7 +306,7 @@ func (s *SQLite) SetRunStatus(ctx context.Context, id int64, from, to Status, pa
 		message := cappedText(*patch.ErrorMessage, 2000)
 		patch.ErrorMessage = &message
 	}
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(tx *eventTx) error {
 		now := time.Now().UTC().UnixMilli()
 		var finished, heartbeat, waiting any
 		if !to.IsActive() {
@@ -349,11 +359,11 @@ func requireAffected(result sql.Result, empty error) error {
 	return nil
 }
 
-// Heartbeat refreshes executing runs, including approved clone/baseline work
+// Heartbeat refreshes admitted queued runs and executing approved clone/baseline work
 // before the agent gate permits the running code transition.
 func (s *SQLite) Heartbeat(ctx context.Context, id int64) error {
 	now := time.Now().UTC().UnixMilli()
-	result, err := s.db.ExecContext(ctx, "UPDATE runs SET heartbeat_at=?,updated_at=? WHERE id=? AND (status='running' OR (status='approved' AND phase IN ('clone','baseline')))", now, now, id)
+	result, err := s.db.ExecContext(ctx, "UPDATE runs SET heartbeat_at=?,updated_at=? WHERE id=? AND (status IN ('queued','running') OR (status='approved' AND phase IN ('clone','baseline')))", now, now, id)
 	if err != nil {
 		return err
 	}
@@ -365,7 +375,7 @@ func (s *SQLite) Heartbeat(ctx context.Context, id int64) error {
 // heartbeat. Queued work left before its first transition is recovered too.
 func (s *SQLite) FailStaleRuns(ctx context.Context, olderThan time.Time) (int64, error) {
 	var count int64
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(tx *eventTx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT id,status FROM runs WHERE
    ((status='running' OR (status='approved' AND phase IN ('clone','baseline'))) AND heartbeat_at < ?)
    OR (status='queued' AND updated_at < ?)`, olderThan.UnixMilli(), olderThan.UnixMilli())
@@ -418,7 +428,12 @@ func (s *SQLite) FailStaleRuns(ctx context.Context, olderThan time.Time) (int64,
 
 // AppendEvent allocates a sequence number with a single INSERT statement.
 func (s *SQLite) AppendEvent(ctx context.Context, e Event) (int64, error) {
-	return appendEvent(ctx, s.db, e)
+	seq, err := appendEvent(ctx, s.db, e)
+	if err == nil {
+		e.Seq = seq
+		s.publishEvent(e)
+	}
+	return seq, err
 }
 
 type eventWriter interface {
@@ -426,10 +441,17 @@ type eventWriter interface {
 }
 
 func appendEvent(ctx context.Context, db eventWriter, e Event) (int64, error) {
+	e.CreatedAt = timestamp(e.CreatedAt)
 	var seq int64
 	err := db.QueryRowContext(ctx, `INSERT INTO run_events(run_id,seq,type,payload_json,created_at)
 		SELECT ?,COALESCE(MAX(seq),0)+1,?,?,? FROM run_events WHERE run_id=? RETURNING seq`,
 		e.RunID, e.Type, jsonText(e.PayloadJSON), timestamp(e.CreatedAt).UnixMilli(), e.RunID).Scan(&seq)
+	if err == nil {
+		if tracked, ok := db.(*eventTx); ok {
+			e.Seq = seq
+			tracked.events = append(tracked.events, e)
+		}
+	}
 	return seq, mapError(err)
 }
 

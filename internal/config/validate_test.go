@@ -109,6 +109,8 @@ func TestValidateRejects(t *testing.T) {
 		{"blank local actor", validBase + "[approval]\nlocal_actor = \" \"", "approval.local_actor: not set"},
 		{"bad log level", validBase + "[log]\nlevel = \"loud\"", `log.level: "loud"`},
 		{"bad log format", validBase + "[log]\nformat = \"xml\"", `log.format: "xml"`},
+		{"zero queue capacity", validBase + "[server]\nmax_queued_runs = 0", "server.max_queued_runs: must be greater than 0"},
+		{"negative queue capacity", validBase + "[server]\nmax_queued_runs = -1", "server.max_queued_runs: must be greater than 0"},
 		{"bad vue source", validBase + "[server]\nvue_src = \"npm\"", `server.vue_src: "npm"`},
 		{"bad address", validBase + "[server]\naddr = \"localhost\"", `server.addr: "localhost" is not host:port`},
 		{"address without host", validBase + "[server]\naddr = \":8080\"", "is not host:port"},

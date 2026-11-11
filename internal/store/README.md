@@ -21,7 +21,7 @@ Decisions where the plans do not specify an exact contract:
 - `SetRunStatus` compares one expected status, updates phase and optional
   metadata, manages lifecycle timestamps, and appends `run.status` atomically.
   A same-status transition can update phase. The runner enforces the legal
-  transition graph. `Heartbeat` only touches running runs.
+  transition graph. `Heartbeat` refreshes queued/running runs and approved clone/baseline work.
 - `FailStaleRuns` takes an absolute cutoff, uses a strict `<` comparison, and
   ignores NULL heartbeats. It fails running runs with `error_kind=interrupted`
   and appends their events in one transaction. It never expires waiting runs.

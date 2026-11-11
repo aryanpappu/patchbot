@@ -8,8 +8,9 @@ and post one comment, without a specification or code tools.
 
 `Approve(ctx, id, actor)` records an exact-version decision and leaves the run
 approved. `Execute(ctx, id)` continues fix work synchronously; for refine mode it
-finishes with `spec_approved` without coding. CLI approve calls both. A future
-server can dispatch Execute separately. `Revise` reruns refinement immediately;
+finishes with `spec_approved` without coding. CLI approve calls both. Servers
+use `ApproveAndExecute` to reserve capacity before atomically recording the
+decision and execution claim. `Revise` reruns refinement immediately;
 `EditSpec` appends a canonical UI version. Both invalidate the prior approval.
 `Reject`, `Cancel`, `Retry` and `SyncWaiting` share these lifecycle rules.
 
@@ -61,3 +62,19 @@ errors or draft results; 2 for invalid usage; 3 for the active-issue conflict;
 and 130 for a cancelled execution. A successful `cancel` control returns 0.
 Failure comments default on; `[defaults] comment_on_failure = false` suppresses
 them. Cancellation, dry runs and provider-auth failures never post them.
+
+The M13 server supplies `Options.Dispatch` to own long work in background jobs;
+without it the CLI APIs remain synchronous. Start persists its queued row and
+local action before dispatch. Execute marks admitted approved work with a
+clone-phase heartbeat before dispatch, retaining the approved status for every
+existing gate. Revise's decision still commits before refinement is dispatched.
+`Options.Admit` reserves bounded queue capacity before starts, revisions,
+execution claims and combined approval/execute decisions mutate storage.
+Admission survives request disconnects and the start of graceful shutdown.
+The server's shared heartbeat ticker refreshes pending jobs as well as workers.
+Approval denial during queuing, clone or baseline resets the phase to refine.
+`RecoverStale` is reused by periodic maintenance, covering orphans that were
+still fresh at startup.
+The server supplies `ActionChannel: "ui"` and its credential redactor; GitHub
+commands keep their original actor/channel. `Request.RefineModel` and
+`CodeModel` optionally override the common model for their respective stages.

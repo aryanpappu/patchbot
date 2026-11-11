@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
@@ -19,7 +18,7 @@ func (s *SQLite) EditSpec(ctx context.Context, edit SpecEdit) (Spec, error) {
 	spec.Version = edit.PriorVersion + 1
 	spec.CreatedAt = timestamp(spec.CreatedAt)
 	var saved Spec
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(tx *eventTx) error {
 		now := time.Now().UTC().UnixMilli()
 		result, err := tx.ExecContext(ctx, `UPDATE runs SET generation=generation+1,status=?,phase='refine',updated_at=?,
    waiting_since=?,heartbeat_at=NULL,finished_at=NULL WHERE id=? AND status=? AND generation=?
@@ -56,11 +55,14 @@ func (s *SQLite) EditSpec(ctx context.Context, edit SpecEdit) (Spec, error) {
 }
 
 // DecideRun persists an exact-spec decision and lifecycle change together.
-func (s *SQLite) DecideRun(ctx context.Context, from, to Status, a Approval, generation int64) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+// An optional phase claims asynchronous execution in the same approval commit.
+func (s *SQLite) DecideRun(ctx context.Context, from, to Status, a Approval, generation int64, phases ...Phase) error {
+	return s.withTx(ctx, func(tx *eventTx) error {
 		var version int64
 		var hash string
-		if err := tx.QueryRowContext(ctx, `SELECT version,hash FROM specs WHERE run_id=? ORDER BY version DESC LIMIT 1`, a.RunID).Scan(&version, &hash); err != nil {
+		var phase Phase
+		if err := tx.QueryRowContext(ctx, `SELECT specs.version,specs.hash,runs.phase FROM specs JOIN runs ON specs.run_id=runs.id
+ WHERE specs.run_id=? ORDER BY specs.version DESC LIMIT 1`, a.RunID).Scan(&version, &hash, &phase); err != nil {
 			return err
 		}
 		if version != a.SpecVersion || hash != a.SpecHash {
@@ -72,14 +74,23 @@ func (s *SQLite) DecideRun(ctx context.Context, from, to Status, a Approval, gen
 		if !to.IsActive() {
 			finished = now
 		}
+		if to == StatusApproved {
+			phase = PhaseRefine
+		}
 		if to == StatusRunning {
+			phase = PhasePreflight
+		}
+		if len(phases) > 0 {
+			phase = phases[0]
+		}
+		if to == StatusRunning || (to == StatusApproved && (phase == PhaseClone || phase == PhaseBaseline)) {
 			heartbeat = now
 		}
 		result, err := tx.ExecContext(ctx, `UPDATE runs SET generation=generation+1,status=?,updated_at=?,finished_at=?,heartbeat_at=?,waiting_since=NULL,
-   phase=CASE WHEN ?='running' THEN 'preflight' ELSE phase END,
+   phase=?,
    started_at=CASE WHEN ?='running' THEN COALESCE(started_at,?) ELSE started_at END,
    outcome=CASE WHEN ?='rejected' THEN 'rejected' ELSE outcome END
-   WHERE id=? AND status=? AND generation=?`, to, now, finished, heartbeat, to, to, now, to, a.RunID, from, generation)
+   WHERE id=? AND status=? AND generation=?`, to, now, finished, heartbeat, phase, to, now, to, a.RunID, from, generation)
 		if err != nil {
 			return err
 		}
@@ -87,10 +98,6 @@ func (s *SQLite) DecideRun(ctx context.Context, from, to Status, a Approval, gen
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO approvals(run_id,spec_version,spec_hash,decision,actor,channel,created_at) VALUES(?,?,?,?,?,?,?)`, a.RunID, a.SpecVersion, a.SpecHash, a.Decision, a.Actor, a.Channel, decisionAt); err != nil {
-			return err
-		}
-		var phase Phase
-		if err := tx.QueryRowContext(ctx, `SELECT phase FROM runs WHERE id=?`, a.RunID).Scan(&phase); err != nil {
 			return err
 		}
 		payload, err := json.Marshal(map[string]any{"from": from, "status": to, "phase": phase, "spec_version": version, "spec_hash": hash})
@@ -119,7 +126,7 @@ func (s *SQLite) SetSpecComment(ctx context.Context, runID, version int64, hash 
 
 // StartCode atomically closes the edit/approval race before any model writes.
 func (s *SQLite) StartCode(ctx context.Context, runID, version int64, hash string, generation int64) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(tx *eventTx) error {
 		now := time.Now().UTC().UnixMilli()
 		result, err := tx.ExecContext(ctx, `UPDATE runs SET generation=generation+1,status='running',phase='code',updated_at=?,heartbeat_at=?,waiting_since=NULL,
    started_at=COALESCE(started_at,?) WHERE id=? AND status='approved' AND generation=?

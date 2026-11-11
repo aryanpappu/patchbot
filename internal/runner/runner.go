@@ -28,6 +28,16 @@ import (
 // Options supplies trusted infrastructure. Clone, Executor and Constructors are
 // test seams; production uses gitx, execx and the raw provider constructors.
 type Options struct {
+	// Dispatch hands durable work to an owning manager. Nil runs synchronously.
+	Dispatch func(context.Context, int64, func(context.Context) error) error
+	// Admit reserves bounded dispatch capacity before any durable mutation.
+	// The returned context carries admission through Dispatch; release is always called.
+	Admit func(context.Context) (context.Context, func(), error)
+	// ActionChannel is ui for the local web server; otherwise local actions use cli.
+	ActionChannel string
+	// Redactor adds server credentials to the runner persistence boundary.
+	Redactor *secret.Redactor
+
 	GitHub            github.Client
 	Tokens            github.TokenSource
 	Constructors      llm.Constructors
@@ -43,11 +53,12 @@ type Options struct {
 
 // Request fixes provider/model and limits for the lifetime of a new run.
 type Request struct {
-	Repo                  string
-	Issue                 int64
-	Mode, Provider, Model string
-	DryRun                bool
-	MaxCostMicros         int64
+	Repo                   string
+	Issue                  int64
+	Mode, Provider, Model  string
+	RefineModel, CodeModel string
+	DryRun                 bool
+	MaxCostMicros          int64
 }
 
 // Runner is safe for concurrent actions. Long work owns a per-run context;
@@ -119,10 +130,11 @@ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) 
 		}
 	}
 	r := &Runner{cfg: cfg, db: db, gh: gh, opts: opts, redactor: cfg.Redactor(), active: make(map[int64]context.CancelFunc), controls: make(map[int64]*sync.Mutex)}
+	r.redactor.Extend(opts.Redactor)
 	if token, err := opts.Tokens.Token(ctx); err == nil {
 		r.redactor.AddSecrets(secret.New(token))
 	}
-	if _, err := db.FailStaleRuns(ctx, r.now().Add(-opts.StaleAfter)); err != nil {
+	if err := r.RecoverStale(ctx); err != nil {
 		return nil, err
 	}
 	manager, err := workspace.NewManager(cfg.DataDir())
@@ -148,6 +160,9 @@ func (r *Runner) control(id int64) *sync.Mutex {
 	}
 	return r.controls[id]
 }
+
+// ErrInvalidRequest identifies a rejected operator input without quoting it.
+var ErrInvalidRequest = errors.New("invalid run request")
 
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
 
@@ -231,6 +246,12 @@ func (r *Runner) prepare(req Request) (store.Run, error) {
 	if req.Model != "" {
 		refine, code = req.Model, req.Model
 	}
+	if req.RefineModel != "" {
+		refine = req.RefineModel
+	}
+	if req.CodeModel != "" {
+		code = req.CodeModel
+	}
 	if refine == "" {
 		refine = p.DefaultModel
 	}
@@ -279,23 +300,74 @@ func (r *Runner) Start(ctx context.Context, req Request) (store.Run, error) {
 }
 
 func (r *Runner) start(ctx context.Context, run store.Run, reuse *store.Spec) (store.Run, error) {
-	run, err := r.db.CreateRun(ctx, run)
+	ctx, release, err := r.admit(ctx)
+	if err != nil {
+		return store.Run{}, err
+	}
+	defer release()
+	run.Trigger = r.actionChannel()
+	if r.opts.Dispatch != nil {
+		admittedAt := time.Now().UTC()
+		run.HeartbeatAt = &admittedAt
+	}
+	run, err = r.db.CreateRun(ctx, run)
 	if err != nil {
 		return run, err
 	}
-	if err = r.action(ctx, run.ID, "start", r.cfg.Approval.LocalActor, "cli", nil); err == nil {
-		err = r.withWork(ctx, run.ID, func(work context.Context) error {
-			if err := r.transition(work, &run, store.StatusRunning, store.PhasePreflight, store.RunPatch{}); err != nil {
-				return err
+	id := run.ID
+	initial := run
+	if err = r.action(ctx, id, "start", r.cfg.Approval.LocalActor, r.actionChannel(), nil); err == nil {
+		err = r.dispatch(ctx, id, func(work context.Context) error {
+			run := initial
+			err := r.withWork(work, id, func(work context.Context) error {
+				if err := r.transition(work, &run, store.StatusRunning, store.PhasePreflight, store.RunPatch{}); err != nil {
+					return err
+				}
+				return r.refine(work, &run, nil, "", reuse)
+			})
+			if err != nil {
+				return r.fail(work, run, err)
 			}
-			return r.refine(work, &run, nil, "", reuse)
+			// A retry may reuse an approved spec. It still enters the ordinary gate.
+			if reuse != nil && r.opts.Dispatch != nil {
+				return r.execute(work, id)
+			}
+			return nil
 		})
 	}
 	if err != nil {
-		err = r.fail(ctx, run, err)
+		err = r.fail(ctx, initial, err)
 	}
-	latest, readErr := r.db.GetRun(context.WithoutCancel(ctx), run.ID)
+	latest, readErr := r.db.GetRun(context.WithoutCancel(ctx), id)
 	return latest, errors.Join(err, readErr)
+}
+
+func (r *Runner) actionChannel() string {
+	if r.opts.ActionChannel == "ui" {
+		return "ui"
+	}
+	return "cli"
+}
+
+func (r *Runner) admit(ctx context.Context) (context.Context, func(), error) {
+	if r.opts.Admit != nil {
+		return r.opts.Admit(ctx)
+	}
+	return ctx, func() {}, nil
+}
+
+// RecoverStale fails orphaned active work and releases its issue lock. Servers
+// call this periodically as well as on startup so quick restarts recover later.
+func (r *Runner) RecoverStale(ctx context.Context) error {
+	_, err := r.db.FailStaleRuns(ctx, r.now().Add(-r.opts.StaleAfter))
+	return err
+}
+
+func (r *Runner) dispatch(ctx context.Context, id int64, work func(context.Context) error) error {
+	if r.opts.Dispatch != nil {
+		return r.opts.Dispatch(ctx, id, work)
+	}
+	return work(ctx)
 }
 
 func (r *Runner) transition(ctx context.Context, run *store.Run, status store.Status, phase store.Phase, patch store.RunPatch) error {

@@ -105,10 +105,35 @@ func (r *Runner) checkedSpec(ctx context.Context, run store.Run) (store.Spec, er
 // Approve accepts only an approval-ready latest spec, under a named local actor.
 // Execute is separate so a server can dispatch coding without blocking an action.
 func (r *Runner) Approve(ctx context.Context, id int64, approver string) error {
-	return r.approve(ctx, id, approver, "cli", nil)
+	return r.approve(ctx, id, approver, r.actionChannel(), nil, false)
 }
 
-func (r *Runner) approve(ctx context.Context, id int64, actor, channel string, expected *store.Spec) error {
+// ApproveAndExecute reserves execution capacity before recording a decision.
+// The approval and asynchronous execution claim are committed together.
+func (r *Runner) ApproveAndExecute(ctx context.Context, id int64, approver string) error {
+	return r.approve(ctx, id, approver, r.actionChannel(), nil, true)
+}
+
+func (r *Runner) approve(ctx context.Context, id int64, actor, channel string, expected *store.Spec, execute bool) error {
+	if !execute {
+		return r.approveDecision(ctx, id, actor, channel, expected, store.PhaseRefine)
+	}
+	ctx, release, err := r.admit(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	phase := store.PhaseRefine
+	if r.opts.Dispatch != nil {
+		phase = store.PhaseClone
+	}
+	if err := r.approveDecision(ctx, id, actor, channel, expected, phase); err != nil {
+		return err
+	}
+	return r.dispatch(ctx, id, func(work context.Context) error { return r.execute(work, id) })
+}
+
+func (r *Runner) approveDecision(ctx context.Context, id int64, actor, channel string, expected *store.Spec, phase store.Phase) error {
 	lock := r.control(id)
 	lock.Lock()
 	defer lock.Unlock()
@@ -136,15 +161,20 @@ func (r *Runner) approve(ctx context.Context, id int64, actor, channel string, e
 	if strings.TrimSpace(actor) == "" {
 		return errors.New("approver name is required")
 	}
-	return r.db.DecideRun(ctx, run.Status, store.StatusApproved, store.Approval{RunID: id, SpecVersion: spec.Version, SpecHash: spec.Hash, Decision: "approve", Actor: r.redactor.Redact(actor), Channel: channel, CreatedAt: r.now()}, run.Generation)
+	return r.db.DecideRun(ctx, run.Status, store.StatusApproved, store.Approval{RunID: id, SpecVersion: spec.Version, SpecHash: spec.Hash, Decision: "approve", Actor: r.redactor.Redact(actor), Channel: channel, CreatedAt: r.now()}, run.Generation, phase)
 }
 
 // Revise records notes, invalidates the previous decision and reruns refinement.
 func (r *Runner) Revise(ctx context.Context, id int64, notes string) error {
-	return r.revise(ctx, id, notes, r.cfg.Approval.LocalActor, "cli", nil)
+	return r.revise(ctx, id, notes, r.cfg.Approval.LocalActor, r.actionChannel(), nil)
 }
 
 func (r *Runner) revise(ctx context.Context, id int64, notes, actor, channel string, expected *store.Spec) error {
+	ctx, release, err := r.admit(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if strings.TrimSpace(notes) == "" {
 		return errors.New("revision notes are required")
 	}
@@ -183,9 +213,17 @@ func (r *Runner) revise(ctx context.Context, id int64, notes, actor, channel str
 	if err := r.action(ctx, id, "revise", actor, channel, map[string]string{"notes": notes}); err != nil {
 		return r.fail(ctx, run, err)
 	}
-	err = r.withWork(ctx, id, func(work context.Context) error { return r.refine(work, &run, &spec, notes, nil) })
+	initial := run
+	err = r.dispatch(ctx, id, func(work context.Context) error {
+		run := initial
+		err := r.withWork(work, id, func(work context.Context) error { return r.refine(work, &run, &spec, notes, nil) })
+		if err != nil {
+			return r.fail(work, run, err)
+		}
+		return nil
+	})
 	if err != nil {
-		return r.fail(ctx, run, err)
+		return r.fail(ctx, initial, err)
 	}
 	return nil
 }
@@ -215,7 +253,7 @@ func (r *Runner) EditSpec(ctx context.Context, id int64, draft tools.SpecDraft) 
 	draft = *(&tools.Submission{Spec: &draft}).Redacted(r.redactor).Spec
 	// Apply the refinement content and path rules to operator edits.
 	if err := validateDraft(ctx, run, r.cfg.Repos[run.Repo], draft); err != nil {
-		return store.Spec{}, err
+		return store.Spec{}, errors.Join(ErrInvalidRequest, err)
 	}
 	issue, err := r.gh.GetIssue(ctx, ref(run.Repo), int(run.IssueNumber))
 	if err != nil {
@@ -255,11 +293,23 @@ func (r *Runner) Reject(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	return r.db.DecideRun(ctx, run.Status, store.StatusRejected, store.Approval{RunID: id, SpecVersion: spec.Version, SpecHash: spec.Hash, Decision: "reject", Actor: r.redactor.Redact(r.cfg.Approval.LocalActor), Channel: "cli", CreatedAt: r.now()}, run.Generation)
+	return r.db.DecideRun(ctx, run.Status, store.StatusRejected, store.Approval{RunID: id, SpecVersion: spec.Version, SpecHash: spec.Hash, Decision: "reject", Actor: r.redactor.Redact(r.cfg.Approval.LocalActor), Channel: r.actionChannel(), CreatedAt: r.now()}, run.Generation)
 }
 
 // Cancel stops local work immediately and CASes the persisted active status.
 func (r *Runner) Cancel(ctx context.Context, id int64) error {
+	initial, err := r.db.GetRun(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !initial.Status.IsActive() && initial.Status != store.StatusCancelled {
+		return store.ErrConflict
+	}
+	// Audit the operator intent before waking a worker that can win the terminal
+	// transition. Idempotent cancels are actions too, and CAS retries are not.
+	if err := r.action(ctx, id, "cancel", r.cfg.Approval.LocalActor, r.actionChannel(), nil); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	cancel := r.active[id]
 	r.mu.Unlock()
@@ -276,9 +326,6 @@ func (r *Runner) Cancel(ctx context.Context, id int64) error {
 				return nil
 			}
 			return store.ErrConflict
-		}
-		if err := r.action(ctx, id, "cancel", r.cfg.Approval.LocalActor, "cli", nil); err != nil {
-			return err
 		}
 		outcome := "cancelled"
 		err = r.transition(ctx, &run, store.StatusCancelled, run.Phase, store.RunPatch{Outcome: &outcome})
@@ -411,7 +458,7 @@ func (r *Runner) Retry(ctx context.Context, id int64, provider, model string) (s
 	}
 	run, err = r.start(ctx, run, reuse)
 	if run.ID != 0 {
-		err = errors.Join(err, r.action(context.WithoutCancel(ctx), run.ID, "retry", r.cfg.Approval.LocalActor, "cli", map[string]int64{"retry_of": id}))
+		err = errors.Join(err, r.action(context.WithoutCancel(ctx), run.ID, "retry", r.cfg.Approval.LocalActor, r.actionChannel(), map[string]int64{"retry_of": id}))
 	}
 	return run, err
 }
