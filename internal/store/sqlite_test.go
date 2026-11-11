@@ -79,7 +79,7 @@ func TestMigrations(t *testing.T) {
 	s := openTestPath(t, path)
 	var version, applied int64
 	var name, checksum string
-	if err := s.db.QueryRowContext(t.Context(), `SELECT version,name,checksum,applied_at FROM schema_migrations`).Scan(&version, &name, &checksum, &applied); err != nil {
+	if err := s.db.QueryRowContext(t.Context(), `SELECT version,name,checksum,applied_at FROM schema_migrations WHERE version=1`).Scan(&version, &name, &checksum, &applied); err != nil {
 		t.Fatal(err)
 	}
 	body, err := migrationFiles.ReadFile("migrations/0001_init.sql")
@@ -108,7 +108,7 @@ func TestMigrations(t *testing.T) {
 
 	second := openTestPath(t, path)
 	var reapplied int64
-	if err := second.db.QueryRowContext(t.Context(), `SELECT applied_at FROM schema_migrations`).Scan(&reapplied); err != nil {
+	if err := second.db.QueryRowContext(t.Context(), `SELECT applied_at FROM schema_migrations WHERE version=1`).Scan(&reapplied); err != nil {
 		t.Fatal(err)
 	}
 	if reapplied != applied {
@@ -135,7 +135,7 @@ func TestUnknownMigration(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "store.db")
 	s := openTestPath(t, path)
-	if _, err := s.db.ExecContext(t.Context(), `INSERT INTO schema_migrations VALUES(2,'0002_future.sql','future',1)`); err != nil {
+	if _, err := s.db.ExecContext(t.Context(), `INSERT INTO schema_migrations VALUES(999,'0999_future.sql','future',1)`); err != nil {
 		t.Fatal(err)
 	}
 	future, err := Open(t.Context(), path)

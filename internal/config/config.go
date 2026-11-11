@@ -65,6 +65,8 @@ type Defaults struct {
 	MaxCostUSD float64 `toml:"max_cost_usd"`
 	// Approvers are the GitHub logins whose /approve comments count.
 	Approvers []string `toml:"approvers"`
+	// CommentOnFailure posts a short diagnostic except for cancellation/auth.
+	CommentOnFailure bool `toml:"comment_on_failure"`
 }
 
 // Limits bound one run.

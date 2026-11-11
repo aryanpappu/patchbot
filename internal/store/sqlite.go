@@ -139,7 +139,7 @@ const runColumns = `id,repo,issue_number,issue_title,mode,retry_of,trigger,
 provider,refine_model,code_model,dry_run,status,phase,outcome,base_sha,head_sha,branch,
 pr_number,pr_url,pr_draft,summary,tests_status,test_attempts,turns,input_tokens,
 output_tokens,cache_read_tokens,cache_write_tokens,cost_micros,limits_json,
-error_kind,error_message,created_at,updated_at,started_at,finished_at,heartbeat_at,waiting_since`
+error_kind,error_message,created_at,updated_at,started_at,finished_at,heartbeat_at,waiting_since,generation`
 
 type scanner interface{ Scan(...any) error }
 
@@ -153,7 +153,7 @@ func scanRun(row scanner) (Run, error) {
 		&r.BaseSHA, &r.HeadSHA, &r.Branch, &r.PRNumber, &r.PRURL, &r.PRDraft, &r.Summary,
 		&r.TestsStatus, &r.TestAttempts, &r.Turns, &r.InputTokens, &r.OutputTokens,
 		&r.CacheReadTokens, &r.CacheWriteTokens, &r.CostMicros, &limits,
-		&r.ErrorKind, &r.ErrorMessage, &created, &updated, &started, &finished, &heartbeat, &waiting)
+		&r.ErrorKind, &r.ErrorMessage, &created, &updated, &started, &finished, &heartbeat, &waiting, &r.Generation)
 	r.LimitsJSON = json.RawMessage(limits)
 	r.CreatedAt, r.UpdatedAt = time.UnixMilli(created).UTC(), time.UnixMilli(updated).UTC()
 	r.StartedAt, r.FinishedAt = optionalTime(started), optionalTime(finished)
@@ -201,7 +201,7 @@ func (s *SQLite) CreateRun(ctx context.Context, r Run) (Run, error) {
 		r.TestsStatus, r.TestAttempts, r.Turns, r.InputTokens, r.OutputTokens,
 		r.CacheReadTokens, r.CacheWriteTokens, r.CostMicros, jsonText(r.LimitsJSON),
 		r.ErrorKind, r.ErrorMessage, r.CreatedAt.UnixMilli(), r.UpdatedAt.UnixMilli(),
-		optionalMillis(r.StartedAt), optionalMillis(r.FinishedAt), optionalMillis(r.HeartbeatAt), optionalMillis(r.WaitingSince)}
+		optionalMillis(r.StartedAt), optionalMillis(r.FinishedAt), optionalMillis(r.HeartbeatAt), optionalMillis(r.WaitingSince), int64(0)}
 	query := "INSERT INTO runs(" + strings.TrimPrefix(runColumns, "id,") + ") VALUES(" + placeholders(len(args)) + ") RETURNING " + runColumns
 	return scanRun(s.db.QueryRowContext(ctx, query, args...))
 }
@@ -302,22 +302,22 @@ func (s *SQLite) SetRunStatus(ctx context.Context, id int64, from, to Status, pa
 		if !to.IsActive() {
 			finished = now
 		}
-		if to == StatusRunning {
+		if to == StatusRunning || (to == StatusApproved && (patch.Phase == PhaseClone || patch.Phase == PhaseBaseline)) {
 			heartbeat = now
 		}
 		if to == StatusAwaitingApproval || to == StatusNeedsInfo {
 			waiting = now
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE runs SET status=?,phase=?,updated_at=?,
+		result, err := tx.ExecContext(ctx, `UPDATE runs SET generation=generation+1,status=?,phase=?,updated_at=?,issue_title=COALESCE(?,issue_title),
 			outcome=COALESCE(?,outcome),error_kind=COALESCE(?,error_kind),error_message=COALESCE(?,error_message),
 			base_sha=COALESCE(?,base_sha),head_sha=COALESCE(?,head_sha),branch=COALESCE(?,branch),
 			pr_number=COALESCE(?,pr_number),pr_url=COALESCE(?,pr_url),pr_draft=COALESCE(?,pr_draft),
 			summary=COALESCE(?,summary),tests_status=COALESCE(?,tests_status),
 			started_at=CASE WHEN ?='running' THEN COALESCE(started_at,?) ELSE started_at END,
 			finished_at=?,heartbeat_at=?,waiting_since=CASE WHEN status=? THEN waiting_since ELSE ? END
-			WHERE id=? AND status=?`, to, patch.Phase, now, patch.Outcome, patch.ErrorKind, patch.ErrorMessage,
+			WHERE id=? AND status=? AND (? IS NULL OR generation=?)`, to, patch.Phase, now, patch.IssueTitle, patch.Outcome, patch.ErrorKind, patch.ErrorMessage,
 			patch.BaseSHA, patch.HeadSHA, patch.Branch, patch.PRNumber, patch.PRURL, patch.PRDraft, patch.Summary,
-			patch.TestsStatus, to, now, finished, heartbeat, to, waiting, id, from)
+			patch.TestsStatus, to, now, finished, heartbeat, to, waiting, id, from, patch.ExpectedGeneration, patch.ExpectedGeneration)
 		if err != nil {
 			return err
 		}
@@ -349,36 +349,41 @@ func requireAffected(result sql.Result, empty error) error {
 	return nil
 }
 
-// Heartbeat refreshes a running run only; it cannot revive a terminal run.
+// Heartbeat refreshes executing runs, including approved clone/baseline work
+// before the agent gate permits the running code transition.
 func (s *SQLite) Heartbeat(ctx context.Context, id int64) error {
 	now := time.Now().UTC().UnixMilli()
-	result, err := s.db.ExecContext(ctx, "UPDATE runs SET heartbeat_at=?,updated_at=? WHERE id=? AND status='running'", now, now, id)
+	result, err := s.db.ExecContext(ctx, "UPDATE runs SET heartbeat_at=?,updated_at=? WHERE id=? AND (status='running' OR (status='approved' AND phase IN ('clone','baseline')))", now, now, id)
 	if err != nil {
 		return err
 	}
 	return requireAffected(result, ErrConflict)
 }
 
-// FailStaleRuns fails running runs whose known heartbeat is strictly older
-// than the UTC cutoff. Unknown heartbeats and waiting runs are left alone.
+// FailStaleRuns fails executing runs with an expired heartbeat. Approved
+// clone/baseline work keeps its status for the agent's gate, but still owns a
+// heartbeat. Queued work left before its first transition is recovered too.
 func (s *SQLite) FailStaleRuns(ctx context.Context, olderThan time.Time) (int64, error) {
 	var count int64
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		now := time.Now().UTC().UnixMilli()
-		rows, err := tx.QueryContext(ctx, `UPDATE runs SET status='failed',outcome='error',
-			error_kind='interrupted',error_message='run heartbeat expired',finished_at=?,updated_at=?
-			WHERE status='running' AND heartbeat_at < ? RETURNING id`, now, now, olderThan.UnixMilli())
+		rows, err := tx.QueryContext(ctx, `SELECT id,status FROM runs WHERE
+   ((status='running' OR (status='approved' AND phase IN ('clone','baseline'))) AND heartbeat_at < ?)
+   OR (status='queued' AND updated_at < ?)`, olderThan.UnixMilli(), olderThan.UnixMilli())
 		if err != nil {
 			return err
 		}
-		ids := []int64{}
+		type stale struct {
+			id     int64
+			status Status
+		}
+		var runs []stale
 		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
+			var run stale
+			if err := rows.Scan(&run.id, &run.status); err != nil {
 				_ = rows.Close()
 				return err
 			}
-			ids = append(ids, id)
+			runs = append(runs, run)
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
@@ -387,19 +392,28 @@ func (s *SQLite) FailStaleRuns(ctx context.Context, olderThan time.Time) (int64,
 		if err := rows.Close(); err != nil {
 			return err
 		}
-		for _, id := range ids {
-			_, err := appendEvent(ctx, tx, Event{RunID: id, Type: "run.status", PayloadJSON: json.RawMessage(`{"from":"running","status":"failed","error_kind":"interrupted"}`)})
+		now := time.Now().UTC().UnixMilli()
+		for _, run := range runs {
+			result, err := tx.ExecContext(ctx, `UPDATE runs SET generation=generation+1,status='failed',outcome='error',error_kind='interrupted',
+    error_message='run heartbeat expired',finished_at=?,updated_at=? WHERE id=? AND status=?`, now, now, run.id, run.status)
 			if err != nil {
 				return err
 			}
+			if err := requireAffected(result, ErrConflict); err != nil {
+				return err
+			}
+			payload, err := json.Marshal(map[string]any{"from": run.status, "status": StatusFailed, "error_kind": "interrupted"})
+			if err != nil {
+				return err
+			}
+			if _, err := appendEvent(ctx, tx, Event{RunID: run.id, Type: "run.status", PayloadJSON: payload}); err != nil {
+				return err
+			}
 		}
-		count = int64(len(ids))
+		count = int64(len(runs))
 		return nil
 	})
-	if err != nil {
-		return 0, err
-	}
-	return count, nil
+	return count, err
 }
 
 // AppendEvent allocates a sequence number with a single INSERT statement.

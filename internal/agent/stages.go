@@ -164,9 +164,13 @@ type CodeRequest struct {
 	RunID       int64
 	Title, Body string
 	Changes     ChangeSource
+	Baseline    string
 	TestCommand string
 	Session     *Session
 	Limits      Limits
+	// OnPhase runs after the approval checks and write registry construction,
+	// before code or harness tests execute. A failed lifecycle write stops work.
+	OnPhase func(context.Context, store.Phase) error
 }
 
 // CodeResult tells the runner whether there is anything to publish and whether
@@ -205,9 +209,17 @@ func (l *Loop) Code(ctx context.Context, approval approvalToken, req CodeRequest
 		return CodeResult{}, err
 	}
 	session := startStage(req.Session, codePrompt, issueData(stage.redactor().Redact(req.Title), stage.redactor().Redact(req.Body))+"\nApproved specification:\n"+untrusted("approved specification", stage.redactor().Redact(spec.BodyMD)))
+	if req.Baseline != "" {
+		feedback(session, untrusted("harness baseline tests", stage.redactor().Redact(req.Baseline)))
+	}
 	lim := req.Limits.defaults()
 	result := CodeResult{TestsStatus: "not_run"}
 	for {
+		if req.OnPhase != nil {
+			if err := req.OnPhase(ctx, store.PhaseCode); err != nil {
+				return result, err
+			}
+		}
 		result.CanPublish, result.Salvage, result.Draft = false, false, false
 		outcome, loopErr := stage.Run(ctx, session, lim)
 		if outcome.Synthesized && outcome.Submission != nil {
@@ -244,6 +256,11 @@ func (l *Loop) Code(ctx context.Context, approval approvalToken, req CodeRequest
 			result.CanPublish, result.Salvage = true, hardStop
 			result.Draft = true
 			return result, loopErr
+		}
+		if req.OnPhase != nil {
+			if err := req.OnPhase(ctx, store.PhaseVerify); err != nil {
+				return result, err
+			}
 		}
 		test, err := stage.verify(ctx, req.TestCommand, lim, result.TestAttempts+1)
 		if err != nil {

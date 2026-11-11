@@ -8,18 +8,20 @@ import (
 
 	"github.com/aryanpappu/patchbot/internal/config"
 	"github.com/aryanpappu/patchbot/internal/llm/providers"
+	"github.com/aryanpappu/patchbot/internal/runner"
 	"github.com/aryanpappu/patchbot/internal/version"
 )
 
 const usage = `Usage: patchbot <command> [options]
 
 Commands:
-  run      Start a run for a GitHub issue (planned)
-  approve  Approve a run's spec (planned)
-  revise   Request changes to a run's spec (planned)
-  reject   Reject a run (planned)
-  cancel   Cancel a run (planned)
-  runs     List runs (planned)
+  run      Start a run for a GitHub issue
+  approve  Approve a run's spec and continue
+  revise   Refine a run's spec with notes
+  reject   Reject a waiting run
+  cancel   Cancel an active run
+  runs     List runs and optionally sync GitHub comments
+  retry    Start a new run linked to a failed run
   models   List available models
   config   Check or show configuration
   serve    Start the web interface (planned)
@@ -44,6 +46,8 @@ type App struct {
 	Config config.Options
 	// Providers injects optional transports and test providers.
 	Providers providers.Options
+	// RunnerOptions injects local git remotes, GitHub and fake LLMs in tests.
+	RunnerOptions runner.Options
 }
 
 // Run runs one command and returns the process exit code: 0 for success, 1
@@ -79,7 +83,9 @@ func (a *App) Run(args []string) int {
 		return a.runConfig(flags.Args()[1:])
 	case "models":
 		return a.runModels(flags.Args()[1:])
-	case "run", "approve", "revise", "reject", "cancel", "runs", "serve":
+	case "run", "approve", "revise", "reject", "cancel", "runs", "retry":
+		return a.runControl(name, flags.Args()[1:])
+	case "serve":
 		_, _ = fmt.Fprintf(stderr, "patchbot %s: not implemented yet\n", name)
 		return 1
 	default:

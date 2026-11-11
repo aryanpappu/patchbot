@@ -27,15 +27,13 @@ func TestCLI(t *testing.T) {
 		{name: "unknown flag", args: []string{"--unknown"}, wantCode: 2, wantStderr: "Usage: patchbot"},
 		{name: "empty command", args: []string{""}, wantCode: 2, wantStderr: "Usage: patchbot"},
 		{name: "option terminator", args: []string{"--"}, wantCode: 2, wantStderr: "Usage: patchbot"},
-		{name: "run", args: []string{"run"}, wantCode: 1, wantStderr: "patchbot run: not implemented yet\n"},
-		{name: "approve", args: []string{"approve"}, wantCode: 1, wantStderr: "patchbot approve: not implemented yet\n"},
-		{name: "revise", args: []string{"revise"}, wantCode: 1, wantStderr: "patchbot revise: not implemented yet\n"},
-		{name: "reject", args: []string{"reject"}, wantCode: 1, wantStderr: "patchbot reject: not implemented yet\n"},
-		{name: "cancel", args: []string{"cancel"}, wantCode: 1, wantStderr: "patchbot cancel: not implemented yet\n"},
-		{name: "runs", args: []string{"runs"}, wantCode: 1, wantStderr: "patchbot runs: not implemented yet\n"},
+		{name: "run", args: []string{"run"}, wantCode: 2, wantStderr: "--repo and a positive --issue are required"},
+		{name: "approve", args: []string{"approve"}, wantCode: 2, wantStderr: "run ID is required"},
+		{name: "revise", args: []string{"revise"}, wantCode: 2, wantStderr: "run ID is required"},
+		{name: "reject", args: []string{"reject"}, wantCode: 2, wantStderr: "run ID is required"},
+		{name: "cancel", args: []string{"cancel"}, wantCode: 2, wantStderr: "run ID is required"},
 		{name: "config", args: []string{"config"}, wantCode: 2, wantStderr: "Usage: patchbot config <check|show>"},
 		{name: "serve", args: []string{"serve"}, wantCode: 1, wantStderr: "patchbot serve: not implemented yet\n"},
-		{name: "run with options", args: []string{"run", "--repo", "owner/name", "--issue", "12"}, wantCode: 1, wantStderr: "patchbot run: not implemented yet\n"},
 	}
 
 	for _, tt := range tests {

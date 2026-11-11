@@ -11,6 +11,7 @@ refine_model = ""            # empty: the provider's default_model
 code_model = ""              # empty: the provider's default_model
 max_cost_usd = 2.0
 approvers = []               # GitHub logins allowed to approve; you must set this
+comment_on_failure = true
 
 [limits]
 max_turns = 40

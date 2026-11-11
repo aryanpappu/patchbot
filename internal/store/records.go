@@ -25,6 +25,14 @@ func scanSpec(row scanner) (Spec, error) {
 func (s *SQLite) SaveSpec(ctx context.Context, spec Spec) (Spec, error) {
 	var saved Spec
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		var status Status
+		var phase Phase
+		if err := tx.QueryRowContext(ctx, `SELECT status,phase FROM runs WHERE id=?`, spec.RunID).Scan(&status, &phase); err != nil {
+			return err
+		}
+		if !status.IsActive() || (status == StatusRunning && (phase == PhaseCode || phase == PhaseVerify || phase == PhasePublish)) {
+			return ErrConflict
+		}
 		var next int64
 		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(version),0)+1 FROM specs WHERE run_id=?`, spec.RunID).Scan(&next); err != nil {
 			return err
@@ -41,7 +49,7 @@ func (s *SQLite) SaveSpec(ctx context.Context, spec Spec) (Spec, error) {
 			return err
 		}
 		now := time.Now().UTC().UnixMilli()
-		result, err := tx.ExecContext(ctx, `UPDATE runs SET status='awaiting_approval',waiting_since=?,updated_at=?
+		result, err := tx.ExecContext(ctx, `UPDATE runs SET generation=generation+1,status='awaiting_approval',waiting_since=?,updated_at=?
 			WHERE id=? AND status='approved'`, now, now, spec.RunID)
 		if err != nil {
 			return err
@@ -267,7 +275,7 @@ func (s *SQLite) RecordStep(ctx context.Context, step Step) (Step, error) {
 			CASE WHEN COUNT(cache_write_tokens)=COUNT(*) THEN SUM(cache_write_tokens) END,
 			CASE WHEN COUNT(cost_micros)=COUNT(*) THEN SUM(cost_micros) END,COUNT(*)
 			FROM steps WHERE run_id=? AND kind='llm' AND status!='running'),
-			test_attempts=(SELECT COUNT(*) FROM steps WHERE run_id=? AND kind='test' AND status!='running'),updated_at=?
+			test_attempts=(SELECT COUNT(*) FROM steps WHERE run_id=? AND kind='test' AND phase='verify' AND status!='running'),updated_at=?
 			WHERE id=?`, step.RunID, step.RunID, time.Now().UTC().UnixMilli(), step.RunID)
 		return err
 	})
