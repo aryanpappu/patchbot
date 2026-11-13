@@ -47,6 +47,19 @@ vue_src = "cdn"
 [data]
 dir = "~/.patchbot"
 
+[executor]
+kind = "local"
+runtime = "podman"
+image = ""
+memory = "2g"
+cpus = "2"
+pids_limit = 512
+tmpfs_size = "512m"
+network = "none"
+user = "65532:65532"
+userns = ""
+path = ["/usr/local/go/bin", "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
+
 [providers.anthropic]
 kind = "anthropic"
 api_key_env = "ANTHROPIC_API_KEY"

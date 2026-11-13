@@ -46,3 +46,6 @@ engineering questions together and record them here.
   credentials are masked even below the generic redactor's eight-byte threshold.
 - This task does not create a release commit, tag or push. An offline cached
   scanner without a vulnerability database is not evidence of a clean scan.
+
+## 2026-11-13: M17 container executor
+- `[executor] kind = "container"` runs every repository command in a fresh rootless podman/docker container (digest-pinned image, `--network none`, read-only rootfs + tmpfs, `--cap-drop ALL`, no-new-privileges, pids/memory/cpu limits, non-root uid, only the workspace mounted); default stays `local`, git and file tools stay host-side and the GitHub token never enters the container.

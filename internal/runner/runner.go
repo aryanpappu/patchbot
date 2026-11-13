@@ -107,7 +107,7 @@ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) 
 		opts.Clone = gitx.Clone
 	}
 	if opts.Executor == nil {
-		opts.Executor = func(dir string) (execx.Executor, error) { return execx.NewLocalExecutor(dir) }
+		opts.Executor = defaultExecutor(cfg)
 	}
 	if opts.Constructors == nil {
 		opts.Constructors = providers.Constructors(providers.Options{})
@@ -406,4 +406,19 @@ func (r *Runner) action(ctx context.Context, id int64, kind, actor, channel stri
 
 func (r *Runner) artifact(ctx context.Context, id int64, kind, content string) error {
 	return r.db.SaveArtifact(ctx, store.Artifact{RunID: id, Kind: kind, Content: tools.CapOutput(r.redactor.Redact(content), 256<<10)})
+}
+
+// defaultExecutor selects host or container execution from [executor]. The
+// runtime binary is resolved per run so the workspace is excluded as well.
+func defaultExecutor(cfg *config.Config) func(string) (execx.Executor, error) {
+	if !cfg.Executor.Container() {
+		return func(dir string) (execx.Executor, error) { return execx.NewLocalExecutor(dir) }
+	}
+	return func(dir string) (execx.Executor, error) {
+		containerCfg, err := cfg.ContainerConfig(os.LookupEnv, dir)
+		if err != nil {
+			return nil, err
+		}
+		return execx.NewContainerExecutor(dir, containerCfg)
+	}
 }

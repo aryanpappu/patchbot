@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -29,6 +30,10 @@ type PolicyOptions struct {
 	TrustedPath []string
 	// ExcludedRoots adds data/workspace roots to the checkout exclusion.
 	ExcludedRoots []string
+	// InContainer keeps executables unresolved on the host: commands run in a
+	// container image, whose PATH (TrustedPath here, container paths) resolves
+	// bare names. Shell/launcher and relative-path rules still apply.
+	InContainer bool
 }
 
 type command struct {
@@ -70,7 +75,11 @@ func NewPolicy(root string, commands map[string][]string, options ...PolicyOptio
 		dirs = filepath.SplitList(TrustedPath)
 	}
 	roots := append([]string{root}, opts.ExcludedRoots...)
-	if err := ValidateTrustedPath(dirs, roots...); err != nil {
+	if opts.InContainer {
+		if err := ValidateContainerPath(dirs); err != nil {
+			return nil, err
+		}
+	} else if err := ValidateTrustedPath(dirs, roots...); err != nil {
 		return nil, err
 	}
 	p := &Policy{path: append([]string(nil), dirs...), commands: make(map[string]command), maxArgs: opts.MaxExtraArgs,
@@ -93,7 +102,11 @@ func NewPolicy(root string, commands map[string][]string, options ...PolicyOptio
 				return nil, fmt.Errorf("command %q contains NUL", name)
 			}
 		}
-		binary, resolveErr := resolveExecutable(roots, argv[0], opts.AllowShells, dirs)
+		resolve := resolveExecutable
+		if opts.InContainer {
+			resolve = containerExecutable
+		}
+		binary, resolveErr := resolve(roots, argv[0], opts.AllowShells, dirs)
 		if resolveErr != nil {
 			return nil, fmt.Errorf("command %q: %w", name, resolveErr)
 		}
@@ -187,6 +200,19 @@ func resolveExecutable(roots []string, name string, allowShells map[string]bool,
 		return "", errors.New("executable resolves to a disallowed shell or launcher")
 	}
 	return resolved, nil
+}
+
+// containerExecutable applies the name rules without consulting the host: the
+// image's filesystem is what the command will see.
+func containerExecutable(_ []string, name string, allowShells map[string]bool, _ []string) (string, error) {
+	base := path.Base(name)
+	if shellLike(base) && !allowShells[base] {
+		return "", errors.New("shell or command launcher is not allowed")
+	}
+	if strings.Contains(name, "/") && (!path.IsAbs(name) || path.Clean(name) != name) {
+		return "", errors.New("container executables must be bare names or clean absolute paths")
+	}
+	return name, nil
 }
 
 // ResolveExecutable uses the same trusted-path and exclusion rules as Policy.

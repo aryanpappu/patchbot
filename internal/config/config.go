@@ -39,6 +39,7 @@ type Config struct {
 	Log       Log                  `toml:"log"`
 	Server    Server               `toml:"server"`
 	Data      Data                 `toml:"data"`
+	Executor  Executor             `toml:"executor"`
 	Providers map[string]*Provider `toml:"providers"`
 	Repos     map[string]*Repo     `toml:"repos"`
 
@@ -118,6 +119,38 @@ type Server struct {
 type Data struct {
 	Dir string `toml:"dir"`
 }
+
+// Executor kinds.
+const (
+	ExecutorLocal     = "local"
+	ExecutorContainer = "container"
+)
+
+// Executor says where repository commands (baseline tests, run_cmd and harness
+// verification) run. Git and file tools always stay on the host.
+type Executor struct {
+	// Kind is local (host process, the default) or container.
+	Kind string `toml:"kind"`
+	// Runtime is podman or docker, resolved through limits.trusted_path.
+	Runtime string `toml:"runtime"`
+	// Image is digest-pinned: name[:tag]@sha256:<digest>.
+	Image     string `toml:"image"`
+	Memory    string `toml:"memory"`
+	CPUs      string `toml:"cpus"`
+	PidsLimit int    `toml:"pids_limit"`
+	TmpfsSize string `toml:"tmpfs_size"`
+	// Network must be "none".
+	Network string `toml:"network"`
+	// User is the non-root numeric uid:gid inside the container.
+	User string `toml:"user"`
+	// UserNS is "" or "keep-id" (podman: host user appears as User).
+	UserNS string `toml:"userns"`
+	// Path is PATH inside the container; it resolves bare command names.
+	Path []string `toml:"path"`
+}
+
+// Container reports whether repository commands run in a container.
+func (e Executor) Container() bool { return e.Kind == ExecutorContainer }
 
 // Provider is one [providers.<name>] table.
 type Provider struct {

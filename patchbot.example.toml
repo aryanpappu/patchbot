@@ -50,6 +50,29 @@ vue_src = "cdn"                     # cdn or local (vendored Vue is included)
 [data]
 dir = "~/.patchbot"                 # private 0700 directory; SQLite is 0600
 
+[executor]
+# Where repository commands run: baseline tests, the agent's run_cmd and
+# harness verification. Git (with the GitHub token) and file tools always stay
+# on the host; the token never enters the container. Command IDs and the
+# allowlist are identical in both modes.
+kind = "local"                      # local (host processes, not a sandbox) or container
+runtime = "podman"                  # podman or docker; resolved through limits.trusted_path
+# Required for kind = "container": pin by digest, never a bare tag. The image
+# must already be pulled (runs use --pull never). Example:
+# image = "docker.io/library/golang:1.27@sha256:<64 hex digits>"
+image = ""
+memory = "2g"                       # --memory
+cpus = "2"                          # --cpus (string; "1.5" allowed)
+pids_limit = 512                     # --pids-limit; caps fork bombs
+tmpfs_size = "512m"                 # size of the only writable path besides /work
+network = "none"                    # only "none" is supported
+user = "65532:65532"                # non-root numeric uid:gid inside the container
+# Rootless podman: "keep-id" maps the host service user to `user`, so the
+# bind-mounted workspace is readable and writable. Docker: leave empty.
+userns = ""
+# PATH inside the container; bare command names resolve against it.
+path = ["/usr/local/go/bin", "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
+
 [providers.anthropic]
 kind = "anthropic"                  # anthropic, gemini, openai
 base_url = ""                       # empty uses the adapter's official endpoint
