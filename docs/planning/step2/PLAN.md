@@ -39,3 +39,15 @@ site stock.mishra.eu.org, so isolation is mandatory and patchbot is fully separa
 
 Migration numbers reserved: 0003 memory, 0004 reviewer, 0005 webhooks.
 Every milestone: `make ci` green, code-review pass, one conventional commit, merged into `development`.
+
+## Owner requests after the first pilot round (2026-11-13), to build together later
+| # | Milestone | Notes |
+|---|---|---|
+| M23 | Login-based dashboard | Verify the Cloudflare Access JWT (`Cf-Access-Jwt-Assertion`, team JWKS, audience tag) server-side and record the logged-in email as the approval actor; replaces the dropped UI token. Optional local user/password login for non-Cloudflare installs. |
+| M24 | Repository management in the dashboard | Add/edit/remove allowlisted repos (commands, test command, protected paths, image) from the UI, stored in SQLite with audit; config file stays the bootstrap. Requires M23 login first. |
+| M25 | Per-repo container image | `[repos."x"] image = ...` overriding `[executor] image`, so Go and PHP repos run side by side. |
+| M26 | Create issue from the dashboard | Write a feature request in the UI → patchbot opens the GitHub issue and starts refine. |
+
+Interim (2026-11-13): UI token removed on Mumbai at owner request. Port 8080 on loopback is limited by
+iptables (owner match) to root (cloudflared) and the patchbot user, so other local users and CyberPanel
+sites cannot reach the API; Cloudflare Access (owner only) is the only login.
