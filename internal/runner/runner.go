@@ -57,6 +57,8 @@ type Options struct {
 
 // Request fixes provider/model and limits for the lifetime of a new run.
 type Request struct {
+	// IngressKey is supplied only by automatic label reconciliation.
+	IngressKey             string
 	Repo                   string
 	Issue                  int64
 	Mode, Provider, Model  string
@@ -277,7 +279,7 @@ func (r *Runner) prepare(req Request) (store.Run, error) {
 	if err != nil {
 		return store.Run{}, err
 	}
-	return store.Run{Repo: req.Repo, IssueNumber: req.Issue, Mode: req.Mode, Provider: req.Provider, RefineModel: refine, CodeModel: code, DryRun: req.DryRun, Status: store.StatusQueued, Phase: store.PhasePreflight, LimitsJSON: raw}, nil
+	return store.Run{IngressKey: req.IngressKey, Repo: req.Repo, IssueNumber: req.Issue, Mode: req.Mode, Provider: req.Provider, RefineModel: refine, CodeModel: code, DryRun: req.DryRun, Status: store.StatusQueued, Phase: store.PhasePreflight, LimitsJSON: raw}, nil
 }
 
 // Start creates and executes the read-only phase, returning a durable waiting

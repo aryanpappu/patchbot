@@ -146,6 +146,10 @@ func Load(opts Options) (*Config, error) {
 			p.APIKey = secret.New(strings.TrimSpace(value))
 		}
 	}
+	if envNameRE.MatchString(c.Webhook.SecretEnv) {
+		value, _ := lookupEnv(c.Webhook.SecretEnv)
+		c.Webhook.Secret = secret.New(value)
+	}
 	if err != nil {
 		// A file that was rejected never became part of c, but the variable
 		// names it gave still say where its keys are.
@@ -254,6 +258,7 @@ func (c *Config) loadFile(path string) error {
 	}
 	var layer Config
 	md, err := toml.Decode(string(data), &layer)
+	c.rejectedKeyEnvs = append(c.rejectedKeyEnvs, layer.Webhook.SecretEnv)
 	for _, p := range layer.Providers {
 		if p != nil && p.APIKeyEnv != "" {
 			c.rejectedKeyEnvs = append(c.rejectedKeyEnvs, p.APIKeyEnv)
@@ -405,6 +410,16 @@ var durationType = reflect.TypeFor[time.Duration]()
 func (c *Config) apply(layer *Config, md toml.MetaData, source Source) error {
 	dst := reflect.ValueOf(c).Elem()
 	src := reflect.ValueOf(layer).Elem()
+	// A trigger map is one policy value. Explicit configuration replaces the
+	// built-in labels, so custom labels do not silently retain default triggers.
+	if source.Kind == SourceFile && md.IsDefined("webhook", "trigger_labels") {
+		c.Webhook.TriggerLabels = make(map[string]string)
+		for key := range c.sources {
+			if strings.HasPrefix(key, "webhook.trigger_labels.") {
+				delete(c.sources, key)
+			}
+		}
+	}
 	for _, key := range md.Keys() {
 		if md.Type(key...) == "Hash" {
 			if err := ensureTable(dst, key); err != nil {

@@ -63,6 +63,8 @@ var (
 // Generation advances on lifecycle changes and operator spec edits. Workers
 // retain their own generation to prevent stale transitions, including ABA.
 type Run struct {
+	// IngressKey makes automatic issue starts idempotent across completed runs.
+	IngressKey       string          `json:"-"`
 	ID               int64           `json:"id"`
 	Generation       int64           `json:"generation"`
 	Repo             string          `json:"repo"`
@@ -272,6 +274,10 @@ type Action struct {
 // and revision limits) belongs to the runner; this layer enforces CAS and the
 // latest-spec approval binding. Missing reads return ErrNotFound.
 type Store interface {
+	RecordDelivery(context.Context, Delivery) error
+	ObserveTriggerLabel(context.Context, string, int64, string) (int64, error)
+	PendingDeliveries(context.Context) ([]Delivery, error)
+	CompleteDelivery(context.Context, string) error
 	CreateRun(context.Context, Run) (Run, error)
 	GetRun(context.Context, int64) (Run, error)
 	ListRuns(context.Context, RunFilter) (RunPage, error)

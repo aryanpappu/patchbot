@@ -62,6 +62,8 @@ type Server struct {
 	maintenanceDone chan struct{}
 	unsubscribe     func()
 	shutdownOnce    sync.Once
+	ingressMu       sync.Mutex
+	ingressWake     chan struct{}
 }
 
 // ValidateAddress refuses public or wildcard binds without a UI credential.
@@ -157,6 +159,7 @@ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) 
 	s.models = llm.NewModelLister(s.registry, nil)
 	s.handler = s.routes()
 	s.http = &http.Server{Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, ErrorLog: log.New(io.Discard, "", 0)}
+	s.ingressWake = make(chan struct{}, 1)
 	maintenanceCtx, stop := context.WithCancel(context.Background())
 	s.stop = stop
 	interval := opts.Runner.HeartbeatInterval
@@ -172,13 +175,23 @@ func (s *Server) maintain(ctx context.Context) {
 	defer close(s.maintenanceDone)
 	ticker := time.NewTicker(s.opts.SyncInterval)
 	defer ticker.Stop()
+	if s.cfg.Webhook.Enabled {
+		_ = s.reconcileDeliveries(ctx)
+		_ = s.runner.SyncLabels(ctx)
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.ingressWake:
+			_ = s.reconcileDeliveries(ctx)
 		case <-ticker.C:
 			_ = s.runner.RecoverStale(ctx)
 			_ = s.runner.SyncWaiting(ctx)
+			if s.cfg.Webhook.Enabled {
+				_ = s.reconcileDeliveries(ctx)
+				_ = s.runner.SyncLabels(ctx)
+			}
 		}
 	}
 }
@@ -279,6 +292,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Cache-Control", "no-store")
+	if s.cfg.Webhook.Enabled && r.URL.Path == s.cfg.Webhook.Path {
+		s.webhook(w, r)
+		return
+	}
 	// Only data-free shells and their fixed assets are public. Browser navigation
 	// cannot attach a bearer header; every API and SSE request still requires it.
 	if s.authenticated && (r.Method != http.MethodGet || !web.PublicPath(r.URL.Path)) {

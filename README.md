@@ -302,6 +302,22 @@ printing them. Redaction preserves harness phases, statuses and JSON/TOML keys.
 Adapter request deadlines are retryable `unavailable` errors while caller
 cancellation or deadlines stop retries.
 
+## Optional GitHub webhooks
+
+Webhooks and label polling are off by default. To enable them, export a strong
+`PATCHBOT_WEBHOOK_SECRET`, set `[webhook] enabled = true`, and configure GitHub
+with that same secret, JSON payloads, and **Issues** / **Issue comments** events
+at `/hooks/github` (or your configured `webhook.path`). Keep the UI protected;
+the webhook path uses its HMAC signature instead of the UI bearer token.
+
+By default, `ai-refine`, `ai-fix`, and `ai-investigate` start their corresponding
+modes only in allowlisted repositories. Labels never approve coding. Comments
+still pass all existing approval/revision checks. Polling recovers missed hints;
+delivery receipts survive restart. Repeated hints and persistent labels do not
+restart completed work. An observed removal/change rearms a trigger; otherwise
+use an explicit retry. Multiple matching labels use lexical order. Requests
+larger than 1 MiB are refused.
+
 ## FAQ
 
 **Can it work on any repository?** Only allowlisted repositories. The model
@@ -314,7 +330,7 @@ real tests. `make smoke` uses fakes and costs nothing.
 harness results and PR. The agent's claims do not replace the harness or review.
 
 **Can I run it unattended or on a hostile repo?** This release is for one local
-operator. It has no container isolation, webhooks, durable worker queue, login or
+operator. It has no container isolation, durable worker queue, login or
 deployment system. Hostile repository code is outside its protection boundary.
 
 **What happens after a crash?** Expired heartbeats become interrupted failures

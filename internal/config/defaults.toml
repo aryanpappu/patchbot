@@ -81,3 +81,9 @@ kind = "anthropic"
 api_key_env = "ANTHROPIC_API_KEY"
 models = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"]
 default_model = "claude-sonnet-5-5"
+
+[webhook]
+enabled = false
+secret_env = "PATCHBOT_WEBHOOK_SECRET"
+path = "/hooks/github"
+trigger_labels = { "ai-refine" = "refine", "ai-fix" = "fix", "ai-investigate" = "investigate" }

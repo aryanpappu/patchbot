@@ -14347,3 +14347,111 @@ exec
 codex
 CI is still running the longer runner suite, with no further failures reported. I’m leaving the code unchanged while it finishes.
 
+ succeeded in 669721ms:
+go vet ./...
+golangci-lint run
+0 issues.
+go test -race ./...
+ok  	github.com/aryanpappu/patchbot/cmd/patchbot	(cached)
+ok  	github.com/aryanpappu/patchbot/internal/agent	(cached)
+ok  	github.com/aryanpappu/patchbot/internal/cli	8.558s
+ok  	github.com/aryanpappu/patchbot/internal/config	44.512s
+ok  	github.com/aryanpappu/patchbot/internal/execx	8.068s
+ok  	github.com/aryanpappu/patchbot/internal/github	(cached)
+ok  	github.com/aryanpappu/patchbot/internal/gitx	73.767s
+ok  	github.com/aryanpappu/patchbot/internal/llm	(cached)
+ok  	github.com/aryanpappu/patchbot/internal/llm/anthropic	(cached)
+ok  	github.com/aryanpappu/patchbot/internal/llm/fake	(cached)
+ok  	github.com/aryanpappu/patchbot/internal/llm/gemini	(cached)
+ok  	github.com/aryanpappu/patchbot/internal/llm/openai	(cached)
+ok  	github.com/aryanpappu/patchbot/internal/llm/providers	(cached)
+ok  	github.com/aryanpappu/patchbot/internal/logging	(cached)
+ok  	github.com/aryanpappu/patchbot/internal/runner	260.812s
+ok  	github.com/aryanpappu/patchbot/internal/secret	(cached)
+ok  	github.com/aryanpappu/patchbot/internal/server	44.977s
+ok  	github.com/aryanpappu/patchbot/internal/store	(cached)
+?   	github.com/aryanpappu/patchbot/internal/testhttp	[no test files]
+?   	github.com/aryanpappu/patchbot/internal/testpath	[no test files]
+ok  	github.com/aryanpappu/patchbot/internal/tools	(cached)
+?   	github.com/aryanpappu/patchbot/internal/version	[no test files]
+ok  	github.com/aryanpappu/patchbot/internal/web	(cached)
+ok  	github.com/aryanpappu/patchbot/internal/web/cmd/vendor-vue	(cached)
+ok  	github.com/aryanpappu/patchbot/internal/workspace	(cached)
+?   	github.com/aryanpappu/patchbot/internal/workspace/wstest	[no test files]
+mkdir -p -m 700 bin
+chmod 700 bin
+CGO_ENABLED=0 go build -trimpath -ldflags '-s -w -X github.com/aryanpappu/patchbot/internal/version.Version=26e319b-dirty -X github.com/aryanpappu/patchbot/internal/version.Commit=26e319b -X github.com/aryanpappu/patchbot/internal/version.Date=2026-11-13T15:25:06Z' -o bin/patchbot ./cmd/patchbot
+go: writing stat cache: open /Users/pappumishra/go/pkg/mod/cache/download/github.com/aryanpappu/patchbot/@v/v0.0.0-20261113142446-26e319b67b94.info317010196.tmp: operation not permitted
+chmod 700 bin/patchbot
+
+codex
+All race tests passed. The build step is now reporting a permission error while trying to write Go module metadata to the shared cache. I’ll use a writable cache under `/private/tmp` to finish CI.
+
+exec
+/bin/zsh -lc 'du -sh /Users/pappumishra/go/pkg/mod/cache/download; git diff --check' in /Users/pappumishra/Documents/selfproject/patchbot-m22-webhooks
+ succeeded in 185ms:
+399M	/Users/pappumishra/go/pkg/mod/cache/download
+
+codex
+The build succeeded despite the cache warning, and `make ci` is green. I’ll record the validation result, then stage and commit with your exact message.
+
+exec
+/bin/zsh -lc "python3 - <<'PY'
+from pathlib import Path
+p=Path('docs/M22-REPORT.md');s=p.read_text().replace('Validation: "'`make ci` (format, vet, lint, race tests and build); see commit result.'"', '''Validation passed: "'`GOCACHE=/private/tmp/patchbot-m22-gocache
+GOLANGCI_LINT_CACHE=/private/tmp/patchbot-m22-lintcache GOMAXPROCS=2
+GOFLAGS=-p=1 make ci` (format, vet, lint, all race tests and CGO-free build).
+The concurrency settings avoid Xcode/git fixture timeouts in the restricted
+macOS environment. The build completed despite a nonfatal warning about writing
+module-version metadata to the shared module cache.'"''');p.write_text(s)
+PY
+git diff --check
+git add -A" in /Users/pappumishra/Documents/selfproject/patchbot-m22-webhooks
+ exited 128 in 67ms:
+fatal: Unable to create '/Users/pappumishra/Documents/selfproject/patchbot/.git/worktrees/patchbot-m22-webhooks/index.lock': Operation not permitted
+
+codex
+Staging failed because the sandbox cannot write this worktree’s Git index, which lives outside the allowed directory. The implementation and CI are complete, but I can’t create the commit under the current filesystem restrictions.
+
+exec
+/bin/zsh -lc 'git status --short --untracked-files=normal; git diff --check; git diff --cached --stat' in /Users/pappumishra/Documents/selfproject/patchbot-m22-webhooks
+ succeeded in 66ms:
+ M README.md
+ M docs/ARCHITECTURE.md
+ M docs/DECISIONS.md
+ M internal/cli/doctor_test.go
+ M internal/config/config.go
+ M internal/config/defaults.toml
+ M internal/config/load.go
+ M internal/config/validate.go
+ M internal/github/operations.go
+ M internal/runner/runner.go
+ M internal/runner/runner_test.go
+ M internal/server/server.go
+ M internal/store/inspect_test.go
+ M internal/store/records_test.go
+ M internal/store/sqlite.go
+ M internal/store/store.go
+ M patchbot.example.toml
+?? docs/M22-REPORT.md
+?? docs/tasks/M22.md
+?? internal/config/webhook_test.go
+?? internal/runner/ingress.go
+?? internal/runner/ingress_test.go
+?? internal/server/webhook.go
+?? internal/server/webhook_test.go
+?? internal/store/migrations/0003_reserved_m20.sql
+?? internal/store/migrations/0004_reserved_m21.sql
+?? internal/store/migrations/0005_webhooks.sql
+?? internal/store/webhooks.go
+?? internal/store/webhooks_test.go
+
+codex
+Implemented M22, including reserved migrations 0003/0004 and webhook migration 0005. `make ci` passed with reduced concurrency.
+
+Commit blocked: the sandbox denied `git add -A` access to the worktree’s Git index outside this directory. Changes remain unstaged; no commit or push was made.
+tokens used
+146,490
+Implemented M22, including reserved migrations 0003/0004 and webhook migration 0005. `make ci` passed with reduced concurrency.
+
+Commit blocked: the sandbox denied `git add -A` access to the worktree’s Git index outside this directory. Changes remain unstaged; no commit or push was made.
