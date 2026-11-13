@@ -37,6 +37,19 @@ poll_interval = "60s"               # serve polls only waiting runs
 ttl = "336h"                       # waiting/approval lifetime; at most 14 days
 max_revisions = 5                    # may tighten; at most 5
 
+# Opt-in sequential reviewer: read-only tools, structured verdict bound to the
+# approved spec hash and the exact diff hash, after harness tests and before
+# publish. Approval freezes these values on the run. A review that times out,
+# refuses, is malformed, runs out of budget or still requests changes after
+# max_repairs never yields an ordinary PR. It never replaces approval or tests.
+[review]
+enabled = false                     # off by default
+model = ""                          # empty uses the run's refine model
+max_repairs = 1                      # 0 or 1 coder repair cycles after request_changes
+max_turns = 15                       # turns per review round
+reserve_fraction = 0.15              # share of tokens, cost and time kept from coding
+salvage_draft = false                # true: unreviewed draft PR instead of failing
+
 [log]
 level = "info"                      # debug, info, warn, error
 format = "text"                     # text or json

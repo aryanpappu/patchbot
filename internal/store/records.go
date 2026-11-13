@@ -30,7 +30,7 @@ func (s *SQLite) SaveSpec(ctx context.Context, spec Spec) (Spec, error) {
 		if err := tx.QueryRowContext(ctx, `SELECT status,phase FROM runs WHERE id=?`, spec.RunID).Scan(&status, &phase); err != nil {
 			return err
 		}
-		if !status.IsActive() || (status == StatusRunning && (phase == PhaseCode || phase == PhaseVerify || phase == PhasePublish)) {
+		if !status.IsActive() || (status == StatusRunning && (phase == PhaseCode || phase == PhaseVerify || phase == PhaseReview || phase == PhasePublish)) {
 			return ErrConflict
 		}
 		var next int64

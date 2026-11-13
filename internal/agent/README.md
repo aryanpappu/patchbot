@@ -45,6 +45,14 @@ verification (or explicitly unconfigured tests), and `NoChanges` means no PR.
 Cancellation, refusal, auth, policy, recorder, and harness failures cannot authorize
 publication. A salvageable provider error remains non-nil along with its result.
 
+`Loop.Review` is a read-only stage (refine tools plus `submit_review`) over the
+approved spec, a bounded diff and harness evidence. It forks only the session's
+accounting and absorbs the charges back. Provider failures, refusals, limits and
+malformed verdicts return `Incomplete`, never an approval. `CodeRequest.Review`
+is called for every publishable result; a non-empty return starts at most one
+repair cycle in the coder's conversation (untrusted findings, fresh turn
+allowance, one more harness attempt). A hook error clears `CanPublish`.
+
 The runner owns status transitions, questions/comments, baseline testing, final
 diff policy/integrity checks, and publication. These engines never commit or push.
 Pass a shared `Session` across refine/revisions/code to carry the run's token and

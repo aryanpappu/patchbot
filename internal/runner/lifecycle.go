@@ -153,7 +153,7 @@ func (r *Runner) approveDecision(ctx context.Context, id int64, actor, channel s
 	if strings.TrimSpace(actor) == "" {
 		return errors.New("approver name is required")
 	}
-	return r.db.DecideRun(ctx, run.Status, store.StatusApproved, store.Approval{RunID: id, SpecVersion: spec.Version, SpecHash: spec.Hash, Decision: "approve", Actor: r.redactor.Redact(actor), Channel: channel, CreatedAt: r.now()}, run.Generation, phase)
+	return r.db.DecideRun(ctx, run.Status, store.StatusApproved, store.Approval{RunID: id, SpecVersion: spec.Version, SpecHash: spec.Hash, Decision: "approve", Actor: r.redactor.Redact(actor), Channel: channel, CreatedAt: r.now(), Review: r.freezeReview(run)}, run.Generation, phase)
 }
 
 // Revise records notes, invalidates the previous decision and reruns refinement.

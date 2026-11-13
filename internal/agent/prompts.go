@@ -20,6 +20,9 @@ var codePrompt string
 //go:embed prompts/investigate.txt
 var investigatePrompt string
 
+//go:embed prompts/review.txt
+var reviewPrompt string
+
 // IssueHash binds an approval to the exact title and body, including whitespace.
 // JSON array encoding makes the boundary between the two fields unambiguous.
 func IssueHash(title, body string) string {

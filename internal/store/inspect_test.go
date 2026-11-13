@@ -32,7 +32,7 @@ func TestCheckMigrationsReadOnly(t *testing.T) {
 			if (err != nil) != (tc.query != "") {
 				t.Fatalf("count %d, error %v", n, err)
 			}
-			if tc.query == "" && n != 2 {
+			if tc.query == "" && n != 4 {
 				t.Fatalf("count %d", n)
 			}
 		})

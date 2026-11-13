@@ -43,6 +43,8 @@ type fixture struct {
 	posts                                int
 	collaborators                        map[string]bool
 	offset                               time.Duration
+	// onBranch runs while publication reads the default branch, after review.
+	onBranch func()
 }
 
 func git(t *testing.T, dir string, args ...string) string {
@@ -200,6 +202,9 @@ func (f *fixture) serveHTTP(w http.ResponseWriter, req *http.Request) {
 		reply(201, pr)
 	case strings.HasPrefix(path, "/branches/"):
 		name := strings.TrimPrefix(path, "/branches/")
+		if name == "main" && f.onBranch != nil {
+			f.onBranch()
+		}
 		if name == "main" {
 			branch := github.Branch{Name: "main"}
 			branch.Commit.SHA = f.base

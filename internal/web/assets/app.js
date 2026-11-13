@@ -405,7 +405,7 @@
       function detailView() {
         const d = s.detail, run = d.run;
         const disabled = s.busy || !!s.editor;
-        const phases = ["preflight", "refine", "clone", "baseline", "code", "verify", "publish"];
+        const phases = ["preflight", "refine", "clone", "baseline", "code", "verify", "review", "publish"];
         return [h("h1", `${run.repo} #${run.issue_number} · run ${run.id}`), h("p", run.issue_title),
           h("div", { class: "actions" }, [chip(run.status), run.dry_run ? h("span", "Dry run") : null, run.prurl ? link(run.prurl, "Open pull request") : null]),
           h("p", `${run.mode} · ${run.provider} · refine: ${run.refine_model} · code: ${run.code_model}`),
@@ -440,6 +440,11 @@
           panel("Diff", s.artifacts.filter(a => a.kind === "diff").map(a => block(a.content)).concat(s.artifacts.some(a => a.kind === "diff") ? [] : [h("p", "No diff recorded yet.")])),
           panel("Test output", [h("p", `Harness: ${run.tests_status || "not recorded"} · ${run.test_attempts} attempts`),
             ...s.artifacts.filter(a => ["test_output", "baseline"].includes(a.kind)).map(a => h("details", [h("summary", `${human(a.kind)} · attempt ${a.attempt}`), block(a.content)]))]),
+          (d.reviews && d.reviews.length) || run.phase === "review" ? panel("Independent review", [
+            h("p", "Advisory reviewer verdicts, each bound to the approved spec hash and the reviewed diff hash. A review never replaces approval or harness tests."),
+            ...(d.reviews || []).map(r => h("p", [chip(r.verdict), ` round ${r.round} · ${r.provider} / ${r.model}${r.reason ? " · " + r.reason : ""} · diff ${String(r.diff_hash).slice(0, 12)}`])),
+            ...s.artifacts.filter(a => a.kind === "review").map(a => h("details", [h("summary", `Review round ${a.attempt}`), block(a.content)]))
+          ]) : null,
           panel("Pull request preview", s.artifacts.filter(a => ["pr_title", "pr_body"].includes(a.kind)).map(a => h("div", [h("h3", human(a.kind)), block(a.content)]))),
           panel("Live log", [h("p", { role: "status" }, `${s.streamStatus} · last event ${lastID} · showing the latest 1,000 events`),
             h("ol", { class: "events", tabindex: 0, "aria-label": "Run event log" }, s.events.map(event => h("li", { key: event.id }, [h("strong", `${event.id} · ${event.type}`), block(event.output)])))])

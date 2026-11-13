@@ -21,6 +21,7 @@ type Submission struct {
 	Criteria []CriterionResult `json:"criteria,omitempty"`
 	Spec     *SpecDraft        `json:"spec,omitempty"`
 	Report   string            `json:"report_md,omitempty"`
+	Review   *ReviewVerdict    `json:"review,omitempty"`
 }
 
 // CriterionResult is the model's assessment of one approved acceptance criterion.

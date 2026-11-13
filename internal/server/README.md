@@ -69,7 +69,8 @@ The included Vue asset is checked against the shared SHA-384 pin by an offline t
   Every action response contains `run`. UI actions use `approval.local_actor`
   and channel `ui`; synced GitHub decisions retain their GitHub provenance.
 - `GET /api/runs/{id}/artifacts/{name}`: `diff`, `baseline`, `test_output`,
-  `pr_title`, `pr_body`; always text/plain with nosniff. `attempt` defaults
+  `review` (attempt = review round), `pr_title`, `pr_body`; always text/plain
+  with nosniff. `attempt` defaults
   to zero for stored artifacts. Harness verification output is read from
   already-redacted steps, with attempts numbered from one; omitting attempt
   selects the latest verification output. Internal accounting is not exposed.

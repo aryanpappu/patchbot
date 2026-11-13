@@ -47,6 +47,9 @@ artifacts, and perform no push or GitHub write. The CLI prints those artifacts.
 Publication rechecks issue/spec integrity, validates changed paths through the
 workspace policy, checks for existing branches/PRs, and uses gitx's guarded
 commit/push. Missing test commands, failed tests or salvage require draft PRs.
+With the reviewer selection frozen at approval, publication also requires the
+last review round to approve the exact diff (hash recomputed before commit, commit
+tree compared after) or, when `salvage_draft` is set, opens a marked draft.
 Immediately before push and again before PR creation, publication reloads the
 approval and persisted status/generation and checks approval TTL and spec/issue
 integrity. Cancellation and expired approvals stop the next external write.

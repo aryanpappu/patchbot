@@ -264,6 +264,22 @@ func (a *App) printArtifacts(ctx context.Context, db store.Store, run store.Run,
 			return errors.New("could not write run artifact")
 		}
 	}
+	reviews, err := db.ListReviews(context.WithoutCancel(ctx), run.ID)
+	if err != nil {
+		return err
+	}
+	for _, review := range reviews {
+		artifact, err := db.GetArtifact(context.WithoutCancel(ctx), run.ID, "review", review.Round)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(a.Stdout, "\nreview %d:\n%s\n", review.Round, redactor.Redact(artifact.Content)); err != nil {
+			return errors.New("could not write run artifact")
+		}
+	}
 	return nil
 }
 

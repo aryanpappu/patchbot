@@ -156,22 +156,25 @@ const runColumns = `id,repo,issue_number,issue_title,mode,retry_of,trigger,
 provider,refine_model,code_model,dry_run,status,phase,outcome,base_sha,head_sha,branch,
 pr_number,pr_url,pr_draft,summary,tests_status,test_attempts,turns,input_tokens,
 output_tokens,cache_read_tokens,cache_write_tokens,cost_micros,limits_json,
-error_kind,error_message,created_at,updated_at,started_at,finished_at,heartbeat_at,waiting_since,generation`
+error_kind,error_message,created_at,updated_at,started_at,finished_at,heartbeat_at,waiting_since,generation,review_json`
 
 type scanner interface{ Scan(...any) error }
 
 func scanRun(row scanner) (Run, error) {
 	var r Run
 	var created, updated int64
-	var limits string
+	var limits, review string
 	var started, finished, heartbeat, waiting sql.NullInt64
 	err := row.Scan(&r.ID, &r.Repo, &r.IssueNumber, &r.IssueTitle, &r.Mode, &r.RetryOf, &r.Trigger,
 		&r.Provider, &r.RefineModel, &r.CodeModel, &r.DryRun, &r.Status, &r.Phase, &r.Outcome,
 		&r.BaseSHA, &r.HeadSHA, &r.Branch, &r.PRNumber, &r.PRURL, &r.PRDraft, &r.Summary,
 		&r.TestsStatus, &r.TestAttempts, &r.Turns, &r.InputTokens, &r.OutputTokens,
 		&r.CacheReadTokens, &r.CacheWriteTokens, &r.CostMicros, &limits,
-		&r.ErrorKind, &r.ErrorMessage, &created, &updated, &started, &finished, &heartbeat, &waiting, &r.Generation)
+		&r.ErrorKind, &r.ErrorMessage, &created, &updated, &started, &finished, &heartbeat, &waiting, &r.Generation, &review)
 	r.LimitsJSON = json.RawMessage(limits)
+	if review != "" {
+		r.ReviewJSON = json.RawMessage(review)
+	}
 	r.CreatedAt, r.UpdatedAt = time.UnixMilli(created).UTC(), time.UnixMilli(updated).UTC()
 	r.StartedAt, r.FinishedAt = optionalTime(started), optionalTime(finished)
 	r.HeartbeatAt, r.WaitingSince = optionalTime(heartbeat), optionalTime(waiting)
@@ -218,7 +221,7 @@ func (s *SQLite) CreateRun(ctx context.Context, r Run) (Run, error) {
 		r.TestsStatus, r.TestAttempts, r.Turns, r.InputTokens, r.OutputTokens,
 		r.CacheReadTokens, r.CacheWriteTokens, r.CostMicros, jsonText(r.LimitsJSON),
 		r.ErrorKind, r.ErrorMessage, r.CreatedAt.UnixMilli(), r.UpdatedAt.UnixMilli(),
-		optionalMillis(r.StartedAt), optionalMillis(r.FinishedAt), optionalMillis(r.HeartbeatAt), optionalMillis(r.WaitingSince), int64(0)}
+		optionalMillis(r.StartedAt), optionalMillis(r.FinishedAt), optionalMillis(r.HeartbeatAt), optionalMillis(r.WaitingSince), int64(0), string(r.ReviewJSON)}
 	query := "INSERT INTO runs(" + strings.TrimPrefix(runColumns, "id,") + ") VALUES(" + placeholders(len(args)) + ") RETURNING " + runColumns
 	return scanRun(s.db.QueryRowContext(ctx, query, args...))
 }

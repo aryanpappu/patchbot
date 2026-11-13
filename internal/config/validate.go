@@ -129,6 +129,11 @@ func (c *Config) validateLimits(v *validator) {
 	} {
 		v.check(f.value > 0, "%s: must be greater than 0", f.key)
 	}
+	rv := c.Review
+	v.check(rv.MaxRepairs == 0 || rv.MaxRepairs == 1, "review.max_repairs: must be 0 or 1")
+	v.check(rv.MaxTurns > 0, "review.max_turns: must be greater than 0")
+	v.check(rv.ReserveFraction >= 0 && rv.ReserveFraction <= 0.5, "review.reserve_fraction: must be between 0 and 0.5")
+	v.check(rv.Model == "" || validModelID(rv.Model), "review.model: %q is not a valid model ID", rv.Model)
 	v.check(l.CmdOutputBytes <= l.CmdStoreBytes || l.CmdStoreBytes <= 0,
 		"limits.cmd_output_bytes (%d) is above limits.cmd_store_bytes (%d)", l.CmdOutputBytes, l.CmdStoreBytes)
 }
