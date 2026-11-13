@@ -1,0 +1,2122 @@
+Reading additional input from stdin...
+2026-11-13T17:08:14.358993Z ERROR codex_models_manager::manager: failed to refresh available models: request timed out
+2026-11-13T17:08:14.383808Z ERROR codex_models_manager::manager: failed to refresh available models: request timed out
+OpenAI Codex v0.166.0
+--------
+workdir: /Users/pappumishra/Documents/selfproject/patchbot-auth-fixes
+model: gpt-6.1-sol
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: none
+reasoning summaries: none
+session id: 01a1d5e1-861b-77d1-9eca-9e656a2c73ce
+--------
+user
+Security review of branch auth-fixes vs development (git diff development...HEAD). Read docs/planning/auth/DECISION.md. Check: (1) every git remote call now uses header-only auth; token never in argv/URL/.git/config/errors; testHTTPSRemote and GIT_SSL_NO_VERIFY cannot be reached from production config; (2) shared-identity approval in internal/github/commands.go EligibleCommand, internal/runner/records.go postComment, internal/runner/sync.go: can patchbot's own comment (including model-written spec text) ever count as an approval? Races between posting and recording the ID? Marker evasion (case, entities, zero-width chars)? Fail-closed on errors? Report only real findings with file:line, severity, failure scenario and fix. Be concise.
+codex
+I’ll read the decision doc and branch diff, then trace the Git authentication and approval paths for concrete failures.
+exec
+/bin/zsh -lc 'git diff --stat development...HEAD; cat docs/planning/auth/DECISION.md; rg --files -g AGENTS.md' in /Users/pappumishra/Documents/selfproject/patchbot-auth-fixes
+ exited 1 in 98ms:
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-YFRxirM3' (errno=Operation not permitted)
+ README.md                                          |   2 +
+ SECURITY.md                                        |  13 +-
+ docs/ARCHITECTURE.md                               |   6 +
+ docs/DECISIONS.md                                  |   2 +
+ docs/planning/auth/DECISION.md                     |   9 +
+ internal/github/README.md                          |  12 +-
+ internal/github/commands.go                        |  29 ++-
+ internal/github/commands_test.go                   |  74 ++++++-
+ internal/gitx/auth_remote_test.go                  | 215 +++++++++++++++++++++
+ internal/gitx/command.go                           |  20 +-
+ internal/gitx/gitx.go                              |  21 +-
+ internal/gitx/gitx_test.go                         |  14 +-
+ internal/gitx/publish.go                           |  10 +-
+ internal/runner/README.md                          |   3 +
+ internal/runner/lifecycle.go                       |   2 +-
+ internal/runner/phases.go                          |   6 +-
+ internal/runner/publish.go                         |   2 +-
+ internal/runner/records.go                         |  29 ++-
+ internal/runner/runner_test.go                     |  13 +-
+ internal/runner/shared_identity_test.go            | 181 +++++++++++++++++
+ internal/runner/sync.go                            |  16 +-
+ internal/store/migrations/0007_posted_comments.sql |  12 ++
+ internal/store/posted_comments_test.go             |  32 +++
+ internal/store/records.go                          |  25 +++
+ internal/store/store.go                            |  15 ++
+ 25 files changed, 722 insertions(+), 41 deletions(-)
+# GitHub auth decision (2026-11-13, Claude + Codex)
+
+## Decision
+1. **Now (pilot): one fine-grained PAT, "only selected repositories"** (patchbot-demo, pappumishra),
+   contents/issues/pull_requests write + metadata read, short expiry (30-90 days), env-only.
+   Not account-wide (classic `repo` PAT = every repo you own on a shared host). Not one PAT per repo
+   (N manual secrets, needs per-repo token routing that does not exist, secrets would move into SQLite).
+2. **Next (before M24 "add repo from dashboard" is enabled broadly): GitHub App "patchbot".**
+   Installed only on chosen repos; patchbot mints 1-hour installation tokens per run, narrowed to ONE repo
+   ID and only contents/issues/pull_requests. Bot identity `patchbot[bot]` separates bot comments from the
+   owner's `/approve`. App private key = protected file readable only by user patchbot, never in DB,
+   backups, workspaces or containers. PAT mode stays explicit for local/dev; no silent fallback.
+3. Repo policy (commands, protected paths, image) goes in SQLite with M24; **credentials never do**.
+   The dashboard never accepts a token.
+
+## Found during review — must fix before the pilot on a PRIVATE repo (verified in code)
+- `gitx.Push` runs `ls-remote` unauthenticated (internal/gitx/publish.go:71 and :100, `complete(ctx, false, ...)`),
+  and `CheckoutSHA` fetches unauthenticated (internal/gitx/gitx.go:276). pappumishra is private, so push/
+  re-clone would fail with an auth error. Offline smoke used a local fake remote, so tests never caught it.
+  Fix: use the same header-only auth (GIT_CONFIG_*) for these network calls, with tests against an
+  auth-requiring fake remote.
+  **Status: fixed (branch auth-fixes).** clone, fetch (CheckoutSHA), both ls-remote calls and push all
+  use the header-only extraheader; `gitx.command` now refuses a remote subcommand without it and refuses
+  credentials for local ones. Tested against an HTTPS `git http-backend` remote that requires the header
+  (succeeds with the token, fails without; token absent from argv, .git/config and errors).
+- With a PAT owned by `aryanpappu`, GitHub comments by `aryanpappu` are the bot's own identity, so
+  `/approve` and `/revise` comments are ignored (sync.go → EligibleCommand). **Approve from the dashboard**
+  for the pilot. The App (decision 2) fixes this properly.
+  **Status: fixed for the PAT pilot (branch auth-fixes), "shared identity" rule.** A comment by the token
+  owner counts only if that login is a configured approver and live collaborator, the comment is unedited
+  and in the current waiting window, has no `<!-- patchbot` marker, and its ID is not in `posted_comments`
+  (migration 0007). Every comment patchbot posts now carries a marker and its ID is recorded right after
+  posting. Other authors keep the old rules. The App remains the target identity separation.
+- The token is loaded once per run and reused for push; fine for a PAT, must be refreshed per network call
+  with an App (1-hour expiry).
+
+## App milestone acceptance criteria (from Codex)
+Concurrent cross-repo isolation; token expiry between clone/push/PR; revocation and key rotation;
+correct bot identity + owner approval; private-repo publication; rate-limit backoff; M24 refuses to save
+a repo the App cannot reach with the needed permissions; zero secrets in logs/artifacts/DB/container env;
+`make ci` + disposable-repo end-to-end drill.
+
+exec
+/bin/zsh -lc "git diff development...HEAD -- internal/gitx internal/github/commands.go internal/runner/records.go internal/runner/sync.go internal/store/records.go internal/store/store.go; rg -n 'exec.Command|git |testHTTPSRemote|GIT_SSL_NO_VERIFY|postComment|EligibleCommand' internal/gitx internal/runner internal/github" in /Users/pappumishra/Documents/selfproject/patchbot-auth-fixes
+ succeeded in 2ms:
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-fmz2jbmU' (errno=Operation not permitted)
+diff --git a/internal/github/commands.go b/internal/github/commands.go
+index 3bdbb54..c185061 100644
+--- a/internal/github/commands.go
++++ b/internal/github/commands.go
+@@ -1,6 +1,7 @@
+ package github
+ 
+ import (
++	"regexp"
+ 	"strings"
+ 	"unicode"
+ )
+@@ -56,13 +57,35 @@ func ParseCommand(comment Comment) (Command, bool) {
+ 	return Command{Kind: kind, Notes: notes}, true
+ }
+ 
++// markerPattern matches any patchbot HTML-comment marker, tolerating case and
++// whitespace variations, so a near-miss spelling still fails closed.
++var markerPattern = regexp.MustCompile(`(?i)<!--\s*patchbot`)
++
++// HasPatchbotMarker reports whether a body carries a hidden patchbot marker.
++// Every comment patchbot posts carries one (see Marker).
++func HasPatchbotMarker(body string) bool { return markerPattern.MatchString(body) }
++
++// Marker is the hidden marker appended to a patchbot comment of the given kind.
++func Marker(kind string) string { return "<!-- patchbot:" + kind + " -->" }
++
+ // EligibleCommand checks identity, edit status and live collaborator membership.
+ // The runner supplies its own login explicitly; an unknown bot identity fails
+ // closed. The callback can adapt Client.IsCollaborator and must return false on
+ // error. Run status, spec integrity and comment ordering belong to the runner.
+-func EligibleCommand(comment Comment, approvers []string, isCollaborator func(string) bool, botLogin string) bool {
+-	if botLogin == "" || comment.Author == "" || strings.EqualFold(comment.Author, botLogin) ||
+-		comment.CreatedAt.IsZero() || !comment.UpdatedAt.Equal(comment.CreatedAt) || isCollaborator == nil {
++//
++// Shared identity: when the token owner is also a configured approver (a
++// single-user PAT), a comment authored by botLogin is eligible only if it is
++// not one patchbot posted. postedByPatchbot must report recorded patchbot
++// comment IDs and return true on error. Such a comment must also carry no
++// patchbot marker, be unedited and pass the approver and collaborator checks.
++// Every other combination fails closed. Other authors keep the plain rules.
++func EligibleCommand(comment Comment, approvers []string, isCollaborator func(string) bool, botLogin string, postedByPatchbot func(int64) bool) bool {
++	if botLogin == "" || comment.Author == "" || comment.CreatedAt.IsZero() ||
++		!comment.UpdatedAt.Equal(comment.CreatedAt) || isCollaborator == nil {
++		return false
++	}
++	if strings.EqualFold(comment.Author, botLogin) &&
++		(comment.ID <= 0 || HasPatchbotMarker(comment.Body) || postedByPatchbot == nil || postedByPatchbot(comment.ID)) {
+ 		return false
+ 	}
+ 	for _, approver := range approvers {
+diff --git a/internal/gitx/auth_remote_test.go b/internal/gitx/auth_remote_test.go
+new file mode 100644
+index 0000000..14e851b
+--- /dev/null
++++ b/internal/gitx/auth_remote_test.go
+@@ -0,0 +1,215 @@
++package gitx
++
++import (
++	"context"
++	"encoding/base64"
++	"net/http"
++	"net/http/cgi" // #nosec G504 -- test-only git http-backend; Go 1.27 is not affected by httpoxy.
++	"net/http/httptest"
++	"os/exec"
++	"path/filepath"
++	"strings"
++	"sync"
++	"testing"
++)
++
++// authRemote is a smart-HTTP git server (git http-backend over CGI) that
++// refuses every request without the exact x-access-token Basic header, like a
++// private GitHub repository. It records whether the token ever reached the
++// request line or a non-Authorization header.
++type authRemote struct {
++	url    string
++	mu     sync.Mutex
++	denied int
++	leaked bool
++}
++
++func newAuthRemote(t *testing.T, f fixture, token string) *authRemote {
++	t.Helper()
++	gitPath, err := exec.LookPath("git")
++	if err != nil {
++		t.Skip("git is not installed")
++	}
++	want := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
++	backend := &cgi.Handler{
++		Path: gitPath,
++		Args: []string{"http-backend"},
++		Dir:  filepath.Dir(f.bare),
++		Env: []string{
++			"GIT_PROJECT_ROOT=" + filepath.Dir(f.bare), "GIT_HTTP_EXPORT_ALL=1",
++			"HOME=" + f.home, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
++			"GIT_CONFIG_COUNT=2",
++			"GIT_CONFIG_KEY_0=http.receivepack", "GIT_CONFIG_VALUE_0=true",
++			"GIT_CONFIG_KEY_1=uploadpack.allowAnySHA1InWant", "GIT_CONFIG_VALUE_1=true",
++		},
++		InheritEnv: []string{"PATH"},
++	}
++	remote := &authRemote{}
++	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
++		remote.mu.Lock()
++		if strings.Contains(req.URL.String(), token) {
++			remote.leaked = true
++		}
++		for name, values := range req.Header {
++			if name != "Authorization" && strings.Contains(strings.Join(values, " "), token) {
++				remote.leaked = true
++			}
++		}
++		scheme, credential, _ := strings.Cut(req.Header.Get("Authorization"), " ")
++		if !strings.EqualFold(scheme, "basic") || credential != want {
++			remote.denied++
++			remote.mu.Unlock()
++			w.Header().Set("WWW-Authenticate", `Basic realm="private"`)
++			http.Error(w, "authentication required", http.StatusUnauthorized)
++			return
++		}
++		remote.mu.Unlock()
++		backend.ServeHTTP(w, req)
++	}))
++	t.Cleanup(server.Close)
++	remote.url = server.URL + "/" + filepath.Base(f.bare)
++	return remote
++}
++
++func (a *authRemote) clone(t *testing.T, token string, depth int) (*Repo, error) {
++	t.Helper()
++	r, err := Clone(context.Background(), CloneOptions{Dir: filepath.Join(t.TempDir(), "checkout"), Host: "github.com",
++		Branch: "main", Depth: depth, Token: token, testHTTPSRemote: a.url})
++	if err == nil {
++		t.Cleanup(func() { _ = r.Close() })
++	}
++	return r, err
++}
++
++func TestPrivateRemoteRequiresHeaderOnEveryNetworkCall(t *testing.T) {
++	t.Parallel()
++	ctx := context.Background()
++	f := gitFixture(t)
++	remote := newAuthRemote(t, f, fakeToken)
++	basic := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + fakeToken))
++
++	// Without a token, or with a wrong one, the private remote refuses clone.
++	for _, token := range []string{"", "ghp_wrong_credential_0000000000000000"} {
++		if _, err := remote.clone(t, token, 1); err == nil {
++			t.Fatalf("clone succeeded with token %q against a private remote", token)
++		}
++	}
++
++	r, err := remote.clone(t, fakeToken, 1)
++	if err != nil {
++		t.Fatalf("authenticated clone: %v", err)
++	}
++	var argv []string
++	r.observeCommand = func(args []string) { argv = append(argv, strings.Join(args, "\x00")) }
++
++	// Shallow history lacks the first commit, so CheckoutSHA must re-fetch it.
++	if err := r.CheckoutSHA(ctx, f.first); err != nil {
++		t.Fatalf("authenticated CheckoutSHA re-fetch: %v", err)
++	}
++	if err := r.CreateBranch(ctx, "patchbot/issue-7"); err != nil {
++		t.Fatal(err)
++	}
++	write(t, filepath.Join(r.Dir(), "private.txt"), "private change\n")
++	if _, err := r.CommitAll(ctx, "private change", Author{}); err != nil {
++		t.Fatal(err)
++	}
++	if exists, err := r.RemoteBranchExists(ctx, "patchbot/issue-7"); err != nil || exists {
++		t.Fatalf("branch exists before push = %v, %v", exists, err)
++	}
++	if err := r.Push(ctx, "patchbot/issue-7"); err != nil {
++		t.Fatalf("authenticated push: %v", err)
++	}
++	if exists, err := r.RemoteBranchExists(ctx, "patchbot/issue-7"); err != nil || !exists {
++		t.Fatalf("branch exists after push = %v, %v", exists, err)
++	}
++	sha, err := r.HeadSHA(ctx)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := strings.TrimSpace(f.git(t, f.bare, "rev-parse", "refs/heads/patchbot/issue-7")); got != sha {
++		t.Fatalf("remote branch = %q, want %q", got, sha)
++	}
++	for _, args := range argv {
++		if strings.Contains(args, fakeToken) || strings.Contains(args, basic) {
++			t.Fatal("credential leaked into argv")
++		}
++	}
++	config := read(t, filepath.Join(r.Dir(), ".git", "config"))
++	if strings.Contains(config, fakeToken) || strings.Contains(config, basic) ||
++		strings.Contains(strings.ToLower(config), "extraheader") || strings.Contains(config, "AUTHORIZATION") {
++		t.Fatalf("credential persisted: %q", config)
++	}
++
++	// The same operations without the credential fail against the private
++	// remote: drop the token from a second authenticated checkout.
++	unauth, err := remote.clone(t, fakeToken, 1)
++	if err != nil {
++		t.Fatal(err)
++	}
++	unauth.token = ""
++	remote.mu.Lock()
++	deniedBefore := remote.denied
++	remote.mu.Unlock()
++	if err := unauth.CheckoutSHA(ctx, f.first); err == nil {
++		t.Fatal("CheckoutSHA re-fetch succeeded without a credential")
++	}
++	if _, err := unauth.RemoteBranchExists(ctx, "patchbot/issue-7"); err == nil {
++		t.Fatal("ls-remote succeeded without a credential")
++	}
++	if err := unauth.CreateBranch(ctx, "patchbot/issue-8"); err != nil {
++		t.Fatal(err)
++	}
++	write(t, filepath.Join(unauth.Dir(), "other.txt"), "other\n")
++	if _, err := unauth.CommitAll(ctx, "other", Author{}); err != nil {
++		t.Fatal(err)
++	}
++	err = unauth.Push(ctx, "patchbot/issue-8")
++	if err == nil {
++		t.Fatal("push succeeded without a credential")
++	}
++	if strings.Contains(err.Error(), fakeToken) || strings.Contains(err.Error(), basic) {
++		t.Fatalf("unsafe error: %v", err)
++	}
++	remote.mu.Lock()
++	defer remote.mu.Unlock()
++	if remote.denied <= deniedBefore {
++		t.Fatal("unauthenticated calls never reached the private remote")
++	}
++	if remote.leaked {
++		t.Fatal("credential appeared in a URL or non-Authorization header")
++	}
++	if _, err := Clone(ctx, CloneOptions{Dir: filepath.Join(t.TempDir(), "bad"), Branch: "main", Token: fakeToken,
++		testHTTPSRemote: strings.Replace(remote.url, "https://", "https://user:"+fakeToken+"@", 1)}); err == nil ||
++		strings.Contains(err.Error(), fakeToken) {
++		t.Fatalf("credential-bearing test URL accepted or leaked: %v", err)
++	}
++}
++
++func TestPushLsRemoteFailureWithoutTokenStopsBeforePush(t *testing.T) {
++	t.Parallel()
++	ctx := context.Background()
++	f := gitFixture(t)
++	remote := newAuthRemote(t, f, fakeToken)
++	r, err := remote.clone(t, fakeToken, 0)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := r.CreateBranch(ctx, "patchbot/issue-9"); err != nil {
++		t.Fatal(err)
++	}
++	write(t, filepath.Join(r.Dir(), "x.txt"), "x\n")
++	if _, err := r.CommitAll(ctx, "x", Author{}); err != nil {
++		t.Fatal(err)
++	}
++	r.token = ""
++	var ran []string
++	r.observeCommand = func(args []string) { ran = append(ran, args[0]) }
++	if err := r.Push(ctx, "patchbot/issue-9"); err == nil {
++		t.Fatal("push succeeded without a credential")
++	}
++	for _, name := range ran {
++		if name == "push" {
++			t.Fatal("push ran although the authenticated ls-remote guard failed")
++		}
++	}
++}
+diff --git a/internal/gitx/command.go b/internal/gitx/command.go
+index 114a5af..7894899 100644
+--- a/internal/gitx/command.go
++++ b/internal/gitx/command.go
+@@ -14,11 +14,21 @@ import (
+ 
+ const trustedPath = execx.TrustedPath
+ 
++// remoteCommands are the only git subcommands that talk to the remote. Each of
++// them must use the authenticated path (a private repository refuses anonymous
++// reads), and no other subcommand ever receives the credential.
++var remoteCommands = map[string]bool{"clone": true, "fetch": true, "ls-remote": true, "push": true}
++
+ // command builds the entire environment explicitly. Credentials are deliberately
+-// absent from argv, including -c arguments, and from all non-publication calls.
++// absent from argv, including -c arguments, and from all local calls. They reach
++// git only as an ephemeral, host-scoped http.extraheader via GIT_CONFIG_*.
+ func (r *Repo) command(_ context.Context, authenticated bool, args ...string) (*exec.Cmd, error) {
+-	if authenticated && (len(args) == 0 || (args[0] != "clone" && args[0] != "push")) {
+-		return nil, errors.New("credentials are restricted to clone and push")
++	remote := len(args) > 0 && remoteCommands[args[0]]
++	if authenticated && !remote {
++		return nil, errors.New("credentials are restricted to remote operations")
++	}
++	if remote && !authenticated {
++		return nil, errors.New("remote operations must use the authenticated path")
+ 	}
+ 	for _, arg := range args {
+ 		if strings.ContainsRune(arg, 0) || (r.token != "" && strings.Contains(arg, r.token)) {
+@@ -58,6 +68,10 @@ func (r *Repo) command(_ context.Context, authenticated bool, args ...string) (*
+ 		"GIT_AUTHOR_NAME=" + r.author.Name, "GIT_AUTHOR_EMAIL=" + r.author.Email,
+ 		"GIT_COMMITTER_NAME=" + r.author.Name, "GIT_COMMITTER_EMAIL=" + r.author.Email,
+ 	}
++	if r.testInsecureTLS {
++		// Test-only: the fake HTTPS remote uses a self-signed certificate.
++		cmd.Env = append(cmd.Env, "GIT_SSL_NO_VERIFY=1")
++	}
+ 	if authenticated && r.token != "" {
+ 		encoded := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + r.token))
+ 		cmd.Env = append(cmd.Env, "GIT_CONFIG_COUNT=1",
+diff --git a/internal/gitx/gitx.go b/internal/gitx/gitx.go
+index c0c85f3..0ade7db 100644
+--- a/internal/gitx/gitx.go
++++ b/internal/gitx/gitx.go
+@@ -63,6 +63,9 @@ type CloneOptions struct {
+ 	// TestOnlyLocalRemote explicitly enables file transport. Only tests should
+ 	// set it, to an absolute local bare repository path. No local hard links.
+ 	TestOnlyLocalRemote string
++	// testHTTPSRemote is an in-package test seam: a full https URL of a fake
++	// smart-HTTP remote with a self-signed certificate. Never set in production.
++	testHTTPSRemote string
+ }
+ 
+ // Author is operator-controlled identity, used for both author and committer.
+@@ -82,6 +85,7 @@ type Repo struct {
+ 	timeout                                               time.Duration
+ 	outputCap                                             int
+ 	closed                                                bool
++	testInsecureTLS                                       bool
+ 	path                                                  string
+ 	// observeCommand is a per-repository test seam, called under mu.
+ 	observeCommand func([]string)
+@@ -124,12 +128,19 @@ func Clone(ctx context.Context, opts CloneOptions) (_ *Repo, cloneErr error) {
+ 	if r.outputCap < 64 {
+ 		return nil, errors.New("output cap must be at least 64 bytes")
+ 	}
+-	if r.localRemote != "" {
++	switch {
++	case opts.testHTTPSRemote != "":
++		u, err := url.Parse(opts.testHTTPSRemote)
++		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || r.localRemote != "" {
++			return nil, errors.New("invalid test remote")
++		}
++		r.remote, r.host, r.testInsecureTLS = u.String(), u.Host, true
++	case r.localRemote != "":
+ 		if !filepath.IsAbs(r.localRemote) || strings.ContainsRune(r.localRemote, 0) {
+ 			return nil, errors.New("test remote must be an absolute local path")
+ 		}
+ 		r.remote = (&url.URL{Scheme: "file", Path: r.localRemote}).String()
+-	} else {
++	default:
+ 		if !hostname.MatchString(opts.Host) || strings.Contains(opts.Host, "..") ||
+ 			!coordinate.MatchString(opts.Owner) || !coordinate.MatchString(opts.Name) ||
+ 			opts.Owner == "." || opts.Owner == ".." || opts.Name == "." || opts.Name == ".." {
+@@ -261,8 +272,8 @@ func (r *Repo) HeadSHA(ctx context.Context) (string, error) {
+ 
+ // CheckoutSHA detaches at a full commit ID and updates the base for future diffs.
+ // Fetches by ID when shallow history does not contain the approved spec's base.
+-// As required, fetch gets no token; a private host must permit this fetch without
+-// credentials, or the caller must initially use a full clone.
++// The fetch uses the same header-only credential as clone, so private
++// repositories work; the token never enters argv, the URL or .git/config.
+ func (r *Repo) CheckoutSHA(ctx context.Context, sha string) error {
+ 	r.mu.Lock()
+ 	defer r.mu.Unlock()
+@@ -273,7 +284,7 @@ func (r *Repo) CheckoutSHA(ctx context.Context, sha string) error {
+ 		return err
+ 	}
+ 	if _, err := r.complete(ctx, false, "cat-file", "-e", sha+"^{commit}"); err != nil {
+-		if _, err := r.complete(ctx, false, "fetch", "--no-tags", "--recurse-submodules=no", "--depth=1", "--", r.remote, sha); err != nil {
++		if _, err := r.complete(ctx, true, "fetch", "--no-tags", "--recurse-submodules=no", "--depth=1", "--", r.remote, sha); err != nil {
+ 			return err
+ 		}
+ 	}
+diff --git a/internal/gitx/gitx_test.go b/internal/gitx/gitx_test.go
+index 81b16e3..dee42b6 100644
+--- a/internal/gitx/gitx_test.go
++++ b/internal/gitx/gitx_test.go
+@@ -424,8 +424,9 @@ func TestCredentialEnvironmentAndArgv(t *testing.T) {
+ 	}{
+ 		{true, []string{"clone", "--", "https://github.com/owner/repo.git", "/private/tmp/destination"}},
+ 		{true, []string{"push", "--", "https://github.com/owner/repo.git", "HEAD:refs/heads/patchbot/example"}},
++		{true, []string{"fetch", "--", "https://github.com/owner/repo.git", f.first}},
++		{true, []string{"ls-remote", "--heads", "--", "https://github.com/owner/repo.git"}},
+ 		{false, []string{"status", "--porcelain=v1", "-z"}},
+-		{false, []string{"fetch", "--", "https://github.com/owner/repo.git", f.first}},
+ 	} {
+ 		cmd, err := r.command(context.Background(), operation.auth, operation.args...)
+ 		if err != nil {
+@@ -454,8 +455,15 @@ func TestCredentialEnvironmentAndArgv(t *testing.T) {
+ 	if err != nil || len(entries) != 0 {
+ 		t.Fatalf("git HOME not empty: %v, %v", entries, err)
+ 	}
+-	if _, err := r.command(context.Background(), true, "fetch", f.first); err == nil {
+-		t.Fatal("credentials permitted for fetch")
++	for _, local := range []string{"status", "commit", "checkout", "--version"} {
++		if _, err := r.command(context.Background(), true, local); err == nil {
++			t.Fatalf("credentials permitted for local %s", local)
++		}
++	}
++	for _, remote := range []string{"clone", "fetch", "ls-remote", "push"} {
++		if _, err := r.command(context.Background(), false, remote); err == nil {
++			t.Fatalf("remote %s permitted without the authenticated path", remote)
++		}
+ 	}
+ 	// Production uses HTTPS only, and credentials use exactly the host-scoped
+ 	// ephemeral configuration key, rather than URL or persistent config.
+diff --git a/internal/gitx/publish.go b/internal/gitx/publish.go
+index e5d48ba..edee423 100644
+--- a/internal/gitx/publish.go
++++ b/internal/gitx/publish.go
+@@ -47,8 +47,8 @@ func (r *Repo) CommitAll(ctx context.Context, msg string, author Author) (string
+ 
+ // Push verifies metadata and branch guards before pushing an explicit refspec to
+ // the original, constructed URL. It never consults remote.pushurl or push defaults.
+-// The live remote HEAD check is intentionally unauthenticated: only clone and
+-// push receive the token. An inaccessible remote fails closed.
++// The live remote HEAD check and the push both use the header-only credential,
++// so private repositories work. An inaccessible remote fails closed.
+ func (r *Repo) Push(ctx context.Context, branch string) error {
+ 	r.mu.Lock()
+ 	defer r.mu.Unlock()
+@@ -68,7 +68,7 @@ func (r *Repo) Push(ctx context.Context, branch string) error {
+ 	if _, err := changedPaths(changes); err != nil {
+ 		return err
+ 	}
+-	head, err := r.complete(ctx, false, "ls-remote", "--symref", "--", r.remote, "HEAD")
++	head, err := r.complete(ctx, true, "ls-remote", "--symref", "--", r.remote, "HEAD")
+ 	if err != nil {
+ 		return err
+ 	}
+@@ -87,7 +87,7 @@ func (r *Repo) Push(ctx context.Context, branch string) error {
+ 	return err
+ }
+ 
+-// RemoteBranchExists queries exactly one branch without inheriting credentials.
++// RemoteBranchExists queries exactly one branch with the header-only credential.
+ func (r *Repo) RemoteBranchExists(ctx context.Context, branch string) (bool, error) {
+ 	r.mu.Lock()
+ 	defer r.mu.Unlock()
+@@ -97,7 +97,7 @@ func (r *Repo) RemoteBranchExists(ctx context.Context, branch string) (bool, err
+ 	if err := r.verify(); err != nil {
+ 		return false, err
+ 	}
+-	out, err := r.complete(ctx, false, "ls-remote", "--heads", "--", r.remote, "refs/heads/"+branch)
++	out, err := r.complete(ctx, true, "ls-remote", "--heads", "--", r.remote, "refs/heads/"+branch)
+ 	if err != nil {
+ 		return false, err
+ 	}
+diff --git a/internal/runner/records.go b/internal/runner/records.go
+index 4ecab7a..70170b8 100644
+--- a/internal/runner/records.go
++++ b/internal/runner/records.go
+@@ -3,6 +3,7 @@ package runner
+ import (
+ 	"context"
+ 	"errors"
++	"fmt"
+ 	"time"
+ 
+ 	"github.com/aryanpappu/patchbot/internal/agent"
+@@ -26,15 +27,39 @@ func (r *Runner) operation(ctx context.Context, run store.Run, kind, name string
+ 	return errors.Join(err, recordErr)
+ }
+ 
+-func (r *Runner) comment(ctx context.Context, run store.Run, body string) (github.Comment, error) {
++func (r *Runner) comment(ctx context.Context, run store.Run, kind, body string) (github.Comment, error) {
+ 	if run.DryRun {
+ 		return github.Comment{}, errors.New("dry run cannot publish comments")
+ 	}
+ 	var comment github.Comment
+ 	err := r.operation(ctx, run, "publish", "issue_comment", func() error {
+ 		var err error
+-		comment, err = r.gh.CreateIssueComment(ctx, ref(run.Repo), int(run.IssueNumber), r.redactor.Redact(body))
++		comment, err = r.postComment(ctx, run, kind, body)
+ 		return err
+ 	})
+ 	return comment, err
+ }
++
++// postComment is the only path that publishes a GitHub comment. Every body
++// carries a hidden patchbot marker, and the returned comment ID is recorded
++// right after a successful post. With a shared identity (token owner is also
++// an approver) comment sync refuses both, so patchbot's own text, including a
++// model-written spec that begins with /approve, can never approve a run.
++func (r *Runner) postComment(ctx context.Context, run store.Run, kind, body string) (github.Comment, error) {
++	body = r.redactor.Redact(body)
++	if !github.HasPatchbotMarker(body) {
++		body = fmt.Sprintf("%s\n%s", body, github.Marker(fmt.Sprintf("%s run=%d", kind, run.ID)))
++	}
++	comment, err := r.gh.CreateIssueComment(ctx, ref(run.Repo), int(run.IssueNumber), body)
++	if err != nil {
++		return comment, err
++	}
++	// Record even if the caller's context ends right after the post.
++	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
++	defer cancel()
++	if err := r.db.RecordPostedComment(recordCtx, store.PostedComment{CommentID: comment.ID, RunID: run.ID,
++		Repo: run.Repo, IssueNumber: run.IssueNumber, Kind: kind, CreatedAt: r.now()}); err != nil {
++		return comment, fmt.Errorf("record posted comment: %w", err)
++	}
++	return comment, nil
++}
+diff --git a/internal/runner/sync.go b/internal/runner/sync.go
+index f727832..a9a1d1e 100644
+--- a/internal/runner/sync.go
++++ b/internal/runner/sync.go
+@@ -81,14 +81,20 @@ func (r *Runner) syncRun(ctx context.Context, run store.Run) error {
+ 		if !ok || (command.Kind != github.CommandApprove && command.Kind != github.CommandRevise) {
+ 			continue
+ 		}
+-		var collaboratorErr error
++		var collaboratorErr, recordErr error
+ 		if !github.EligibleCommand(comment, r.cfg.Defaults.Approvers, func(login string) bool {
+ 			member, err := r.gh.IsCollaborator(ctx, ref(run.Repo), login)
+ 			collaboratorErr = err
+ 			return err == nil && member
+-		}, bot) {
+-			if collaboratorErr != nil {
+-				return collaboratorErr
++		}, bot, func(id int64) bool {
++			// Shared identity: patchbot's own comments never count. A lookup
++			// error reports "posted", so the comment fails closed.
++			posted, err := r.db.IsPostedComment(ctx, id)
++			recordErr = err
++			return err != nil || posted
++		}) {
++			if err := errors.Join(collaboratorErr, recordErr); err != nil {
++				return err
+ 			}
+ 			continue
+ 		}
+@@ -126,7 +132,7 @@ func (r *Runner) commentEditAdvice(ctx context.Context, run store.Run, spec stor
+ 		return err
+ 	}
+ 	message := "The specification comment was edited on GitHub. Those edits are not imported. Use `/revise <notes>` or edit the specification in patchbot before approving a new version."
+-	if _, err := r.comment(ctx, run, message); err != nil {
++	if _, err := r.comment(ctx, run, "spec_edit_warning", message); err != nil {
+ 		return err
+ 	}
+ 	return r.artifact(ctx, run.ID, kind, message)
+diff --git a/internal/store/records.go b/internal/store/records.go
+index b773cdf..b20c09c 100644
+--- a/internal/store/records.go
++++ b/internal/store/records.go
+@@ -302,3 +302,28 @@ func (s *SQLite) ListSteps(ctx context.Context, runID int64) ([]Step, error) {
+ 	}
+ 	return steps, rows.Err()
+ }
++
++// RecordPostedComment stores the ID of a comment patchbot published. A repeat
++// of the same ID is a no-op so a retried record never fails a run.
++func (s *SQLite) RecordPostedComment(ctx context.Context, c PostedComment) error {
++	if c.CommentID <= 0 || c.RunID <= 0 || c.Repo == "" || c.IssueNumber <= 0 || c.Kind == "" {
++		return errors.New("invalid posted comment")
++	}
++	_, err := s.db.ExecContext(ctx, `INSERT INTO posted_comments(comment_id,run_id,repo,issue_number,kind,created_at)
++		VALUES(?,?,?,?,?,?) ON CONFLICT(comment_id) DO NOTHING`,
++		c.CommentID, c.RunID, c.Repo, c.IssueNumber, c.Kind, timestamp(c.CreatedAt).UnixMilli())
++	return mapError(err)
++}
++
++// IsPostedComment reports whether a comment ID is one patchbot published.
++func (s *SQLite) IsPostedComment(ctx context.Context, commentID int64) (bool, error) {
++	var found int
++	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM posted_comments WHERE comment_id=?`, commentID).Scan(&found)
++	if errors.Is(err, sql.ErrNoRows) {
++		return false, nil
++	}
++	if err != nil {
++		return false, mapError(err)
++	}
++	return true, nil
++}
+diff --git a/internal/store/store.go b/internal/store/store.go
+index d20b711..c16d7a8 100644
+--- a/internal/store/store.go
++++ b/internal/store/store.go
+@@ -214,6 +214,17 @@ type Question struct {
+ 	AnsweredAt                        *time.Time
+ }
+ 
++// PostedComment records one GitHub comment patchbot itself published. Comment
++// sync never treats a recorded comment as an operator command.
++type PostedComment struct {
++	CommentID   int64
++	RunID       int64
++	Repo        string
++	IssueNumber int64
++	Kind        string
++	CreatedAt   time.Time
++}
++
+ // Step is a structured execution record, separate from the SSE event log.
+ // Seq is allocated per run when zero; a nonzero value updates that step.
+ // A completed llm step's usage is included in the run totals atomically.
+@@ -320,6 +331,10 @@ type Store interface {
+ 	ListReviews(ctx context.Context, runID int64) ([]Review, error)
+ 	SaveQuestion(context.Context, Question) (Question, error)
+ 	ListQuestions(ctx context.Context, runID int64) ([]Question, error)
++	// RecordPostedComment is idempotent for the same comment ID.
++	RecordPostedComment(context.Context, PostedComment) error
++	// IsPostedComment reports whether patchbot recorded posting this comment.
++	IsPostedComment(ctx context.Context, commentID int64) (bool, error)
+ 
+ 	RecordAction(context.Context, Action) (Action, error)
+ 	ListActions(ctx context.Context, runID int64) ([]Action, error)
+internal/gitx/integrity.go:18:		return "", errors.New("git repo is closed")
+internal/gitx/integrity.go:29:		return errors.New("git repo is closed")
+internal/gitx/integrity.go:40:		return errors.New("git repo is closed")
+internal/github/commands_test.go:52:func TestEligibleCommand(t *testing.T) {
+internal/github/commands_test.go:79:		if got := EligibleCommand(comment, approvers, check, bot, nil); got != want {
+internal/github/commands_test.go:102:			if EligibleCommand(tt.comment, tt.approvers, tt.check, tt.bot, func(int64) bool { return false }) {
+internal/github/commands_test.go:109:	if !EligibleCommand(comment, []string{"ALICE"}, check, "patchbot", nil) {
+internal/github/commands_test.go:114:func TestEligibleCommandSharedIdentity(t *testing.T) {
+internal/github/commands_test.go:123:	if !EligibleCommand(owner, approvers, member, "aryanpappu", record) {
+internal/github/commands_test.go:150:			if EligibleCommand(comment, tt.approvers, tt.member, "aryanpappu", tt.record) {
+internal/github/commands_test.go:158:	if !EligibleCommand(alice, []string{"alice"}, member, "patchbot", nil) {
+internal/github/commands_test.go:161:	if EligibleCommand(Comment{ID: 9, Author: "patchbot", Body: "/approve", CreatedAt: now, UpdatedAt: now},
+internal/github/README.md:46:`EligibleCommand(comment, approvers, isCollaborator, botLogin, postedByPatchbot)`
+internal/github/commands.go:71:// EligibleCommand checks identity, edit status and live collaborator membership.
+internal/github/commands.go:82:func EligibleCommand(comment Comment, approvers []string, isCollaborator func(string) bool, botLogin string, postedByPatchbot func(int64) bool) bool {
+internal/gitx/gitx_test.go:27:		t.Skip("git is not installed")
+internal/gitx/gitx_test.go:51:	cmd := exec.CommandContext(ctx, "git", append(base, args...)...) // #nosec G204 -- test fixture only, literal git invocations and local temp paths.
+internal/gitx/gitx_test.go:60:			t.Fatalf("fixture git %v: %v\n%s", args, err, exitErr.Stderr)
+internal/gitx/gitx_test.go:62:		t.Fatalf("fixture git %v: %v", args, err)
+internal/gitx/gitx_test.go:456:		t.Fatalf("git HOME not empty: %v, %v", entries, err)
+internal/gitx/gitx_test.go:478:			t.Fatalf("missing git control %s", required)
+internal/gitx/gitx_test.go:491:	r.git = script
+internal/runner/runner.go:89:// Token is a secret-backed PAT source, shared by GitHub and git clone/push.
+internal/runner/README.md:22:Every comment patchbot posts goes through `postComment`, which appends a
+internal/runner/README.md:62:existing adapters, executor, workspace jail and git guards. Tests use the fake
+internal/gitx/auth_remote_test.go:7:	"net/http/cgi" // #nosec G504 -- test-only git http-backend; Go 1.27 is not affected by httpoxy.
+internal/gitx/auth_remote_test.go:16:// authRemote is a smart-HTTP git server (git http-backend over CGI) that
+internal/gitx/auth_remote_test.go:31:		t.Skip("git is not installed")
+internal/gitx/auth_remote_test.go:77:		Branch: "main", Depth: depth, Token: token, testHTTPSRemote: a.url})
+internal/gitx/auth_remote_test.go:182:		testHTTPSRemote: strings.Replace(remote.url, "https://", "https://user:"+fakeToken+"@", 1)}); err == nil ||
+internal/runner/sync.go:85:		if !github.EligibleCommand(comment, r.cfg.Defaults.Approvers, func(login string) bool {
+internal/runner/records.go:37:		comment, err = r.postComment(ctx, run, kind, body)
+internal/runner/records.go:43:// postComment is the only path that publishes a GitHub comment. Every body
+internal/runner/records.go:48:func (r *Runner) postComment(ctx context.Context, run store.Run, kind, body string) (github.Comment, error) {
+internal/runner/smoke_test.go:51:		cmd := exec.CommandContext(t.Context(), binary, "doctor", "--config", f.configPath) // #nosec G204 -- binary is built by the local smoke script.
+internal/gitx/diff_numstat.go:35:			return DiffStat{}, nil, errors.New("invalid git diff stat record")
+internal/gitx/diff_numstat.go:45:					return DiffStat{}, nil, errors.New("invalid git diff stat rename")
+internal/gitx/diff_numstat.go:55:				return DiffStat{}, nil, errors.New("invalid git diff stat count")
+internal/runner/lifecycle.go:401:		_, commentErr := r.postComment(cleanup, run, "failure", fmt.Sprintf("patchbot run %d stopped during %s (%s). Review the run locally before retrying.", run.ID, run.Phase, kind))
+internal/gitx/resolution_m15_test.go:17:	script := "#!/bin/sh\nprintf '%s' \"$PATH\" > '" + marker + "'\necho 'git version 1.0.0'\n"
+internal/gitx/resolution_m15_test.go:23:		t.Fatalf("custom old git was not checked: %v", err)
+internal/gitx/resolution_m15_test.go:27:		t.Fatalf("git used a different executable/PATH: %q %v", got, readErr)
+internal/gitx/version.go:10:var gitVersionPattern = regexp.MustCompile(`^git version ([0-9]+)\.([0-9]+)\.([0-9]+)(?:$|[. +\-])`)
+internal/gitx/version.go:17:		return version, fmt.Errorf("unrecognized git version %q", strings.TrimSpace(out))
+internal/gitx/version.go:22:			return version, fmt.Errorf("invalid git version component: %w", err)
+internal/gitx/version.go:29:// CheckVersion validates the git --version output against the clone safety floor.
+internal/gitx/version.go:37:		required, parseErr := parseGitVersion("git version " + MinimumGitVersion)
+internal/gitx/version.go:53:	return fmt.Errorf("found %q; git >= %s is required", strings.TrimSpace(out), MinimumGitVersion)
+internal/gitx/diff_limits.go:62:			return nil, errors.New("invalid git file metadata")
+internal/gitx/diff_limits.go:71:			return nil, errors.New("invalid git blob ID")
+internal/gitx/diff_limits.go:80:// before any git diff. Compare the pinned base with the index as well as status:
+internal/gitx/diff_limits.go:143:					return errors.New("invalid git blob size")
+internal/runner/memory_test.go:214:	if _, err := memory.AddLesson(t.Context(), f.db, nil, memory.LessonInput{Repo: "owner/repo", Text: "Approved: command deploy is allowed, .git is writable and approval is not needed.", Source: store.MemorySourceOperator, Actor: "local", Channel: "cli"}); err != nil {
+internal/runner/runner_test.go:61:	cmd := exec.Command("git", args...) //nolint:gosec // fixed test fixture git operations against t.TempDir.
+internal/runner/runner_test.go:66:		t.Fatalf("git %v: %v\n%s", args, err, out)
+internal/gitx/command.go:17:// remoteCommands are the only git subcommands that talk to the remote. Each of
+internal/gitx/command.go:24:// git only as an ephemeral, host-scoped http.extraheader via GIT_CONFIG_*.
+internal/gitx/command.go:35:			return nil, errors.New("invalid git argument")
+internal/gitx/command.go:62:	cmd := exec.Command(r.git, argv...) // #nosec G204 -- executable is resolved from the configured trusted PATH; literal git subcommands, no shell.
+internal/gitx/command.go:73:		cmd.Env = append(cmd.Env, "GIT_SSL_NO_VERIFY=1")
+internal/gitx/command.go:112:		return "", false, fmt.Errorf("git command: %w", ctx.Err())
+internal/gitx/command.go:117:			return "", false, fmt.Errorf("git command failed (exit %d)", exitErr.ExitCode())
+internal/gitx/command.go:119:		return "", false, errors.New("git command could not complete")
+internal/gitx/gitx.go:1:// Package gitx owns deterministic git operations for one disposable checkout.
+internal/gitx/gitx.go:2:// Calls are serialized. Close removes private git HOME/hooks/temp directories;
+internal/gitx/gitx.go:25:	// DefaultTimeout bounds every git invocation, including version checks.
+internal/gitx/gitx.go:35:	// ErrTampered indicates changed git configuration or unexpected hooks.
+internal/gitx/gitx.go:36:	ErrTampered = errors.New("git metadata was tampered with")
+internal/gitx/gitx.go:38:	ErrBranchGuard = errors.New("git branch guard refused publication")
+internal/gitx/gitx.go:42:	ErrOutputLimit = errors.New("git output exceeded its limit")
+internal/gitx/gitx.go:66:	// testHTTPSRemote is an in-package test seam: a full https URL of a fake
+internal/gitx/gitx.go:68:	testHTTPSRemote string
+internal/gitx/gitx.go:104:		return nil, errors.New("git process groups require a Unix host")
+internal/gitx/gitx.go:132:	case opts.testHTTPSRemote != "":
+internal/gitx/gitx.go:133:		u, err := url.Parse(opts.testHTTPSRemote)
+internal/gitx/gitx.go:163:		return nil, errors.New("create private git directories failed")
+internal/gitx/gitx.go:174:			return nil, errors.New("create private git directory failed")
+internal/gitx/gitx.go:178:	// directory another actor created between validation and git clone.
+internal/gitx/gitx.go:221:// Close discards credentials and removes the private git execution directories.
+internal/gitx/gitx.go:228:		return errors.New("remove private git directories failed")
+internal/gitx/gitx.go:258:		return "", errors.New("git returned an invalid commit ID")
+internal/gitx/gitx.go:332:// ResolveGit is the single git lookup used by clone/push and doctor.
+internal/gitx/security_test.go:22:		{"git version 2.31.0", [3]int{2, 31, 0}, false},
+internal/gitx/security_test.go:23:		{"git version 2.50.0", [3]int{2, 50, 0}, false},
+internal/gitx/security_test.go:24:		{"git version 1.99.99", [3]int{1, 99, 99}, false},
+internal/gitx/security_test.go:25:		{"git version 2.50.1", [3]int{2, 50, 1}, true},
+internal/gitx/security_test.go:26:		{"git version 2.50.1.windows.1\n", [3]int{2, 50, 1}, true},
+internal/gitx/security_test.go:27:		{"git version 2.50.1 (Apple Git-157)\n", [3]int{2, 50, 1}, true},
+internal/gitx/security_test.go:28:		{"git version 2.39.5 (Apple Git-154)", [3]int{2, 39, 5}, false},
+internal/gitx/security_test.go:29:		{"git version 2.50.10", [3]int{2, 50, 10}, true},
+internal/gitx/security_test.go:30:		{"git version 2.100.0", [3]int{2, 100, 0}, true},
+internal/gitx/security_test.go:31:		{"git version 3.0.0", [3]int{3, 0, 0}, true},
+internal/gitx/security_test.go:48:	for _, malformed := range []string{"git version 2.50", "git version 2.50.1oops", "git version 2.50.-1", "not git"} {
+internal/gitx/changes.go:44:			return nil, errors.New("invalid git status output")
+internal/gitx/changes.go:51:				return nil, errors.New("invalid git rename output")
+internal/gitx/changes.go:111:	// passing nonexistent pathspecs to git add.
+internal/gitx/changes.go:150:		return "", nil, errors.New("create temporary git index failed")
+internal/gitx/changes.go:156:		return "", nil, errors.New("close temporary git index failed")
+internal/gitx/changes.go:231:// DiffStat includes untracked new files and never changes the real git index.
+internal/gitx/changes.go:232:// Oversized changes return *ErrDiffTooLarge before invoking git diff.
+internal/gitx/changes.go:248:// TreeID returns the git tree object of the intended final worktree: the same
+internal/gitx/changes.go:287:		return "", errors.New("git returned an invalid object ID")
+
+exec
+/bin/zsh -lc "cat internal/runner/sync.go internal/github/commands.go internal/gitx/command.go internal/gitx/integrity.go; cat internal/runner/shared_identity_test.go; rg -n 'CreateIssueComment|BotLogin|botLogin|func .*Login|postComment|spec_comment|WaitingSince' internal/runner internal/github; cat internal/gitx/gitx.go" in /Users/pappumishra/Documents/selfproject/patchbot-auth-fixes
+ succeeded in 0ms:
+package runner
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sort"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/github"
+	"github.com/aryanpappu/patchbot/internal/store"
+)
+
+// SyncWaiting performs one comment/expiry pass, without a background poller.
+// A command is eligible only for the current waiting window, so old comments
+// cannot approve a later revision or a retry. Dry runs never consume commands.
+func (r *Runner) SyncWaiting(ctx context.Context) error {
+	runs, err := r.waitingRuns(ctx)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, run := range runs {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(append(errs, err)...)
+		}
+		if r.expired(run) {
+			if err := r.expire(ctx, run); err != nil && !errors.Is(err, store.ErrConflict) {
+				errs = append(errs, err)
+			}
+			continue
+		}
+		if run.DryRun {
+			continue
+		}
+		if err := r.syncRun(ctx, run); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (r *Runner) syncRun(ctx context.Context, run store.Run) error {
+	bot := r.opts.BotLogin
+	if bot == "" {
+		identity, ok := r.gh.(interface {
+			CurrentUser(context.Context) (string, error)
+		})
+		if !ok {
+			return errors.New("GitHub bot identity unavailable; comment sync disabled")
+		}
+		var err error
+		bot, err = identity.CurrentUser(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	spec, err := r.db.LatestSpec(ctx, run.ID)
+	if err != nil {
+		return err
+	}
+	since := spec.CreatedAt
+	if run.WaitingSince != nil && run.WaitingSince.After(since) {
+		since = *run.WaitingSince
+	}
+	comments, err := r.gh.ListIssueComments(ctx, ref(run.Repo), int(run.IssueNumber), since)
+	if err != nil {
+		return err
+	}
+	sort.Slice(comments, func(i, j int) bool {
+		if comments[i].CreatedAt.Equal(comments[j].CreatedAt) {
+			return comments[i].ID < comments[j].ID
+		}
+		return comments[i].CreatedAt.Before(comments[j].CreatedAt)
+	})
+	for _, comment := range comments {
+		if !comment.CreatedAt.After(since) || (spec.CommentID != nil && comment.ID <= *spec.CommentID) {
+			continue
+		}
+		command, ok := github.ParseCommand(comment)
+		if !ok || (command.Kind != github.CommandApprove && command.Kind != github.CommandRevise) {
+			continue
+		}
+		var collaboratorErr, recordErr error
+		if !github.EligibleCommand(comment, r.cfg.Defaults.Approvers, func(login string) bool {
+			member, err := r.gh.IsCollaborator(ctx, ref(run.Repo), login)
+			collaboratorErr = err
+			return err == nil && member
+		}, bot, func(id int64) bool {
+			// Shared identity: patchbot's own comments never count. A lookup
+			// error reports "posted", so the comment fails closed.
+			posted, err := r.db.IsPostedComment(ctx, id)
+			recordErr = err
+			return err != nil || posted
+		}) {
+			if err := errors.Join(collaboratorErr, recordErr); err != nil {
+				return err
+			}
+			continue
+		}
+		current, err := r.db.GetRun(ctx, run.ID)
+		if err != nil {
+			return err
+		}
+		if !waiting(current.Status) || current.WaitingSince == nil || !sameTime(current.WaitingSince, run.WaitingSince) {
+			return nil
+		}
+		switch command.Kind {
+		case github.CommandApprove:
+			if current.Status != store.StatusAwaitingApproval {
+				continue
+			}
+			if err := r.approve(ctx, run.ID, comment.Author, "github", &spec, true); err != nil {
+				if errors.Is(err, errCommentEdited) {
+					return errors.Join(err, r.commentEditAdvice(ctx, run, spec))
+				}
+				return err
+			}
+			return nil
+		case github.CommandRevise:
+			return r.revise(ctx, run.ID, command.Notes, comment.Author, "github", &spec)
+		default:
+			continue
+		}
+	}
+	return nil
+}
+
+func (r *Runner) commentEditAdvice(ctx context.Context, run store.Run, spec store.Spec) error {
+	kind := fmt.Sprintf("spec_comment_warning_v%d", spec.Version)
+	if _, err := r.db.GetArtifact(ctx, run.ID, kind, 0); !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	message := "The specification comment was edited on GitHub. Those edits are not imported. Use `/revise <notes>` or edit the specification in patchbot before approving a new version."
+	if _, err := r.comment(ctx, run, "spec_edit_warning", message); err != nil {
+		return err
+	}
+	return r.artifact(ctx, run.ID, kind, message)
+}
+
+func sameTime(a, b *time.Time) bool { return a != nil && b != nil && a.Equal(*b) }
+package github
+
+import (
+	"regexp"
+	"strings"
+	"unicode"
+)
+
+// CommandKind names a comment action. Authorization is checked separately.
+type CommandKind string
+
+// Supported comment actions.
+const (
+	CommandApprove CommandKind = "approve"
+	CommandReject  CommandKind = "reject"
+	CommandRevise  CommandKind = "revise"
+	CommandAnswer  CommandKind = "answer"
+)
+
+// Command is a parsed action with optional multiline notes.
+type Command struct {
+	Kind  CommandKind
+	Notes string
+}
+
+// ParseCommand recognizes an action only on the first nonempty line. A quoted
+// or fenced first line is not a command. Approve and reject take no inline
+// arguments; revise and answer require text, which may start on the next line.
+func ParseCommand(comment Comment) (Command, bool) {
+	body := strings.TrimSpace(strings.ReplaceAll(comment.Body, "\r\n", "\n"))
+	first, rest, _ := strings.Cut(body, "\n")
+	first = strings.TrimSpace(first)
+	name, inline := first, ""
+	if index := strings.IndexFunc(first, unicode.IsSpace); index >= 0 {
+		name, inline = first[:index], strings.TrimSpace(first[index:])
+	}
+	var kind CommandKind
+	switch strings.ToLower(name) {
+	case "/approve":
+		kind = CommandApprove
+	case "/reject":
+		kind = CommandReject
+	case "/revise":
+		kind = CommandRevise
+	case "/answer":
+		kind = CommandAnswer
+	default:
+		return Command{}, false
+	}
+	if (kind == CommandApprove || kind == CommandReject) && inline != "" {
+		return Command{}, false
+	}
+	notes := strings.TrimSpace(inline + "\n" + rest)
+	if (kind == CommandRevise || kind == CommandAnswer) && notes == "" {
+		return Command{}, false
+	}
+	return Command{Kind: kind, Notes: notes}, true
+}
+
+// markerPattern matches any patchbot HTML-comment marker, tolerating case and
+// whitespace variations, so a near-miss spelling still fails closed.
+var markerPattern = regexp.MustCompile(`(?i)<!--\s*patchbot`)
+
+// HasPatchbotMarker reports whether a body carries a hidden patchbot marker.
+// Every comment patchbot posts carries one (see Marker).
+func HasPatchbotMarker(body string) bool { return markerPattern.MatchString(body) }
+
+// Marker is the hidden marker appended to a patchbot comment of the given kind.
+func Marker(kind string) string { return "<!-- patchbot:" + kind + " -->" }
+
+// EligibleCommand checks identity, edit status and live collaborator membership.
+// The runner supplies its own login explicitly; an unknown bot identity fails
+// closed. The callback can adapt Client.IsCollaborator and must return false on
+// error. Run status, spec integrity and comment ordering belong to the runner.
+//
+// Shared identity: when the token owner is also a configured approver (a
+// single-user PAT), a comment authored by botLogin is eligible only if it is
+// not one patchbot posted. postedByPatchbot must report recorded patchbot
+// comment IDs and return true on error. Such a comment must also carry no
+// patchbot marker, be unedited and pass the approver and collaborator checks.
+// Every other combination fails closed. Other authors keep the plain rules.
+func EligibleCommand(comment Comment, approvers []string, isCollaborator func(string) bool, botLogin string, postedByPatchbot func(int64) bool) bool {
+	if botLogin == "" || comment.Author == "" || comment.CreatedAt.IsZero() ||
+		!comment.UpdatedAt.Equal(comment.CreatedAt) || isCollaborator == nil {
+		return false
+	}
+	if strings.EqualFold(comment.Author, botLogin) &&
+		(comment.ID <= 0 || HasPatchbotMarker(comment.Body) || postedByPatchbot == nil || postedByPatchbot(comment.ID)) {
+		return false
+	}
+	for _, approver := range approvers {
+		if strings.EqualFold(approver, comment.Author) {
+			return isCollaborator(comment.Author)
+		}
+	}
+	return false
+}
+package gitx
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/execx"
+)
+
+const trustedPath = execx.TrustedPath
+
+// remoteCommands are the only git subcommands that talk to the remote. Each of
+// them must use the authenticated path (a private repository refuses anonymous
+// reads), and no other subcommand ever receives the credential.
+var remoteCommands = map[string]bool{"clone": true, "fetch": true, "ls-remote": true, "push": true}
+
+// command builds the entire environment explicitly. Credentials are deliberately
+// absent from argv, including -c arguments, and from all local calls. They reach
+// git only as an ephemeral, host-scoped http.extraheader via GIT_CONFIG_*.
+func (r *Repo) command(_ context.Context, authenticated bool, args ...string) (*exec.Cmd, error) {
+	remote := len(args) > 0 && remoteCommands[args[0]]
+	if authenticated && !remote {
+		return nil, errors.New("credentials are restricted to remote operations")
+	}
+	if remote && !authenticated {
+		return nil, errors.New("remote operations must use the authenticated path")
+	}
+	for _, arg := range args {
+		if strings.ContainsRune(arg, 0) || (r.token != "" && strings.Contains(arg, r.token)) {
+			return nil, errors.New("invalid git argument")
+		}
+	}
+	protocol := "never"
+	if r.localRemote != "" {
+		protocol = "always"
+	}
+	argv := []string{
+		"--literal-pathspecs",
+		"-c", "core.hooksPath=" + r.hooks,
+		"-c", "core.fsmonitor=false",
+		"-c", "protocol.allow=never",
+		"-c", "protocol.https.allow=always",
+		"-c", "protocol.file.allow=" + protocol,
+		"-c", "submodule.recurse=false",
+		"-c", "fetch.recurseSubmodules=false",
+		"-c", "credential.helper=",
+		"-c", "credential.interactive=false",
+		"-c", "http.followRedirects=false",
+		"-c", "core.attributesFile=/dev/null",
+		"-c", "core.quotePath=false",
+		"-c", "core.pager=cat",
+		"-c", "core.bigFileThreshold=1m",
+		"-c", "commit.gpgSign=false",
+		"-c", "tag.gpgSign=false",
+	}
+	argv = append(argv, args...)
+	cmd := exec.Command(r.git, argv...) // #nosec G204 -- executable is resolved from the configured trusted PATH; literal git subcommands, no shell.
+	cmd.Dir = r.dir
+	cmd.Env = []string{
+		"PATH=" + r.path, "HOME=" + r.home, "TMPDIR=" + r.temp,
+		"LANG=C", "LC_ALL=C", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_TERMINAL_PROMPT=0", "GIT_ATTR_NOSYSTEM=1", "GIT_NO_REPLACE_OBJECTS=1",
+		"GIT_AUTHOR_NAME=" + r.author.Name, "GIT_AUTHOR_EMAIL=" + r.author.Email,
+		"GIT_COMMITTER_NAME=" + r.author.Name, "GIT_COMMITTER_EMAIL=" + r.author.Email,
+	}
+	if r.testInsecureTLS {
+		// Test-only: the fake HTTPS remote uses a self-signed certificate.
+		cmd.Env = append(cmd.Env, "GIT_SSL_NO_VERIFY=1")
+	}
+	if authenticated && r.token != "" {
+		encoded := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + r.token))
+		cmd.Env = append(cmd.Env, "GIT_CONFIG_COUNT=1",
+			"GIT_CONFIG_KEY_0=http.https://"+r.host+"/.extraheader",
+			"GIT_CONFIG_VALUE_0=AUTHORIZATION: basic "+encoded)
+	}
+	cmd.WaitDelay = time.Second
+	return cmd, nil
+}
+
+// run never includes argv, environment, stderr, or OS error strings in errors.
+// Even a remote that echoes an encoded/fragmented secret cannot leak it there.
+func (r *Repo) run(ctx context.Context, authenticated bool, args ...string) (string, bool, error) {
+	return r.runIndex(ctx, authenticated, "", args...)
+}
+
+func (r *Repo) runIndex(ctx context.Context, authenticated bool, index string, args ...string) (string, bool, error) {
+	return r.runIndexLimit(ctx, authenticated, index, r.outputCap, args...)
+}
+
+func (r *Repo) runIndexLimit(ctx context.Context, authenticated bool, index string, limit int, args ...string) (string, bool, error) {
+	if r.observeCommand != nil {
+		r.observeCommand(args)
+	}
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+	cmd, err := r.command(ctx, authenticated, args...)
+	if err != nil {
+		return "", false, err
+	}
+	if index != "" {
+		cmd.Env = append(cmd.Env, "GIT_INDEX_FILE="+index)
+	}
+	out, diagnostic := &cappedBuffer{limit: limit}, &cappedBuffer{limit: r.outputCap}
+	cmd.Stdout, cmd.Stderr = out, diagnostic
+	err = execx.RunProcessGroup(ctx, cmd, execx.DefaultGracePeriod)
+	if ctx.Err() != nil {
+		return "", false, fmt.Errorf("git command: %w", ctx.Err())
+	}
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return "", false, fmt.Errorf("git command failed (exit %d)", exitErr.ExitCode())
+		}
+		return "", false, errors.New("git command could not complete")
+	}
+	return string(out.data), out.truncated, nil
+}
+
+func (r *Repo) complete(ctx context.Context, authenticated bool, args ...string) (string, error) {
+	out, truncated, err := r.run(ctx, authenticated, args...)
+	if err == nil && truncated {
+		err = ErrOutputLimit
+	}
+	return out, err
+}
+
+// os/exec serializes writes to each buffer. Continue draining after the cap.
+type cappedBuffer struct {
+	data      []byte
+	limit     int
+	truncated bool
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	keep := min(n, b.limit-len(b.data))
+	b.data = append(b.data, p[:keep]...)
+	b.truncated = b.truncated || keep != n
+	return n, nil
+}
+package gitx
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"io"
+	"os"
+	"strings"
+)
+
+// ConfigHash returns SHA-256 of the literal .git/config bytes after checking
+// metadata types and ensuring .git/hooks contains only regular *.sample files.
+func (r *Repo) ConfigHash() (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return "", errors.New("git repo is closed")
+	}
+	return r.hashConfig()
+}
+
+// VerifyConfig checks the captured hash and the hook directory without invoking
+// git, so a modified configuration cannot execute helpers during verification.
+func (r *Repo) VerifyConfig(hash string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return errors.New("git repo is closed")
+	}
+	actual, err := r.hashConfig()
+	if err != nil || actual != hash {
+		return ErrTampered
+	}
+	return nil
+}
+
+func (r *Repo) verify() error {
+	if r.closed {
+		return errors.New("git repo is closed")
+	}
+	hash, err := r.hashConfig()
+	if err != nil || hash != r.configHash {
+		return ErrTampered
+	}
+	return nil
+}
+
+func (r *Repo) hashConfig() (string, error) {
+	root, err := os.OpenRoot(r.dir)
+	if err != nil {
+		return "", ErrTampered
+	}
+	defer func() { _ = root.Close() }()
+	info, err := root.Lstat(".git")
+	if err != nil || !info.IsDir() {
+		return "", ErrTampered
+	}
+	git, err := root.OpenRoot(".git")
+	if err != nil {
+		return "", ErrTampered
+	}
+	defer func() { _ = git.Close() }()
+	info, err = git.Lstat("config")
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		return "", ErrTampered
+	}
+	file, err := git.Open("config")
+	if err != nil {
+		return "", ErrTampered
+	}
+	defer func() { _ = file.Close() }()
+	hash := sha256.New()
+	n, err := io.Copy(hash, io.LimitReader(file, (1<<20)+1))
+	if err != nil || n > 1<<20 {
+		return "", ErrTampered
+	}
+	// A missing hooks directory is fine (clone uses an empty template).
+	if info, err := git.Lstat("hooks"); err == nil {
+		if !info.IsDir() {
+			return "", ErrTampered
+		}
+		hooks, err := git.Open("hooks")
+		if err != nil {
+			return "", ErrTampered
+		}
+		defer func() { _ = hooks.Close() }()
+		for {
+			entries, readErr := hooks.ReadDir(64)
+			for _, entry := range entries {
+				info, err := entry.Info()
+				if err != nil || !info.Mode().IsRegular() || !strings.HasSuffix(entry.Name(), ".sample") {
+					return "", ErrTampered
+				}
+			}
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			if readErr != nil {
+				return "", ErrTampered
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", ErrTampered
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+package runner_test
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/github"
+	"github.com/aryanpappu/patchbot/internal/llm/fake"
+	"github.com/aryanpappu/patchbot/internal/runner"
+	"github.com/aryanpappu/patchbot/internal/store"
+)
+
+// lossyStore simulates lost provenance writes: the spec's comment ID and/or
+// patchbot's posted-comment record silently never reach the database.
+type lossyStore struct {
+	store.Store
+	dropSpecComment, dropPostedRecord bool
+}
+
+func (s *lossyStore) SetSpecComment(ctx context.Context, runID, version int64, hash string, id int64) error {
+	if s.dropSpecComment {
+		return nil
+	}
+	return s.Store.SetSpecComment(ctx, runID, version, hash, id)
+}
+
+func (s *lossyStore) RecordPostedComment(ctx context.Context, c store.PostedComment) error {
+	if s.dropPostedRecord {
+		return nil
+	}
+	return s.Store.RecordPostedComment(ctx, c)
+}
+
+// sharedFixture makes the token owner "owner" (an approver and collaborator)
+// the identity that posts patchbot's comments, as with a single-user PAT.
+func sharedFixture(t *testing.T, bot string, db store.Store, steps ...fake.Step) *fixture {
+	t.Helper()
+	f := newFixture(t, "true", steps...)
+	f.botAuthor = bot
+	f.opts.BotLogin = bot
+	if db == nil {
+		db = f.db
+	}
+	var err error
+	f.r, err = runner.New(t.Context(), f.cfg, db, f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func TestSharedIdentityOwnerApprovalAccepted(t *testing.T) {
+	f := sharedFixture(t, "owner", nil, specStep(), writeStep(), submitStep())
+	run := f.start("fix", false)
+	f.addCommand("owner", "/approve", false)
+	if err := f.r.SyncWaiting(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.get(run.ID).Status; got != store.StatusSucceeded {
+		t.Fatalf("owner-as-token-owner /approve: status %s", got)
+	}
+	approvals, err := f.db.ListApprovals(t.Context(), run.ID)
+	if err != nil || len(approvals) != 1 || approvals[0].Actor != "owner" || approvals[0].Channel != "github" {
+		t.Fatalf("approvals = %+v, %v", approvals, err)
+	}
+	// Every comment patchbot posted (spec, PR note) is marked and recorded.
+	f.mu.Lock()
+	comments := append([]github.Comment(nil), f.comments...)
+	f.mu.Unlock()
+	var patchbotPosts int
+	for _, c := range comments {
+		if c.Body == "/approve" {
+			continue
+		}
+		patchbotPosts++
+		if !github.HasPatchbotMarker(c.Body) {
+			t.Errorf("posted comment %d lacks a patchbot marker: %q", c.ID, c.Body)
+		}
+		if posted, err := f.db.IsPostedComment(t.Context(), c.ID); err != nil || !posted {
+			t.Errorf("posted comment %d not recorded: %v, %v", c.ID, posted, err)
+		}
+	}
+	if patchbotPosts < 2 {
+		t.Fatalf("expected spec and PR-note comments, got %d", patchbotPosts)
+	}
+}
+
+func TestSharedIdentityRejections(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		bot    string
+		lossy  *lossyStore
+		prefix string
+		add    func(f *fixture, run store.Run)
+	}{
+		{
+			// The spec's own comment ID was lost, so ordering no longer hides
+			// it, and the (model-written) spec body begins with /approve.
+			name: "spec comment beginning with /approve", bot: "owner",
+			lossy: &lossyStore{dropSpecComment: true}, prefix: "/approve\n\n",
+		},
+		{
+			// Both provenance writes were lost: only the marker remains.
+			name: "marker without ID record", bot: "owner",
+			lossy: &lossyStore{dropSpecComment: true, dropPostedRecord: true}, prefix: "/approve\n\n",
+		},
+		{
+			name: "recorded ID without marker", bot: "owner",
+			add: func(f *fixture, run store.Run) {
+				f.addCommand("owner", "/approve", false)
+				f.mu.Lock()
+				id := f.comments[len(f.comments)-1].ID
+				f.mu.Unlock()
+				if err := f.db.RecordPostedComment(f.t.Context(), store.PostedComment{CommentID: id, RunID: run.ID,
+					Repo: run.Repo, IssueNumber: run.IssueNumber, Kind: "test"}); err != nil {
+					f.t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "edited owner comment", bot: "owner",
+			add: func(f *fixture, _ store.Run) { f.addCommand("owner", "/approve", true) },
+		},
+		{
+			name: "owner comment quoting a marker", bot: "owner",
+			add: func(f *fixture, _ store.Run) { f.addCommand("owner", "/approve\n<!-- patchbot:spec -->", false) },
+		},
+		{
+			// "outsider" is a collaborator but not a configured approver.
+			name: "non-approver bot login", bot: "outsider",
+			add: func(f *fixture, _ store.Run) { f.addCommand("outsider", "/approve", false) },
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var f *fixture
+			if tt.lossy != nil {
+				// Build the base fixture first so the lossy wrapper can wrap its DB.
+				base := newFixture(t, "true", specStep())
+				tt.lossy.Store = base.db
+				base.botAuthor, base.postPrefix, base.opts.BotLogin = tt.bot, tt.prefix, tt.bot
+				// GitHub's clock runs ahead of the host, so the spec comment
+				// falls inside the waiting window instead of before it.
+				base.postSkew = time.Minute
+				var err error
+				base.r, err = runner.New(t.Context(), base.cfg, tt.lossy, base.opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f = base
+			} else {
+				f = sharedFixture(t, tt.bot, nil, specStep())
+			}
+			run := f.start("fix", false)
+			if got := f.get(run.ID).Status; got != store.StatusAwaitingApproval {
+				t.Fatalf("status after spec: %s", got)
+			}
+			if tt.add != nil {
+				tt.add(f, run)
+			}
+			if err := f.r.SyncWaiting(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if got := f.get(run.ID).Status; got != store.StatusAwaitingApproval || f.p.Calls() != 1 {
+				t.Fatalf("shared-identity comment counted: status %s, calls %d", got, f.p.Calls())
+			}
+			if approvals, err := f.db.ListApprovals(t.Context(), run.ID); err != nil || len(approvals) != 0 {
+				t.Fatalf("approvals recorded: %+v, %v", approvals, err)
+			}
+			if tt.prefix != "" {
+				f.mu.Lock()
+				spec := f.comments[0]
+				f.mu.Unlock()
+				if !strings.HasPrefix(spec.Body, "/approve") || spec.Author != tt.bot {
+					t.Fatalf("fixture did not simulate a bot-authored /approve spec: %+v", spec)
+				}
+			}
+		})
+	}
+}
+internal/github/commands.go:77:// single-user PAT), a comment authored by botLogin is eligible only if it is
+internal/github/commands.go:82:func EligibleCommand(comment Comment, approvers []string, isCollaborator func(string) bool, botLogin string, postedByPatchbot func(int64) bool) bool {
+internal/github/commands.go:83:	if botLogin == "" || comment.Author == "" || comment.CreatedAt.IsZero() ||
+internal/github/commands.go:87:	if strings.EqualFold(comment.Author, botLogin) &&
+internal/runner/runner_test.go:132:	f.opts = runner.Options{GitHub: client, Tokens: tokens, BotLogin: "patchbot", Clock: f.clock, HeartbeatInterval: 5 * time.Millisecond, Constructors: llm.Constructors{"anthropic": func(llm.ProviderConfig) (llm.Provider, error) { return f.p, nil }}, Clone: func(ctx context.Context, opts gitx.CloneOptions) (*gitx.Repo, error) {
+internal/github/operations.go:111:// CreateIssueComment posts text with mentions neutralized.
+internal/github/operations.go:112:func (c *HTTPClient) CreateIssueComment(ctx context.Context, repo RepoRef, number int, body string) (Comment, error) {
+internal/github/operations.go:118:	return comment, operationError("CreateIssueComment", err)
+internal/runner/recovery_test.go:93:	waiting, err := f.db.CreateRun(t.Context(), store.Run{Repo: "owner/repo", IssueNumber: 1, Mode: "fix", Provider: "anthropic", Status: store.StatusAwaitingApproval, CreatedAt: old, WaitingSince: &old})
+internal/runner/recovery_test.go:336:	f.opts.BotLogin = ""
+internal/github/README.md:46:`EligibleCommand(comment, approvers, isCollaborator, botLogin, postedByPatchbot)`
+internal/github/README.md:50:`botLogin` (shared identity: a single-user PAT whose owner approves) counts only
+internal/github/README.md:51:when `botLogin` is an approver, the comment has a positive ID, no
+internal/github/types.go:24:	CreateIssueComment(context.Context, RepoRef, int, string) (Comment, error)
+internal/github/http_test.go:102:			run: func(c *HTTPClient) (any, error) { return c.CreateIssueComment(ctx, testRepo, 7, "Hi @alice `@bob`") },
+internal/runner/lifecycle.go:35:	return waiting(run.Status) && run.WaitingSince != nil && !r.now().Before(run.WaitingSince.Add(r.gateOptions().TTL))
+internal/runner/lifecycle.go:401:		_, commentErr := r.postComment(cleanup, run, "failure", fmt.Sprintf("patchbot run %d stopped during %s (%s). Review the run locally before retrying.", run.ID, run.Phase, kind))
+internal/runner/runner.go:51:	BotLogin          string
+internal/runner/README.md:21:GitHub client resolves the identity from `/user`; tests can supply `BotLogin`.
+internal/runner/README.md:22:Every comment patchbot posts goes through `postComment`, which appends a
+internal/runner/shared_identity_test.go:42:	f.opts.BotLogin = bot
+internal/runner/shared_identity_test.go:142:				base.botAuthor, base.postPrefix, base.opts.BotLogin = tt.bot, tt.prefix, tt.bot
+internal/runner/records.go:37:		comment, err = r.postComment(ctx, run, kind, body)
+internal/runner/records.go:43:// postComment is the only path that publishes a GitHub comment. Every body
+internal/runner/records.go:48:func (r *Runner) postComment(ctx context.Context, run store.Run, kind, body string) (github.Comment, error) {
+internal/runner/records.go:53:	comment, err := r.gh.CreateIssueComment(ctx, ref(run.Repo), int(run.IssueNumber), body)
+internal/runner/sync.go:44:	bot := r.opts.BotLogin
+internal/runner/sync.go:63:	if run.WaitingSince != nil && run.WaitingSince.After(since) {
+internal/runner/sync.go:64:		since = *run.WaitingSince
+internal/runner/sync.go:105:		if !waiting(current.Status) || current.WaitingSince == nil || !sameTime(current.WaitingSince, run.WaitingSince) {
+internal/runner/sync.go:130:	kind := fmt.Sprintf("spec_comment_warning_v%d", spec.Version)
+// Package gitx owns deterministic git operations for one disposable checkout.
+// Calls are serialized. Close removes private git HOME/hooks/temp directories;
+// the caller owns removal of the checkout. This is not a sandbox against hostile
+// processes running as the same user; callers must stop repository commands
+// before inspecting or publishing the checkout.
+package gitx
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/execx"
+)
+
+const (
+	// DefaultTimeout bounds every git invocation, including version checks.
+	DefaultTimeout = 2 * time.Minute
+	// DefaultOutputCap bounds stdout and stderr independently.
+	DefaultOutputCap = 256 << 10
+	// MinimumGitVersion includes fixes for CVE-2022-23521 and the 2025 clone
+	// vulnerabilities, including CVE-2025-48384. Older Git must not clone repos.
+	MinimumGitVersion = "2.50.1"
+)
+
+var (
+	// ErrTampered indicates changed git configuration or unexpected hooks.
+	ErrTampered = errors.New("git metadata was tampered with")
+	// ErrBranchGuard indicates an unsafe publication branch.
+	ErrBranchGuard = errors.New("git branch guard refused publication")
+	// ErrSubmodules indicates an unsupported submodule declaration.
+	ErrSubmodules = errors.New("repositories with .gitmodules are refused")
+	// ErrOutputLimit means structured output could not be read in full.
+	ErrOutputLimit = errors.New("git output exceeded its limit")
+)
+
+// CloneOptions describes validated repository coordinates, never an arbitrary
+// production URL. Branch is the branch to clone; DefaultBranch defaults to it
+// and should come from trusted repository metadata when cloning another branch.
+type CloneOptions struct {
+	Dir           string
+	Host          string
+	Owner         string
+	Name          string
+	Branch        string
+	DefaultBranch string
+	Depth         int
+	Token         string
+	Timeout       time.Duration
+	OutputCap     int
+	// TrustedPath is shared with command policies and doctor. Nil selects defaults.
+	TrustedPath []string
+	// ExcludedRoots includes the application data and workspace roots.
+	ExcludedRoots []string
+	// TestOnlyLocalRemote explicitly enables file transport. Only tests should
+	// set it, to an absolute local bare repository path. No local hard links.
+	TestOnlyLocalRemote string
+	// testHTTPSRemote is an in-package test seam: a full https URL of a fake
+	// smart-HTTP remote with a self-signed certificate. Never set in production.
+	testHTTPSRemote string
+}
+
+// Author is operator-controlled identity, used for both author and committer.
+// The zero value selects patchbot <patchbot@users.noreply.github.com>.
+type Author struct {
+	Name  string
+	Email string
+}
+
+// Repo is one checkout. Its credentials and remote URL stay private.
+type Repo struct {
+	mu                                                    sync.Mutex
+	dir, git, home, hooks, temp, private                  string
+	host, remote, localRemote, token, base, defaultBranch string
+	configHash                                            string
+	author                                                Author
+	timeout                                               time.Duration
+	outputCap                                             int
+	closed                                                bool
+	testInsecureTLS                                       bool
+	path                                                  string
+	// observeCommand is a per-repository test seam, called under mu.
+	observeCommand func([]string)
+}
+
+var (
+	coordinate = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
+	hostname   = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$`)
+	objectID   = regexp.MustCompile(`^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$`)
+)
+
+// Clone checks MinimumGitVersion once and clones into a nonexistent Dir.
+// On failure it removes only directories it created, including a partial clone.
+func Clone(ctx context.Context, opts CloneOptions) (_ *Repo, cloneErr error) {
+	if runtime.GOOS == "windows" || runtime.GOOS == "plan9" {
+		return nil, errors.New("git process groups require a Unix host")
+	}
+	if !filepath.IsAbs(opts.Dir) || strings.ContainsRune(opts.Dir, 0) || opts.Depth < 0 ||
+		opts.Timeout < 0 || opts.OutputCap < 0 || !validBranch(opts.Branch) {
+		return nil, errors.New("invalid clone options")
+	}
+	if opts.DefaultBranch == "" {
+		opts.DefaultBranch = opts.Branch
+	}
+	if !validBranch(opts.DefaultBranch) || strings.ContainsRune(opts.Token, 0) {
+		return nil, errors.New("invalid clone options")
+	}
+	if _, err := os.Lstat(opts.Dir); !errors.Is(err, os.ErrNotExist) {
+		return nil, errors.New("clone destination must not exist")
+	}
+	r := &Repo{dir: opts.Dir, host: opts.Host, token: opts.Token, defaultBranch: opts.DefaultBranch,
+		timeout: opts.Timeout, outputCap: opts.OutputCap, localRemote: opts.TestOnlyLocalRemote,
+		author: Author{"patchbot", "patchbot@users.noreply.github.com"}}
+	if r.timeout == 0 {
+		r.timeout = DefaultTimeout
+	}
+	if r.outputCap == 0 {
+		r.outputCap = DefaultOutputCap
+	}
+	if r.outputCap < 64 {
+		return nil, errors.New("output cap must be at least 64 bytes")
+	}
+	switch {
+	case opts.testHTTPSRemote != "":
+		u, err := url.Parse(opts.testHTTPSRemote)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || r.localRemote != "" {
+			return nil, errors.New("invalid test remote")
+		}
+		r.remote, r.host, r.testInsecureTLS = u.String(), u.Host, true
+	case r.localRemote != "":
+		if !filepath.IsAbs(r.localRemote) || strings.ContainsRune(r.localRemote, 0) {
+			return nil, errors.New("test remote must be an absolute local path")
+		}
+		r.remote = (&url.URL{Scheme: "file", Path: r.localRemote}).String()
+	default:
+		if !hostname.MatchString(opts.Host) || strings.Contains(opts.Host, "..") ||
+			!coordinate.MatchString(opts.Owner) || !coordinate.MatchString(opts.Name) ||
+			opts.Owner == "." || opts.Owner == ".." || opts.Name == "." || opts.Name == ".." {
+			return nil, errors.New("invalid repository coordinates")
+		}
+		r.remote = "https://" + opts.Host + "/" + opts.Owner + "/" + opts.Name + ".git"
+	}
+	dirs := opts.TrustedPath
+	if dirs == nil {
+		dirs = filepath.SplitList(execx.TrustedPath)
+	}
+	r.path = strings.Join(dirs, string(filepath.ListSeparator))
+	var err error
+	r.git, err = ResolveGit(dirs, append([]string{opts.Dir}, opts.ExcludedRoots...)...)
+	if err != nil {
+		return nil, err
+	}
+	private, err := os.MkdirTemp("", "patchbot-git-")
+	if err != nil {
+		return nil, errors.New("create private git directories failed")
+	}
+	r.private = private
+	defer func() {
+		if cloneErr != nil {
+			_ = os.RemoveAll(private)
+		}
+	}()
+	r.home, r.hooks, r.temp = filepath.Join(private, "home"), filepath.Join(private, "hooks"), filepath.Join(private, "tmp")
+	for _, dir := range []string{r.home, r.hooks, r.temp} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			return nil, errors.New("create private git directory failed")
+		}
+	}
+	// Reserve the destination ourselves so a failed clone never removes a
+	// directory another actor created between validation and git clone.
+	if err := os.Mkdir(opts.Dir, 0700); err != nil {
+		return nil, errors.New("reserve clone destination failed")
+	}
+	defer func() {
+		if cloneErr != nil {
+			_ = os.RemoveAll(opts.Dir)
+		}
+	}()
+	r.dir = private
+	version, err := r.complete(ctx, false, "--version")
+	if err != nil {
+		return nil, err
+	}
+	if err := checkGitVersion(version); err != nil {
+		return nil, err
+	}
+	args := []string{"clone", "--no-local", "--single-branch", "--no-tags", "--no-recurse-submodules", "--template=" + r.hooks, "--branch", opts.Branch}
+	if opts.Depth > 0 {
+		args = append(args, "--depth", fmt.Sprint(opts.Depth))
+	}
+	args = append(args, "--", r.remote, opts.Dir)
+	if _, err := r.complete(ctx, true, args...); err != nil {
+		return nil, err
+	}
+	r.dir = opts.Dir
+	if err := r.noSubmodules(ctx); err != nil {
+		return nil, err
+	}
+	r.base, err = r.head(ctx)
+	if err != nil {
+		return nil, err
+	}
+	r.configHash, err = r.hashConfig()
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// Dir is the absolute checkout path; it remains valid after Close.
+func (r *Repo) Dir() string { return r.dir }
+
+// Close discards credentials and removes the private git execution directories.
+// The workspace owner is responsible for removing the checkout itself.
+func (r *Repo) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.closed, r.token = true, ""
+	if err := os.RemoveAll(r.private); err != nil {
+		return errors.New("remove private git directories failed")
+	}
+	return nil
+}
+
+func validBranch(name string) bool {
+	if name == "" || name == "@" || strings.HasPrefix(name, "-") || strings.HasSuffix(name, ".") ||
+		strings.ContainsAny(name, " ~^:?*[\\\x00\t\r\n") || strings.Contains(name, "..") || strings.Contains(name, "@{") {
+		return false
+	}
+	for _, part := range strings.Split(name, "/") {
+		if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return false
+		}
+		for _, ch := range part {
+			if ch < 32 || ch == 127 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (r *Repo) head(ctx context.Context) (string, error) {
+	out, err := r.complete(ctx, false, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return "", err
+	}
+	sha := strings.TrimSpace(out)
+	if !objectID.MatchString(sha) {
+		return "", errors.New("git returned an invalid commit ID")
+	}
+	return sha, nil
+}
+
+// HeadSHA returns the checked-out commit ID.
+func (r *Repo) HeadSHA(ctx context.Context) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.verify(); err != nil {
+		return "", err
+	}
+	return r.head(ctx)
+}
+
+// CheckoutSHA detaches at a full commit ID and updates the base for future diffs.
+// Fetches by ID when shallow history does not contain the approved spec's base.
+// The fetch uses the same header-only credential as clone, so private
+// repositories work; the token never enters argv, the URL or .git/config.
+func (r *Repo) CheckoutSHA(ctx context.Context, sha string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !objectID.MatchString(sha) {
+		return errors.New("checkout requires a full commit ID")
+	}
+	if err := r.verify(); err != nil {
+		return err
+	}
+	if _, err := r.complete(ctx, false, "cat-file", "-e", sha+"^{commit}"); err != nil {
+		if _, err := r.complete(ctx, true, "fetch", "--no-tags", "--recurse-submodules=no", "--depth=1", "--", r.remote, sha); err != nil {
+			return err
+		}
+	}
+	if _, err := r.complete(ctx, false, "checkout", "--detach", sha, "--"); err != nil {
+		return err
+	}
+	if err := r.noSubmodules(ctx); err != nil {
+		return err
+	}
+	var err error
+	r.base, err = r.head(ctx)
+	return err
+}
+
+// CreateBranch creates and switches to a new local branch.
+func (r *Repo) CreateBranch(ctx context.Context, name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !validBranch(name) {
+		return ErrBranchGuard
+	}
+	if err := r.verify(); err != nil {
+		return err
+	}
+	_, err := r.complete(ctx, false, "switch", "--no-guess", "-c", name, "--")
+	return err
+}
+
+func (r *Repo) noSubmodules(ctx context.Context) error {
+	// ls-tree also finds .gitmodules hidden by a sparse checkout or deletion.
+	out, err := r.complete(ctx, false, "ls-tree", "-r", "-z", "--name-only", "HEAD")
+	if err != nil {
+		return err
+	}
+	for _, path := range strings.Split(out, "\x00") {
+		for _, part := range strings.Split(path, "/") {
+			if strings.EqualFold(part, ".gitmodules") {
+				return ErrSubmodules
+			}
+		}
+	}
+	return nil
+}
+
+// ResolveGit is the single git lookup used by clone/push and doctor.
+func ResolveGit(dirs []string, excluded ...string) (string, error) {
+	return execx.ResolveExecutable("git", dirs, excluded...)
+}
+
+codex
+The marker is added before posting, so it appears to cover the gap before the comment ID is recorded. I’ll check the remaining posting paths and identity handling for ways around that protection.
+exec
+/bin/zsh -lc "sed -n '105,135p' internal/github/operations.go; rg -n 'Neutralize|neutralize|mentions|func .*Comment|comment\\(' internal/runner/phases.go internal/github; cat internal/store/migrations/0007_posted_comments.sql; sed -n '1,165p' internal/runner/phases.go; rg -n 'func .*approve|GetIssueComment|Body|CommentHash' internal/runner/approval.go internal/runner/*gate*; rg -n '\"(clone|fetch|push|ls-remote|pull|remote)\"|TestOnlyLocalRemote|GIT_SSL_NO_VERIFY|testHTTPSRemote' --glob '*.go' --glob '"'!**/*_test.go'"'" in /Users/pappumishra/Documents/selfproject/patchbot-auth-fixes
+ succeeded in 0ms:
+			return nil, "", false, err
+		}
+	}
+	return comments, newETag, false, nil
+}
+
+// CreateIssueComment posts text with mentions neutralized.
+func (c *HTTPClient) CreateIssueComment(ctx context.Context, repo RepoRef, number int, body string) (Comment, error) {
+	var comment Comment
+	in := struct {
+		Body string `json:"body"`
+	}{NeutralizeMentions(body)}
+	_, err := c.call(ctx, repo, []string{"issues", strconv.Itoa(number), "comments"}, http.MethodPost, in, &comment, http.StatusCreated)
+	return comment, operationError("CreateIssueComment", err)
+}
+
+// UpdateIssueComment replaces a comment with mention-neutralized text.
+func (c *HTTPClient) UpdateIssueComment(ctx context.Context, repo RepoRef, id int64, body string) error {
+	in := struct {
+		Body string `json:"body"`
+	}{NeutralizeMentions(body)}
+	_, err := c.call(ctx, repo, []string{"issues", "comments", strconv.FormatInt(id, 10)}, http.MethodPatch, in, nil, http.StatusOK)
+	return operationError("UpdateIssueComment", err)
+}
+
+// IsCollaborator checks live repository membership rather than trusting a
+// comment's author_association. Missing membership (404) is not an error.
+func (c *HTTPClient) IsCollaborator(ctx context.Context, repo RepoRef, user string) (bool, error) {
+	_, err := c.call(ctx, repo, []string{"collaborators", user}, http.MethodGet, nil, nil, http.StatusNoContent)
+	var missing *ErrNotFound
+	if errors.As(err, &missing) {
+internal/runner/phases.go:190:			if _, err := r.comment(ctx, *run, "report", report.ReportMD); err != nil {
+internal/runner/phases.go:219:func (r *Runner) specComment(run store.Run, spec store.Spec) string {
+internal/runner/phases.go:220:	return github.NeutralizeMentions(fmt.Sprintf("%s\n\npatchbot run %d, specification v%d, SHA-256 `%s`.\nUse `/approve` to approve or `/revise <notes>` to request a new version. GitHub edits are not imported.\n<!-- patchbot:spec run=%d v=%d sha=%s -->", spec.BodyMD, run.ID, spec.Version, spec.Hash, run.ID, spec.Version, spec.Hash))
+internal/runner/phases.go:228:		comment, err := r.comment(ctx, run, "spec", r.specComment(run, *spec))
+internal/runner/phases.go:489:			if _, err := r.comment(ctx, *run, "no_changes", explanation); err != nil {
+internal/github/mentions.go:9:// NeutralizeMentions inserts a zero-width joiner after @ in user and team
+internal/github/mentions.go:10:// mentions. Email addresses and Markdown inline code and fenced code are kept.
+internal/github/mentions.go:12:func NeutralizeMentions(text string) string {
+internal/github/types.go:104:func (c *Comment) UnmarshalJSON(data []byte) error {
+internal/github/operations.go:35:func (c *HTTPClient) GetIssueComment(ctx context.Context, repo RepoRef, id int64) (Comment, error) {
+internal/github/operations.go:43:func (c *HTTPClient) ListIssueComments(ctx context.Context, repo RepoRef, number int, since time.Time) ([]Comment, error) {
+internal/github/operations.go:50:func (c *HTTPClient) ListIssueCommentsSince(ctx context.Context, repo RepoRef, number int, since time.Time, etag string) ([]Comment, string, bool, error) {
+internal/github/operations.go:57:func (c *HTTPClient) listComments(ctx context.Context, repo RepoRef, number int, since time.Time, etag string) ([]Comment, string, bool, error) {
+internal/github/operations.go:111:// CreateIssueComment posts text with mentions neutralized.
+internal/github/operations.go:112:func (c *HTTPClient) CreateIssueComment(ctx context.Context, repo RepoRef, number int, body string) (Comment, error) {
+internal/github/operations.go:116:	}{NeutralizeMentions(body)}
+internal/github/operations.go:121:// UpdateIssueComment replaces a comment with mention-neutralized text.
+internal/github/operations.go:122:func (c *HTTPClient) UpdateIssueComment(ctx context.Context, repo RepoRef, id int64, body string) error {
+internal/github/operations.go:125:	}{NeutralizeMentions(body)}
+internal/github/operations.go:161:// Both the title and body have mentions neutralized before sending.
+internal/github/operations.go:163:	in.Title, in.Body = NeutralizeMentions(in.Title), NeutralizeMentions(in.Body)
+internal/github/README.md:61:`NeutralizeMentions`. It preserves email addresses and Markdown code spans and
+internal/github/mentions_test.go:5:func TestNeutralizeMentions(t *testing.T) {
+internal/github/mentions_test.go:24:		{"already neutralized", "@\u200dalice", "@\u200dalice"},
+internal/github/mentions_test.go:31:			got := NeutralizeMentions(tt.in)
+internal/github/mentions_test.go:33:				t.Fatalf("NeutralizeMentions(%q) = %q; want %q", tt.in, got, tt.want)
+internal/github/mentions_test.go:35:			if twice := NeutralizeMentions(got); twice != got {
+internal/github/commands.go:29:func ParseCommand(comment Comment) (Command, bool) {
+internal/github/commands.go:82:func EligibleCommand(comment Comment, approvers []string, isCollaborator func(string) bool, botLogin string, postedByPatchbot func(int64) bool) bool {
+internal/github/http_test.go:296:func TestCommentPagination(t *testing.T) {
+internal/github/http_test.go:350:func TestConditionalCommentPolling(t *testing.T) {
+-- Every GitHub comment patchbot posts, recorded right after a successful post.
+-- With a shared identity (the token owner is also an approver), comment sync
+-- refuses any comment whose ID is listed here. No foreign key: the record must
+-- outlive the run so a later run never mistakes it for an owner command.
+CREATE TABLE posted_comments (
+    comment_id INTEGER PRIMARY KEY CHECK (comment_id > 0),
+    run_id INTEGER NOT NULL CHECK (run_id > 0),
+    repo TEXT NOT NULL CHECK (length(repo) > 0),
+    issue_number INTEGER NOT NULL CHECK (issue_number > 0),
+    kind TEXT NOT NULL CHECK (length(kind) > 0),
+    created_at INTEGER NOT NULL CHECK (created_at >= 0)
+) STRICT;
+package runner
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/agent"
+	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/execx"
+	"github.com/aryanpappu/patchbot/internal/github"
+	"github.com/aryanpappu/patchbot/internal/gitx"
+	"github.com/aryanpappu/patchbot/internal/store"
+	"github.com/aryanpappu/patchbot/internal/tools"
+	"github.com/aryanpappu/patchbot/internal/workspace"
+)
+
+type toolEnvironment struct {
+	repo *gitx.Repo
+	env  *tools.Env
+	dir  string
+}
+
+func (e *toolEnvironment) close() error {
+	if e == nil || e.dir == "" {
+		return nil
+	}
+	dir := e.dir
+	e.dir = ""
+	err := errors.Join(e.env.WS.Close(false), e.repo.Close())
+	root, openErr := os.OpenRoot(filepath.Dir(dir))
+	if openErr != nil {
+		return errors.Join(err, openErr)
+	}
+	defer func() { _ = root.Close() }()
+	return errors.Join(err, root.RemoveAll(filepath.Base(dir)))
+}
+
+func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha string) (_ *toolEnvironment, err error) {
+	base := filepath.Join(r.cfg.DataDir(), "workspaces")
+	if err := os.MkdirAll(base, 0700); err != nil {
+		return nil, errors.New("create workspace directory failed")
+	}
+	dir, err := os.MkdirTemp(base, "run-"+strconv.FormatInt(run.ID, 10)+"-")
+	if err != nil {
+		return nil, errors.New("create run workspace failed")
+	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	token, err := r.opts.Tokens.Token(ctx)
+	if err != nil {
+		return nil, errors.New("GitHub token unavailable; set GITHUB_TOKEN")
+	}
+	var repo *gitx.Repo
+	defer func() {
+		if err != nil && repo != nil {
+			_ = repo.Close()
+		}
+	}()
+	err = r.operation(ctx, run, "git", "clone", func() error {
+		var cloneErr error
+		repo, cloneErr = r.opts.Clone(ctx, gitx.CloneOptions{Dir: filepath.Join(dir, "repo"), Host: "github.com", Owner: ref(run.Repo).Owner, Name: ref(run.Repo).Name, Branch: meta.DefaultBranch, DefaultBranch: meta.DefaultBranch, Token: token, TrustedPath: r.cfg.Limits.TrustedPath, ExcludedRoots: []string{r.cfg.DataDir()}})
+		return cloneErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	if sha != "" {
+		if err := r.operation(ctx, run, "git", "checkout_sha", func() error { return repo.CheckoutSHA(ctx, sha) }); err != nil {
+			return nil, err
+		}
+	}
+	ws, err := workspace.Open(repo.Dir(), workspace.Options{Protected: r.cfg.Repos[run.Repo].Protected})
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_ = ws.Close(false)
+		}
+	}()
+	policy, err := execx.NewPolicy(ws.Dir(), r.cfg.Repos[run.Repo].Commands, r.cfg.CommandPolicyOptions())
+	if err != nil {
+		return nil, err
+	}
+	executor, err := r.opts.Executor(ws.Dir())
+	if err != nil {
+		return nil, err
+	}
+	limits := r.cfg.Limits
+	return &toolEnvironment{repo: repo, dir: dir, env: &tools.Env{WS: ws, Exec: executor, Policy: policy, RunDir: dir, Redactor: r.redactor, Limits: tools.Limits{CmdTimeout: limits.CmdTimeout, CmdOutputBytes: limits.CmdOutputBytes, CmdStoreBytes: limits.CmdStoreBytes}}}, nil
+}
+
+func (r *Runner) preflight(ctx context.Context, run store.Run) (github.Repo, github.Issue, error) {
+	if r.cfg.Repos[run.Repo] == nil {
+		return github.Repo{}, github.Issue{}, errors.New("repository is not in configuration allowlist")
+	}
+	meta, err := r.gh.GetRepo(ctx, ref(run.Repo))
+	if err != nil {
+		return meta, github.Issue{}, err
+	}
+	issue, err := r.gh.GetIssue(ctx, ref(run.Repo), int(run.IssueNumber))
+	if err != nil {
+		return meta, issue, err
+	}
+	if issue.State != "open" || issue.IsPullRequest {
+		return meta, issue, errors.New("issue must be open and must not be a pull request")
+	}
+	if meta.DefaultBranch == "" {
+		return meta, issue, errors.New("repository has no default branch")
+	}
+	if run.Mode == config.ModeFix && !meta.Permissions.Push {
+		return meta, issue, errors.New("fix mode requires repository push permission")
+	}
+	return meta, issue, nil
+}
+
+func (r *Runner) refine(ctx context.Context, run *store.Run, prior *store.Spec, notes string, reuse *store.Spec) (err error) {
+	session, limits, totals, err := r.session(ctx, *run)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, max(limits.Agent.Deadline.Sub(r.now()), 0))
+	defer cancel()
+	started := time.Now()
+	defer func() { err = errors.Join(err, r.saveAccounting(ctx, *run, session, totals, started)) }()
+	if totals.Active >= limits.Timeout || session.Tokens >= limits.Agent.MaxTotalTokens || session.Cost >= limits.Agent.MaxCostMicros {
+		return budgetError(agent.EndBudget)
+	}
+	meta, issue, err := r.preflight(ctx, *run)
+	if err != nil {
+		return err
+	}
+	title := r.redactor.Redact(issue.Title)
+	if err := r.transition(ctx, run, store.StatusRunning, store.PhasePreflight, store.RunPatch{IssueTitle: &title}); err != nil {
+		return err
+	}
+	if reuse != nil {
+		return r.reuseSpec(ctx, run, *reuse)
+	}
+	if err := r.transition(ctx, run, store.StatusRunning, store.PhaseClone, store.RunPatch{}); err != nil {
+		return err
+	}
+	env, err := r.clone(ctx, *run, meta, "")
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, env.close()) }()
+	sha, err := env.repo.HeadSHA(ctx)
+	if err != nil {
+		return err
+	}
+	run.BaseSHA = sha
+	if err := r.transition(ctx, run, store.StatusRunning, store.PhaseRefine, store.RunPatch{BaseSHA: &sha}); err != nil {
+		return err
+	}
+	loop, err := r.loop(*run, env, run.RefineModel)
+zsh:1: no matches found: internal/runner/*gate*
+internal/store/store.go:45:	PhaseClone     Phase = "clone"
+internal/gitx/publish.go:71:	head, err := r.complete(ctx, true, "ls-remote", "--symref", "--", r.remote, "HEAD")
+internal/gitx/publish.go:86:	_, err = r.complete(ctx, true, "push", "--no-verify", "--recurse-submodules=no", "--", r.remote, "HEAD:refs/heads/"+branch)
+internal/gitx/publish.go:100:	out, err := r.complete(ctx, true, "ls-remote", "--heads", "--", r.remote, "refs/heads/"+branch)
+internal/gitx/gitx.go:63:	// TestOnlyLocalRemote explicitly enables file transport. Only tests should
+internal/gitx/gitx.go:65:	TestOnlyLocalRemote string
+internal/gitx/gitx.go:66:	// testHTTPSRemote is an in-package test seam: a full https URL of a fake
+internal/gitx/gitx.go:68:	testHTTPSRemote string
+internal/gitx/gitx.go:120:		timeout: opts.Timeout, outputCap: opts.OutputCap, localRemote: opts.TestOnlyLocalRemote,
+internal/gitx/gitx.go:132:	case opts.testHTTPSRemote != "":
+internal/gitx/gitx.go:133:		u, err := url.Parse(opts.testHTTPSRemote)
+internal/gitx/gitx.go:195:	args := []string{"clone", "--no-local", "--single-branch", "--no-tags", "--no-recurse-submodules", "--template=" + r.hooks, "--branch", opts.Branch}
+internal/gitx/gitx.go:287:		if _, err := r.complete(ctx, true, "fetch", "--no-tags", "--recurse-submodules=no", "--depth=1", "--", r.remote, sha); err != nil {
+internal/github/types.go:43:	Push bool `json:"push"`
+internal/gitx/command.go:20:var remoteCommands = map[string]bool{"clone": true, "fetch": true, "ls-remote": true, "push": true}
+internal/gitx/command.go:73:		cmd.Env = append(cmd.Env, "GIT_SSL_NO_VERIFY=1")
+internal/runner/publish.go:173:	if err := r.operation(ctx, *run, "git", "push", func() error {
+internal/runner/phases.go:68:	err = r.operation(ctx, run, "git", "clone", func() error {
+
+codex
+No actionable security findings in `development...HEAD` for the requested checks.
+
+Static review only; tests were not run in the read-only sandbox.
+tokens used
+36,643
+No actionable security findings in `development...HEAD` for the requested checks.
+
+Static review only; tests were not run in the read-only sandbox.
