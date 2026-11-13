@@ -51,3 +51,10 @@ plan's phases (`code`, without `agent` or `spec`) take precedence. Migration
 checksums and names are checked on every open; a binary refuses unknown versions
 and a failed migration rolls back its DDL and ledger entry together. New schema
 changes belong in new numbered migration files, never edits to shipped files.
+A migration whose first line is `-- patchbot:foreign_keys=off` rebuilds a
+referenced table (SQLite cannot alter a CHECK in place): the migrator turns
+foreign keys off on its single connection, applies it in a transaction, runs
+`foreign_key_check` before commit and turns enforcement back on. `0004_review`
+uses this to add the `review` phase to `runs`/`steps`, the frozen
+`runs.review_json` selection and the `reviews` table. `0003_reserved_m20.sql`
+is a placeholder for the memory milestone's number and must be replaced by it.

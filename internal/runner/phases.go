@@ -266,6 +266,8 @@ func (r *Runner) reuseSpec(ctx context.Context, run *store.Run, old store.Spec) 
 		return err
 	}
 	approval.RunID, approval.SpecVersion, approval.SpecHash = run.ID, spec.Version, spec.Hash
+	// A retry is a new run: it freezes the reviewer selection at this decision.
+	approval.Review = r.freezeReview(*run)
 	if err := r.db.DecideRun(ctx, run.Status, store.StatusApproved, approval, run.Generation); err != nil {
 		return err
 	}
@@ -356,6 +358,10 @@ func (r *Runner) code(ctx context.Context, run *store.Run) (err error) {
 	if _, err := agent.Check(ctx, r.db, run.ID, spec.IssueHash, r.gateOptions()); err != nil {
 		return err
 	}
+	sel, err := frozenReview(*run)
+	if err != nil {
+		return err
+	}
 	meta, issue, err := r.preflight(ctx, *run)
 	if err != nil {
 		return err
@@ -432,7 +438,20 @@ func (r *Runner) code(ctx context.Context, run *store.Run) (err error) {
 	if err != nil {
 		return err
 	}
-	result, codeErr := loop.Code(ctx, token, agent.CodeRequest{RunID: run.ID, Title: issue.Title, Body: issue.Body, Changes: env.repo, Baseline: baselineInfo, TestCommand: command, Session: session, Limits: limits.Agent, Memory: remembered, ProposeLessons: r.cfg.Memory.Enabled, OnPhase: func(c context.Context, phase store.Phase) error {
+	codeLimits := limits.Agent
+	var review *reviewState
+	var reviewHook func(context.Context, agent.CodeResult) (string, error)
+	if sel.Enabled {
+		// One budget, deadline and token account covers refine, code, review
+		// and repair. Coding stops early enough to leave the review its share.
+		review = &reviewState{sel: sel, spec: spec}
+		reviewHook, err = r.reviewHook(run, env, session, limits.Agent, review)
+		if err != nil {
+			return err
+		}
+		codeLimits = reserveForReview(limits.Agent, sel.ReserveFraction, r.now())
+	}
+	result, codeErr := loop.Code(ctx, token, agent.CodeRequest{RunID: run.ID, Title: issue.Title, Body: issue.Body, Changes: env.repo, Baseline: baselineInfo, TestCommand: command, Session: session, Limits: codeLimits, Memory: remembered, ProposeLessons: r.cfg.Memory.Enabled, Review: reviewHook, MaxReviewRepairs: sel.MaxRepairs, OnPhase: func(c context.Context, phase store.Phase) error {
 		if run.Status == store.StatusApproved {
 			if err := r.db.StartCode(c, run.ID, spec.Version, spec.Hash, run.Generation); err != nil {
 				return err
@@ -447,6 +466,10 @@ func (r *Runner) code(ctx context.Context, run *store.Run) (err error) {
 	r.saveLessons(ctx, *run, result.Lessons)
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	if review != nil && review.err != nil {
+		// A harness failure during review never degrades into publication.
+		return review.err
 	}
 	if codeErr != nil && !result.Salvage {
 		return codeErr
@@ -473,7 +496,14 @@ func (r *Runner) code(ctx context.Context, run *store.Run) (err error) {
 	if !result.CanPublish {
 		return budgetError(result.Reason)
 	}
-	return r.publish(ctx, run, env, meta, spec, result, baseline, codeErr)
+	if review != nil && !review.passed() {
+		// Fail closed: no ordinary PR without an approve verdict on this diff.
+		if !review.sel.SalvageDraft {
+			return &agent.Error{Kind: "review_failed", Message: review.failure() + "; no pull request was opened (review.salvage_draft is off)"}
+		}
+		result.Draft = true
+	}
+	return r.publish(ctx, run, env, meta, spec, result, baseline, codeErr, review)
 }
 
 func (r *Runner) baseline(ctx context.Context, run store.Run, env *toolEnvironment, command string, timeout time.Duration) (execx.Result, error) {

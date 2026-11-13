@@ -244,3 +244,47 @@ func (r *Repo) DiffStat(ctx context.Context) (DiffStat, error) {
 	stat, _, err := r.diffNumstat(ctx, index)
 	return stat, err
 }
+
+// TreeID returns the git tree object of the intended final worktree: the same
+// snapshot Diff renders, including untracked files. Unlike the bounded Diff
+// text it identifies the complete content, so it binds review and publication
+// to identical bytes even when the rendered diff is truncated.
+func (r *Repo) TreeID(ctx context.Context) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.verify(); err != nil {
+		return "", err
+	}
+	index, cleanup, err := r.diffIndex(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	out, _, err := r.runIndex(ctx, false, index, "write-tree")
+	if err != nil {
+		return "", err
+	}
+	return validObjectID(out)
+}
+
+// HeadTree returns the tree object of the checked-out commit.
+func (r *Repo) HeadTree(ctx context.Context) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.verify(); err != nil {
+		return "", err
+	}
+	out, err := r.complete(ctx, false, "rev-parse", "--verify", "HEAD^{tree}")
+	if err != nil {
+		return "", err
+	}
+	return validObjectID(out)
+}
+
+func validObjectID(out string) (string, error) {
+	id := strings.TrimSpace(out)
+	if !objectID.MatchString(id) {
+		return "", errors.New("git returned an invalid object ID")
+	}
+	return id, nil
+}

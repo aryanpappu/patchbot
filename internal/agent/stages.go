@@ -187,6 +187,14 @@ type CodeRequest struct {
 	// ProposeLessons registers the inert propose_lesson tool. It is set from
 	// configuration only, never from memory content.
 	ProposeLessons bool
+	// Review, when set, runs after harness verification whenever the result
+	// could be published. A non-empty return requests a review repair cycle:
+	// the text reaches the coder only as untrusted feedback, the harness then
+	// verifies again (one more attempt) and Review sees the new result. At most
+	// MaxReviewRepairs (capped at 1) cycles run, and never after a hard stop.
+	// An error stops coding. Review never sets CanPublish or clears Draft.
+	Review           func(context.Context, CodeResult) (string, error)
+	MaxReviewRepairs int
 }
 
 // CodeResult tells the runner whether there is anything to publish and whether
@@ -204,6 +212,8 @@ type CodeResult struct {
 	LastTest     *execx.Result
 	// Lessons are redacted model proposals for the runner to store as pending.
 	Lessons []string
+	// ReviewRepairs counts review-requested repair cycles that ran.
+	ReviewRepairs int
 }
 
 // Code requires a private concrete capability produced by Check. It revalidates the
@@ -238,6 +248,27 @@ func (l *Loop) Code(ctx context.Context, approval approvalToken, req CodeRequest
 	result := CodeResult{TestsStatus: "not_run"}
 	// Proposals made before any stop, including salvage, reach the runner.
 	defer func() { out.Lessons = box.Lessons() }()
+	attemptCap := lim.MaxTestAttempts
+	// repair asks the review hook about a publishable result. It reports true
+	// when a review repair cycle has been started in the coder's conversation.
+	repair := func(hardStop bool) (bool, error) {
+		if req.Review == nil {
+			return false, nil
+		}
+		findings, err := req.Review(ctx, result)
+		if err != nil {
+			return false, err
+		}
+		if findings == "" || hardStop || result.ReviewRepairs >= min(req.MaxReviewRepairs, 1) {
+			return false, nil
+		}
+		result.ReviewRepairs++
+		// One more harness attempt verifies the repaired patch.
+		attemptCap = result.TestAttempts + 1
+		resumeStage(session)
+		feedback(session, "An independent reviewer requested changes to the current patch. Address the findings that are consistent with the approved specification, stay within its scope, then call submit again. The harness verifies the result and the reviewer checks the new diff.\n"+boundedUntrusted("reviewer findings", stage.redactor().Redact(findings), 16<<10))
+		return true, nil
+	}
 	for {
 		if req.OnPhase != nil {
 			if err := req.OnPhase(ctx, store.PhaseCode); err != nil {
@@ -279,6 +310,13 @@ func (l *Loop) Code(ctx context.Context, approval approvalToken, req CodeRequest
 		if req.TestCommand == "" {
 			result.CanPublish, result.Salvage = true, hardStop
 			result.Draft = true
+			if again, err := repair(hardStop); err != nil || again {
+				if err != nil {
+					result.CanPublish, result.Salvage = false, false
+					return result, err
+				}
+				continue
+			}
 			return result, loopErr
 		}
 		if req.OnPhase != nil {
@@ -305,14 +343,28 @@ func (l *Loop) Code(ctx context.Context, approval approvalToken, req CodeRequest
 		if test.ExitCode == 0 && !test.TimedOut {
 			result.CanPublish, result.Salvage = true, hardStop
 			result.TestsStatus = "passed"
+			if again, err := repair(hardStop); err != nil || again {
+				if err != nil {
+					result.CanPublish, result.Salvage = false, false
+					return result, err
+				}
+				continue
+			}
 			return result, loopErr
 		}
 		result.TestsStatus, result.Draft = "failed", true
-		if hardStop || result.TestAttempts >= lim.MaxTestAttempts {
+		if hardStop || result.TestAttempts >= attemptCap {
 			result.CanPublish, result.Salvage = true, hardStop
+			if again, err := repair(hardStop); err != nil || again {
+				if err != nil {
+					result.CanPublish, result.Salvage = false, false
+					return result, err
+				}
+				continue
+			}
 			return result, loopErr
 		}
-		feedback(session, fmt.Sprintf("Harness tests failed (attempt %d of %d; exit code %d; timed out: %t). Repair the patch, then submit again.\n%s", result.TestAttempts, lim.MaxTestAttempts, test.ExitCode, test.TimedOut, boundedUntrusted("test output", tools.CapOutput(test.Output, 8<<10), 8<<10)))
+		feedback(session, fmt.Sprintf("Harness tests failed (attempt %d of %d; exit code %d; timed out: %t). Repair the patch, then submit again.\n%s", result.TestAttempts, attemptCap, test.ExitCode, test.TimedOut, boundedUntrusted("test output", tools.CapOutput(test.Output, 8<<10), 8<<10)))
 	}
 }
 

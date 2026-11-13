@@ -47,3 +47,6 @@ engineering questions together and record them here.
   credentials are masked even below the generic redactor's eight-byte threshold.
 - This task does not create a release commit, tag or push. An offline cached
   scanner without a vulnerability database is not evidence of a clean scan.
+
+## 2026-11-13: M21 opt-in reviewer
+- Reviewer is opt-in and sequential: verdict bound to spec hash + diff hash (base, full tree ID, bounded diff), one repair inside the approved code stage, fail closed to failure or a marked draft, selection frozen on the run at approval, one shared budget with a 15% default reserve.

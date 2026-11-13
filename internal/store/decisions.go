@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -86,11 +87,21 @@ func (s *SQLite) DecideRun(ctx context.Context, from, to Status, a Approval, gen
 		if to == StatusRunning || (to == StatusApproved && (phase == PhaseClone || phase == PhaseBaseline)) {
 			heartbeat = now
 		}
+		// An approve decision freezes the reviewer selection the approver saw.
+		// Later configuration changes or retries of this worker cannot alter it.
+		review := ""
+		if to == StatusApproved && a.Decision == "approve" && len(a.Review) > 0 {
+			if !json.Valid(a.Review) {
+				return errors.New("invalid review selection")
+			}
+			review = string(a.Review)
+		}
 		result, err := tx.ExecContext(ctx, `UPDATE runs SET generation=generation+1,status=?,updated_at=?,finished_at=?,heartbeat_at=?,waiting_since=NULL,
    phase=?,
    started_at=CASE WHEN ?='running' THEN COALESCE(started_at,?) ELSE started_at END,
-   outcome=CASE WHEN ?='rejected' THEN 'rejected' ELSE outcome END
-   WHERE id=? AND status=? AND generation=?`, to, now, finished, heartbeat, phase, to, now, to, a.RunID, from, generation)
+   outcome=CASE WHEN ?='rejected' THEN 'rejected' ELSE outcome END,
+   review_json=CASE WHEN ?='approved' THEN ? ELSE review_json END
+   WHERE id=? AND status=? AND generation=?`, to, now, finished, heartbeat, phase, to, now, to, to, review, a.RunID, from, generation)
 		if err != nil {
 			return err
 		}
@@ -142,4 +153,92 @@ func (s *SQLite) StartCode(ctx context.Context, runID, version int64, hash strin
 		_, err = appendEvent(ctx, tx, Event{RunID: runID, Type: "run.status", PayloadJSON: []byte(`{"from":"approved","status":"running","phase":"code"}`)})
 		return err
 	})
+}
+
+const reviewColumns = `id,run_id,round,spec_version,spec_hash,diff_hash,base_sha,tree_id,verdict,reason,findings_json,criteria_json,provider,model,created_at`
+
+func scanReview(row scanner) (Review, error) {
+	var r Review
+	var findings, criteria string
+	var created int64
+	err := row.Scan(&r.ID, &r.RunID, &r.Round, &r.SpecVersion, &r.SpecHash, &r.DiffHash, &r.BaseSHA, &r.TreeID,
+		&r.Verdict, &r.Reason, &findings, &criteria, &r.Provider, &r.Model, &created)
+	r.FindingsJSON, r.CriteriaJSON = json.RawMessage(findings), json.RawMessage(criteria)
+	r.CreatedAt = time.UnixMilli(created).UTC()
+	return r, mapError(err)
+}
+
+// SaveReview appends the next review round. The round must be the next one, the
+// spec version/hash must be the run's latest spec, and the run must still be
+// executing. A verdict for a stale spec or a finished run is refused.
+func (s *SQLite) SaveReview(ctx context.Context, r Review) (Review, error) {
+	switch r.Verdict {
+	case "approve", "request_changes", "incomplete":
+	default:
+		return Review{}, errors.New("invalid review verdict")
+	}
+	if len(r.FindingsJSON) == 0 {
+		r.FindingsJSON = json.RawMessage(`[]`)
+	}
+	if len(r.CriteriaJSON) == 0 {
+		r.CriteriaJSON = json.RawMessage(`[]`)
+	}
+	if !json.Valid(r.FindingsJSON) || !json.Valid(r.CriteriaJSON) {
+		return Review{}, errors.New("invalid review JSON")
+	}
+	r.Reason = cappedText(r.Reason, 2000)
+	r.CreatedAt = timestamp(r.CreatedAt)
+	var saved Review
+	err := s.withTx(ctx, func(tx *eventTx) error {
+		var status Status
+		if err := tx.QueryRowContext(ctx, `SELECT status FROM runs WHERE id=?`, r.RunID).Scan(&status); err != nil {
+			return err
+		}
+		if status != StatusRunning {
+			return ErrConflict
+		}
+		var version int64
+		var hash string
+		if err := tx.QueryRowContext(ctx, `SELECT version,hash FROM specs WHERE run_id=? ORDER BY version DESC LIMIT 1`, r.RunID).Scan(&version, &hash); err != nil {
+			return err
+		}
+		if version != r.SpecVersion || hash != r.SpecHash {
+			return ErrConflict
+		}
+		var next int64
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(round),0)+1 FROM reviews WHERE run_id=?`, r.RunID).Scan(&next); err != nil {
+			return err
+		}
+		if r.Round != 0 && r.Round != next {
+			return ErrConflict
+		}
+		r.Round = next
+		var err error
+		saved, err = scanReview(tx.QueryRowContext(ctx, `INSERT INTO reviews(`+strings.TrimPrefix(reviewColumns, "id,")+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING `+reviewColumns,
+			r.RunID, r.Round, r.SpecVersion, r.SpecHash, r.DiffHash, r.BaseSHA, r.TreeID, r.Verdict, r.Reason,
+			string(r.FindingsJSON), string(r.CriteriaJSON), r.Provider, r.Model, r.CreatedAt.UnixMilli()))
+		return err
+	})
+	if err != nil {
+		return Review{}, err
+	}
+	return saved, nil
+}
+
+// ListReviews returns a run's review rounds in order.
+func (s *SQLite) ListReviews(ctx context.Context, runID int64) ([]Review, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+reviewColumns+" FROM reviews WHERE run_id=? ORDER BY round", runID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []Review{}
+	for rows.Next() {
+		review, err := scanReview(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, review)
+	}
+	return out, rows.Err()
 }

@@ -34,6 +34,14 @@ poll_interval = "60s"
 ttl = "336h"
 max_revisions = 5
 
+[review]
+enabled = false
+model = ""                   # empty: the run's refine model
+max_repairs = 1              # 0 or 1
+max_turns = 15
+reserve_fraction = 0.15      # budget share kept back from coding for review
+salvage_draft = false        # draft PR marked as unreviewed when review fails
+
 [log]
 level = "info"
 format = "text"

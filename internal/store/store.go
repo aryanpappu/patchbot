@@ -46,6 +46,7 @@ const (
 	PhaseBaseline  Phase = "baseline"
 	PhaseCode      Phase = "code"
 	PhaseVerify    Phase = "verify"
+	PhaseReview    Phase = "review"
 	PhasePublish   Phase = "publish"
 )
 
@@ -101,6 +102,9 @@ type Run struct {
 	FinishedAt       *time.Time      `json:"finished_at"`
 	HeartbeatAt      *time.Time      `json:"heartbeat_at"`
 	WaitingSince     *time.Time      `json:"waiting_since"`
+	// ReviewJSON is the reviewer selection frozen when the spec was approved.
+	// Empty means the run was approved without a frozen selection (disabled).
+	ReviewJSON json.RawMessage `json:"review,omitempty"`
 }
 
 // RunFilter selects runs in descending (created_at, id) order. Limit defaults
@@ -172,6 +176,30 @@ type Approval struct {
 	Actor       string    `json:"actor"`
 	Channel     string    `json:"channel"`
 	CreatedAt   time.Time `json:"created_at"`
+	// Review is input only: an approve decision freezes it on the run in the
+	// same transaction. It is not stored with the approval row.
+	Review json.RawMessage `json:"-"`
+}
+
+// Review is one reviewer round bound to the exact approved spec and the exact
+// workspace diff it saw. Verdict is approve, request_changes or incomplete
+// (timeout, refusal, malformed verdict or budget); only approve can pass.
+type Review struct {
+	ID           int64           `json:"id"`
+	RunID        int64           `json:"run_id"`
+	Round        int64           `json:"round"`
+	SpecVersion  int64           `json:"spec_version"`
+	SpecHash     string          `json:"spec_hash"`
+	DiffHash     string          `json:"diff_hash"`
+	BaseSHA      string          `json:"base_sha"`
+	TreeID       string          `json:"tree_id"`
+	Verdict      string          `json:"verdict"`
+	Reason       string          `json:"reason"`
+	FindingsJSON json.RawMessage `json:"findings"`
+	CriteriaJSON json.RawMessage `json:"criteria"`
+	Provider     string          `json:"provider"`
+	Model        string          `json:"model"`
+	CreatedAt    time.Time       `json:"created_at"`
 }
 
 // Question stores a question and, optionally, its answer and provenance.
@@ -274,6 +302,9 @@ type Store interface {
 	// SetSpecComment attaches publication provenance without editing spec content.
 	SetSpecComment(ctx context.Context, runID, version int64, hash string, commentID int64) error
 	ValidApproval(ctx context.Context, runID, specVersion int64, specHash string) (Approval, error)
+	// SaveReview appends the next round for a run; ListReviews returns rounds in order.
+	SaveReview(context.Context, Review) (Review, error)
+	ListReviews(ctx context.Context, runID int64) ([]Review, error)
 	SaveQuestion(context.Context, Question) (Question, error)
 	ListQuestions(ctx context.Context, runID int64) ([]Question, error)
 
@@ -291,7 +322,7 @@ func IsSchemaIdentifier(key, value string) bool {
 	switch key {
 	case "phase":
 		switch Phase(value) {
-		case PhasePreflight, PhaseRefine, PhaseClone, PhaseBaseline, PhaseCode, PhaseVerify, PhasePublish:
+		case PhasePreflight, PhaseRefine, PhaseClone, PhaseBaseline, PhaseCode, PhaseVerify, PhaseReview, PhasePublish:
 			return true
 		}
 	case "status":

@@ -52,7 +52,9 @@ stateDiagram-v2
   needs_info --> cancelled: cancel
 ```
 
-`phase` distinguishes preflight, clone, refine, baseline, code, verify and publish.
+`phase` distinguishes preflight, clone, refine, baseline, code, verify, review and
+publish. `review` exists only when the run's frozen selection enables the
+opt-in reviewer.
 Clone/baseline after approval retain `approved` until the typed code gate claims
 execution. Refine mode stops after spec approval. Investigate uses read-only
 tools and returns a report. A dry run executes locally and stores publication
@@ -71,6 +73,34 @@ for queued and executing jobs. Shutdown stops admission and drains work for up
 to 30 seconds in the CLI, then cancels. Startup and maintenance recover stale
 owners. SQLite allows only one active run per repository issue.
 
+## Opt-in reviewer
+
+`[review]` is off by default. The approve decision freezes the selection
+(provider, model, max repairs, turns, reserve fraction, salvage policy) in
+`runs.review_json` in the same transaction; execution never reads mutable config.
+After a publishable harness result, the code stage calls a runner hook that moves
+the run to `review`, snapshots the workspace (base SHA, `git write-tree` of the
+complete intended worktree, bounded diff) and runs a separate read-only loop:
+refine tools plus `submit_review`. Its input is the approved spec, the diff and
+harness evidence as untrusted data, not the coder's summary. The verdict is
+saved in `reviews` with spec version/hash and diff hash. `request_changes`
+starts at most one repair cycle inside the same approved code stage (no second
+gate check is needed or possible), with findings as untrusted feedback, one more
+harness attempt and a fresh review of the new diff.
+
+Publication requires the last round to be `approve`, recomputes the diff hash
+before commit and checks the commit tree equals the reviewed tree. Anything else
+(timeout, refusal, malformed verdict, budget, still `request_changes`, a harness
+error during review, or a changed diff) blocks an ordinary PR: the run fails, or
+`salvage_draft` publishes a draft stating review did not pass. Review never sets
+publishability; `agent.Check`, harness tests and draft rules still apply.
+
+The reviewer shares the run `Session` accounting through fork/absorb, so its
+calls appear in usage events, steps and run totals like any other stage. Coding
+and repair get `reserve_fraction` less tokens, cost and active time than the run
+limit; the review gets the full remainder. Cancellation, heartbeats and stale
+recovery treat `running/review` like other executing phases.
+
 ## Data model
 
 SQLite uses modernc, WAL, foreign keys and one writer connection. Embedded,
@@ -80,12 +110,13 @@ Times are UTC milliseconds; money is integer micro-USD. NULL means unknown.
 
 | Table | Records |
 | --- | --- |
-| `runs` | Issue, mode, models, status, phase, outcome, base/head, PR, frozen limits, totals and heartbeat/generation |
+| `runs` | Issue, mode, models, status, phase, outcome, base/head, PR, frozen limits and review selection, totals and heartbeat/generation |
 | `specs` | Versioned canonical draft, markdown, content hash, issue hash, notes and comment provenance |
 | `approvals` | Exact version/hash, decision, actor, channel and time |
 | `questions` | Spec questions and recorded answers |
 | `steps` | Capped, redacted LLM/tool/test/git evidence and measured usage |
 | `run_events` | Per-run sequence, type and JSON payload for replay |
+| `reviews` | Reviewer rounds: verdict, findings, criteria, spec hash, diff hash, tree, model |
 | `run_artifacts` | Redacted spec/report/diff/test/PR previews and private accounting artifacts |
 | `actions` | Local and GitHub lifecycle decisions |
 | `memory_entries` | Per-repo typed observations and prose lessons, status, provenance and content hash |

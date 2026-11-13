@@ -88,7 +88,7 @@ func (r *Runner) publicationApproval(ctx context.Context, run store.Run, spec st
 	return approval, ctx.Err()
 }
 
-func (r *Runner) publish(ctx context.Context, run *store.Run, env *toolEnvironment, meta github.Repo, spec store.Spec, result agent.CodeResult, baseline string, codeErr error) error {
+func (r *Runner) publish(ctx context.Context, run *store.Run, env *toolEnvironment, meta github.Repo, spec store.Spec, result agent.CodeResult, baseline string, codeErr error, review *reviewState) error {
 	var summary *string
 	if result.Submission != nil {
 		summary = &result.Submission.Summary
@@ -122,7 +122,7 @@ func (r *Runner) publish(ctx context.Context, run *store.Run, env *toolEnvironme
 		return errors.New("default branch no longer exists")
 	}
 	moved := live.DefaultBranch != meta.DefaultBranch || branch.Commit.SHA != run.BaseSHA
-	title, body := r.prText(*run, spec, approval, result, baseline, moved, codeErr)
+	title, body := r.prText(*run, spec, approval, result, baseline, moved, codeErr, review)
 	if err := r.artifact(ctx, run.ID, "pr_title", title); err != nil {
 		return err
 	}
@@ -137,12 +137,25 @@ func (r *Runner) publish(ctx context.Context, run *store.Run, env *toolEnvironme
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := r.reviewedDiff(ctx, *run, env, review); err != nil {
+		return err
+	}
 	var head string
 	if err := r.operation(ctx, *run, "git", "commit", func() error {
 		var err error
 		head, err = env.repo.CommitAll(ctx, fmt.Sprintf("fix: %s (#%d)", title, run.IssueNumber), gitx.Author{})
+		if err == nil && review != nil {
+			// The commit must contain exactly the reviewed tree.
+			var tree string
+			if tree, err = env.repo.HeadTree(ctx); err == nil && tree != review.last.TreeID {
+				err = errReviewStale
+			}
+		}
 		return err
 	}); err != nil {
+		if errors.Is(err, errReviewStale) {
+			return &agent.Error{Kind: "review_stale", Message: "committed patch differs from the reviewed diff; refusing to publish"}
+		}
 		return err
 	}
 	if err := r.transition(ctx, run, store.StatusRunning, store.PhasePublish, store.RunPatch{HeadSHA: &head}); err != nil {
@@ -190,7 +203,11 @@ func (r *Runner) publish(ctx context.Context, run *store.Run, env *toolEnvironme
 	if err := r.transition(ctx, run, store.StatusRunning, store.PhasePublish, store.RunPatch{PRNumber: &number, PRURL: &pr.HTMLURL, PRDraft: &result.Draft}); err != nil {
 		return err
 	}
-	if _, err := r.comment(ctx, *run, fmt.Sprintf("patchbot run %d: %s\nHarness tests: %s (%d attempts).", run.ID, pr.HTMLURL, result.TestsStatus, result.TestAttempts)); err != nil {
+	note := fmt.Sprintf("patchbot run %d: %s\nHarness tests: %s (%d attempts).", run.ID, pr.HTMLURL, result.TestsStatus, result.TestAttempts)
+	if review != nil && review.last != nil {
+		note += fmt.Sprintf("\nIndependent review: %s (round %d).", review.last.Verdict, review.last.Round)
+	}
+	if _, err := r.comment(ctx, *run, note); err != nil {
 		if err := r.artifact(ctx, run.ID, "publish_comment_warning", "PR opened, but the issue comment could not be posted."); err != nil {
 			return err
 		}
@@ -198,9 +215,33 @@ func (r *Runner) publish(ctx context.Context, run *store.Run, env *toolEnvironme
 	return r.transition(ctx, run, store.StatusSucceeded, store.PhasePublish, store.RunPatch{Outcome: &outcome})
 }
 
-func (r *Runner) prText(run store.Run, spec store.Spec, approval store.Approval, result agent.CodeResult, baseline string, moved bool, codeErr error) (string, string) {
+var errReviewStale = errors.New("patch differs from reviewed diff")
+
+// reviewedDiff requires the patch about to be committed to hash to the last
+// reviewed snapshot. Nothing may change the workspace after a review.
+func (r *Runner) reviewedDiff(ctx context.Context, run store.Run, env *toolEnvironment, review *reviewState) error {
+	if review == nil {
+		return nil
+	}
+	if review.last == nil {
+		return &agent.Error{Kind: "review_failed", Message: "no review was recorded for this patch"}
+	}
+	snap, err := r.snapshotDiff(ctx, run, env)
+	if err != nil {
+		return err
+	}
+	if snap.hash != review.last.DiffHash || snap.tree != review.last.TreeID {
+		return &agent.Error{Kind: "review_stale", Message: "workspace diff changed after review; refusing to publish"}
+	}
+	return nil
+}
+
+func (r *Runner) prText(run store.Run, spec store.Spec, approval store.Approval, result agent.CodeResult, baseline string, moved bool, codeErr error, review *reviewState) (string, string) {
 	title := fmt.Sprintf("Fix issue #%d", run.IssueNumber)
 	var b strings.Builder
+	if review != nil && !review.passed() {
+		fmt.Fprintf(&b, "**Draft: independent review did not pass** (%s). The reviewer has not approved this patch; treat it as unreviewed work.\n\n", review.failure())
+	}
 	if result.Salvage {
 		fmt.Fprintf(&b, "Draft salvage: coding stopped (%s). Review the incomplete work.\n\n", result.Reason)
 	}
@@ -231,6 +272,7 @@ func (r *Runner) prText(run store.Run, spec store.Spec, approval store.Approval,
 	if result.LastTest != nil {
 		fmt.Fprintf(&b, "\nHarness exit code: %d; timed out: %t.\n\n```text\n%s\n```\n", result.LastTest.ExitCode, result.LastTest.TimedOut, tools.CapOutput(result.LastTest.Output, 8<<10))
 	}
+	b.WriteString(prReview(review))
 	if moved {
 		fmt.Fprintf(&b, "\nThe default branch has moved since refinement. This patch is based on `%s`; review for integration changes.\n", run.BaseSHA)
 	}

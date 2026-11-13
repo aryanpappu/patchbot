@@ -36,6 +36,7 @@ type Config struct {
 	Defaults  Defaults             `toml:"defaults"`
 	Limits    Limits               `toml:"limits"`
 	Approval  Approval             `toml:"approval"`
+	Review    Review               `toml:"review"`
 	Log       Log                  `toml:"log"`
 	Server    Server               `toml:"server"`
 	Data      Data                 `toml:"data"`
@@ -99,6 +100,25 @@ type Approval struct {
 	// TTL is how long a run may wait for approval before it expires.
 	TTL          time.Duration `toml:"ttl"`
 	MaxRevisions int           `toml:"max_revisions"`
+}
+
+// Review configures the opt-in sequential reviewer. Approval freezes these
+// values on the run; a later config change does not affect approved runs.
+type Review struct {
+	// Enabled turns on the read-only review stage after harness verification.
+	Enabled bool `toml:"enabled"`
+	// Model is the reviewer model; empty uses the run's refine model.
+	Model string `toml:"model"`
+	// MaxRepairs is the number of review-requested coder repair cycles (0 or 1).
+	MaxRepairs int `toml:"max_repairs"`
+	// MaxTurns bounds each review round.
+	MaxTurns int `toml:"max_turns"`
+	// ReserveFraction of the run's token, cost and time budget is kept back
+	// from coding so the review can still run.
+	ReserveFraction float64 `toml:"reserve_fraction"`
+	// SalvageDraft publishes a clearly marked draft PR when review does not
+	// pass. When false such a run fails without publishing.
+	SalvageDraft bool `toml:"salvage_draft"`
 }
 
 // Log configures logging.

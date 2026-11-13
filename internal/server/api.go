@@ -262,6 +262,10 @@ func (s *Server) detailData(ctx context.Context, id int64) (map[string]any, erro
 	if err != nil {
 		return nil, err
 	}
+	reviews, err := s.db.ListReviews(ctx, id)
+	if err != nil {
+		return nil, err
+	}
 	publicArtifacts := []store.ArtifactMetadata{}
 	for _, a := range artifacts {
 		if publicArtifact(a.Kind) {
@@ -280,7 +284,7 @@ func (s *Server) detailData(ctx context.Context, id int64) (map[string]any, erro
 	if len(specs) > 0 {
 		latest = &specs[len(specs)-1]
 	}
-	return map[string]any{"run": publicRun(run), "capabilities": s.runner.ActionCapabilities(run, latest), "latest_spec": latest, "spec_versions": specs, "approvals": approvals, "steps": steps, "artifacts": publicArtifacts}, nil
+	return map[string]any{"run": publicRun(run), "capabilities": s.runner.ActionCapabilities(run, latest), "latest_spec": latest, "spec_versions": specs, "approvals": approvals, "steps": steps, "artifacts": publicArtifacts, "reviews": reviews}, nil
 }
 
 func (s *Server) editSpec(w http.ResponseWriter, r *http.Request) {
@@ -381,7 +385,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 
 func publicArtifact(name string) bool {
 	switch name {
-	case "diff", "baseline", "test_output", "pr_title", "pr_body":
+	case "diff", "baseline", "test_output", "review", "pr_title", "pr_body":
 		return true
 	default:
 		return false

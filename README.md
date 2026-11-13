@@ -216,6 +216,34 @@ SQLite backups or WAL files are not rewritten. Set `[memory] enabled = false`
 to stop all retrieval and writing; the `memory` commands still manage stored
 entries.
 
+## Independent review (opt-in)
+
+`[review] enabled = true` adds a `review` phase after harness verification and
+before publish. A separate read-only reviewer (refine tools plus
+`submit_review`) sees the approved spec, the actual bounded workspace diff and
+the harness test evidence, never the coder's summary, all as untrusted data. It
+returns `approve` or `request_changes` with findings (`file`, `line`,
+`severity`, `summary`) and a met/unmet assessment of every criterion ID. Each
+verdict is stored bound to the spec hash and a diff hash (base SHA, complete
+worktree tree ID and diff text).
+
+`request_changes` triggers at most one coder repair cycle (`max_repairs`): the
+findings reach the coder as untrusted feedback, the harness runs the tests once
+more, and a fresh review checks the new diff. Publication recomputes the diff
+hash and requires the committed tree to equal the last reviewed tree.
+
+Review fails closed. A timeout, refusal, malformed verdict, exhausted budget or
+a still-`request_changes` verdict never opens an ordinary PR: the run fails with
+`review_failed`, or, with `salvage_draft = true`, opens a draft PR that states
+review did not pass. Review approval never replaces the approval gate, the
+harness tests or human review; failed tests still produce a draft.
+
+Refine, code, review and repair share one budget, token limit and deadline.
+`reserve_fraction` (default 0.15) is held back from coding so a review can
+still run. The model defaults to the run's refine model. Approval freezes the
+whole selection on the run; later config edits do not affect it, and runs
+approved with review off stay unreviewed.
+
 ## Web UI
 
 - `/runs/new`: allowlisted repo, issue, mode, provider/model, optional refine
@@ -223,7 +251,7 @@ entries.
 - `/runs`: filters, paging, status, cost, approval count and PR links, plus a
   repository memory panel to list, approve, reject, forget or add lessons.
 - `/runs/ID`: spec editor/history, approval controls, timeline, live events,
-  counters, diffs, test output, PR preview and retry controls.
+  counters, diffs, test output, review verdicts, PR preview and retry controls.
 
 Specs and model output appear as plain text. Vue 3.5.13 is pinned with SRI.
 `server.vue_src = "local"` uses the included verified asset and works offline in
