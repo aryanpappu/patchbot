@@ -1,0 +1,4313 @@
+Reading additional input from stdin...
+OpenAI Codex v0.166.0
+--------
+workdir: /Users/pappumishra/Documents/selfproject/patchbot
+model: gpt-6.1-sol
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: none
+session id: 01a1d5cf-454e-7031-bb10-3a9868957846
+--------
+user
+Read docs/planning/auth/claude-position.md and check it against the code (internal/github, internal/gitx command/auth handling, internal/config, internal/runner/publish.go, docs/planning/step2/PLAN.md M23-M26). Do not write code. As a skeptical senior engineer, write docs/planning/auth/codex-round1.md (under 100 lines): agree/disagree with each option A-D and the recommendation with concrete reasons tied to the code; risks Claude missed (App private key custody on a shared host, installation-token caching and expiry mid-run, bot identity vs approver checks in sync.go, rate limits, how M24 add-repo should validate access, secret storage in SQLite vs env, rotation); and your final recommendation with acceptance criteria. Be blunt.
+codex
+I’ll read Claude’s proposal and the relevant code, then write a blunt review in `docs/planning/auth/codex-round1.md`. I won’t change code.
+exec
+/bin/zsh -lc "pwd; rg --files -g 'AGENTS.md' -g 'claude-position.md' -g 'PLAN.md' -g '*.go' internal docs/planning .agents" in /Users/pappumishra/Documents/selfproject/patchbot
+ exited 2 in 0ms:
+/Users/pappumishra/Documents/selfproject/patchbot
+rg: .agents: No such file or directory (os error 2)
+docs/planning/auth/claude-position.md
+internal/store/webhooks.go
+internal/store/records_test.go
+internal/store/review_test.go
+internal/store/migrate.go
+internal/store/sqlite_test.go
+internal/store/views.go
+internal/store/memory_test.go
+internal/store/inspect.go
+internal/store/events.go
+internal/store/decisions.go
+internal/store/records.go
+internal/store/inspect_test.go
+internal/store/sqlite.go
+internal/store/events_test.go
+internal/store/decisions_test.go
+internal/store/store.go
+docs/planning/step2/PLAN.md
+docs/planning/step2/claude-position.md
+internal/store/webhooks_test.go
+internal/store/memory.go
+internal/logging/logging_test.go
+internal/logging/logging.go
+internal/server/broadcast.go
+internal/server/api_test.go
+internal/server/lifecycle_test.go
+internal/server/json.go
+internal/server/sse_test.go
+internal/server/review_test.go
+internal/server/manager.go
+internal/server/webhook_test.go
+internal/server/memory_test.go
+internal/server/findings_m13_test.go
+internal/server/api.go
+internal/server/web_test.go
+internal/server/fixture_test.go
+internal/server/schema_m15_test.go
+internal/server/sse.go
+internal/server/capabilities_test.go
+internal/server/server.go
+internal/server/web.go
+internal/server/security_test.go
+internal/server/webhook.go
+internal/server/memory.go
+internal/secret/redactor_test.go
+internal/secret/secret_test.go
+internal/secret/secret.go
+internal/secret/writer.go
+internal/secret/redactor.go
+internal/secret/writer_test.go
+internal/secret/fuzz_test.go
+internal/workspace/workspace.go
+internal/workspace/jail_test.go
+internal/workspace/manager.go
+internal/version/version.go
+internal/workspace/wstest/wstest.go
+internal/workspace/acquisition_unix_test.go
+internal/workspace/local.go
+internal/workspace/jail.go
+internal/workspace/manager_test.go
+internal/workspace/local_unix_test.go
+internal/workspace/local_test.go
+internal/workspace/acquisition_test.go
+internal/workspace/normalization_test.go
+internal/github/errors.go
+internal/github/mentions.go
+internal/github/mentions_test.go
+internal/github/commands.go
+internal/github/identity.go
+internal/github/operations.go
+internal/github/http.go
+internal/github/types.go
+internal/github/commands_test.go
+internal/github/http_test.go
+internal/testpath/testpath.go
+internal/runner/cli_test.go
+internal/runner/review_test.go
+internal/runner/publish.go
+internal/runner/hardening_test.go
+internal/runner/runner_test.go
+internal/runner/memory_test.go
+internal/runner/recovery_test.go
+internal/runner/phases.go
+internal/runner/findings_test.go
+internal/runner/capabilities.go
+internal/runner/cli_redaction_m15_test.go
+internal/runner/heartbeat_test.go
+internal/runner/lifecycle.go
+internal/runner/ingress_test.go
+internal/runner/review_internal_test.go
+internal/runner/ingress.go
+internal/runner/records.go
+internal/runner/review.go
+internal/runner/sync.go
+internal/runner/smoke_test.go
+internal/runner/runner.go
+internal/runner/accounting.go
+internal/runner/executor_test.go
+internal/runner/reapproval_test.go
+internal/runner/memory.go
+internal/cli/doctor_process_m15_test.go
+internal/cli/runs.go
+internal/cli/cli_test.go
+internal/cli/doctor.go
+internal/cli/config_test.go
+internal/cli/memory_test.go
+internal/cli/doctor_test.go
+internal/cli/cli.go
+internal/cli/serve_test.go
+internal/cli/runs_test.go
+internal/cli/serve.go
+internal/cli/models_test.go
+internal/cli/doctor_container_test.go
+internal/cli/config.go
+internal/cli/models.go
+internal/cli/memory.go
+internal/testhttp/server.go
+internal/web/web_test.go
+internal/web/web.go
+internal/agent/api_test.go
+internal/agent/review_test.go
+internal/agent/memory_test.go
+internal/agent/stages.go
+internal/web/cmd/vendor-vue/main_test.go
+internal/web/cmd/vendor-vue/main.go
+internal/agent/gate.go
+internal/agent/loop_test.go
+internal/agent/loop.go
+internal/agent/stages_test.go
+internal/agent/recorder_test.go
+internal/agent/gate_test.go
+internal/agent/recorder.go
+internal/agent/types.go
+internal/agent/prompts.go
+internal/agent/review.go
+internal/execx/exit_other_unix.go
+internal/execx/exit_linux.go
+internal/execx/capwriter_test.go
+internal/execx/path.go
+internal/execx/container.go
+internal/execx/execx.go
+internal/execx/exit_darwin.go
+internal/execx/local_unix.go
+internal/execx/findings_m15_test.go
+internal/execx/path_unix.go
+internal/execx/policy.go
+internal/execx/process_unix.go
+internal/execx/exit_bsd.go
+internal/execx/local_other.go
+internal/execx/container_integration_test.go
+internal/execx/path_test.go
+internal/execx/env_test.go
+internal/execx/container_test.go
+internal/execx/capwriter.go
+internal/execx/local_unix_test.go
+internal/execx/policy_test.go
+internal/execx/path_other.go
+internal/execx/env.go
+internal/agent/testdata/without_token/invalid.go
+internal/config/load.go
+internal/config/webhook_test.go
+internal/config/executor.go
+internal/config/show_test.go
+internal/config/llm_test.go
+internal/config/validate.go
+internal/config/load_test.go
+internal/config/validate_test.go
+internal/config/llm.go
+internal/config/show.go
+internal/config/config.go
+internal/config/executor_test.go
+internal/config/release_test.go
+internal/agent/testdata/registry_injection/invalid.go
+internal/agent/security_regression_test.go
+internal/memory/memory_test.go
+internal/memory/memory.go
+internal/gitx/integrity.go
+internal/gitx/publish.go
+internal/gitx/gitx_test.go
+internal/gitx/tree_test.go
+internal/gitx/diff_numstat.go
+internal/gitx/diff_limits.go
+internal/gitx/gitx.go
+internal/gitx/changes.go
+internal/gitx/command.go
+internal/gitx/security_test.go
+internal/gitx/version.go
+internal/gitx/resolution_m15_test.go
+internal/llm/errors.go
+internal/tools/read_file.go
+internal/tools/jail_test.go
+internal/tools/write_file.go
+internal/tools/tool.go
+internal/tools/lesson_test.go
+internal/tools/tools_test.go
+internal/tools/run_cmd.go
+internal/tools/registry_test.go
+internal/tools/search.go
+internal/tools/submit_review.go
+internal/tools/registry.go
+internal/tools/identifiers.go
+internal/tools/edit_file.go
+internal/tools/lesson.go
+internal/tools/containment_test.go
+internal/tools/list_dir.go
+internal/tools/submit.go
+internal/tools/terminal_test.go
+internal/tools/security_test.go
+internal/llm/types.go
+internal/llm/types_test.go
+internal/llm/retry_test.go
+internal/llm/openai/findings_test.go
+internal/llm/openai/wire.go
+internal/llm/openai/openai.go
+internal/llm/openai/openai_test.go
+internal/llm/openai/edge_test.go
+internal/llm/openai/models_test.go
+internal/llm/gemini/errors.go
+internal/llm/gemini/gemini_test.go
+internal/llm/gemini/regression_test.go
+internal/llm/gemini/edge_test.go
+internal/llm/gemini/timeout_m15_test.go
+internal/llm/gemini/request.go
+internal/llm/gemini/response.go
+internal/llm/gemini/gemini.go
+internal/llm/openai/models.go
+internal/llm/models_test.go
+internal/llm/errors_test.go
+internal/llm/schema_test.go
+internal/llm/models.go
+internal/llm/provider.go
+internal/llm/testclock_test.go
+internal/llm/pricing_test.go
+internal/llm/pricing.go
+internal/llm/registry.go
+internal/llm/fake/fake_test.go
+internal/llm/fake/fake.go
+internal/llm/schema.go
+internal/llm/providers/providers.go
+internal/llm/registry_test.go
+internal/llm/providers/providers_test.go
+internal/llm/retry.go
+internal/llm/anthropic/anthropic_test.go
+internal/llm/anthropic/hardening_test.go
+internal/llm/anthropic/anthropic.go
+internal/llm/anthropic/timeout_m15_test.go
+
+exec
+/bin/zsh -lc 'find .. -name AGENTS.md -print; cat docs/planning/auth/claude-position.md; cat internal/github/{http,identity,operations,types}.go; cat internal/gitx/{command,publish}.go' in /Users/pappumishra/Documents/selfproject/patchbot
+ succeeded in 7198ms:
+../pappumishra/vendor/kirschbaum-development/eloquent-power-joins/AGENTS.md
+../job-agent/AGENTS.md
+../stock/backend/vendor/larastan/larastan/AGENTS.md
+../stock/AGENTS.md
+# GitHub auth model for patchbot: Claude's opening position (2026-11-13)
+
+Context: one owner (aryanpappu), self-hosted patchbot on a shared Mumbai server, repos allowlisted in config,
+planned M23 (login dashboard via Cloudflare Access JWT) and M24 (add/edit repos from the dashboard).
+Today: one fine-grained PAT in GITHUB_TOKEN (env), used for clone/push (GIT_CONFIG_* header, never argv)
+and REST (issues, comments, PRs). `github.TokenSource` seam exists. Owner asks: account-wide token or
+per-repo token?
+
+## Options
+A. One account-wide classic PAT (repo scope). Simple; blast radius = every repo the owner has, incl. private
+   and other people's orgs. Never expires unless set. Reject.
+B. One fine-grained PAT covering "selected repos". Owner edits repo list on GitHub when adding a repo.
+   One secret, least privilege per repo set, max 1 year expiry. Blast radius = the selected set.
+C. One fine-grained PAT per repo, stored per repo (encrypted in SQLite, key from env). Smallest blast radius
+   per token, but N secrets to create/rotate by hand, and secrets now live in the DB (today: env only).
+D. GitHub App installed on chosen repos. Private key in env; patchbot mints 1-hour installation tokens
+   scoped per run to exactly ONE repo (`repositories=[name]`) with only contents/issues/pull_requests.
+   Commits/PRs show as `patchbot[bot]`, so `/approve` from the owner is clearly distinct from the bot's own
+   comments. Adding a repo = tick it in the App installation (or dashboard deep link). No long-lived repo token.
+
+## My recommendation
+Now (pilot): B — one fine-grained PAT, selected repos, 90-day expiry. Zero code.
+Next milestone (with M24): D — GitHub App behind the existing TokenSource, per-run single-repo
+installation tokens, keep PAT as fallback for local/dev. Not C: per-repo PATs multiply manual secrets and
+move secrets into the DB for less benefit than D gives automatically.
+Dashboard "add repo" (M24) must verify the App installation (or PAT) can actually reach the repo before
+saving, and never accept a token through the web UI.
+package github
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/version"
+)
+
+const (
+	defaultBaseURL  = "https://api.github.com"
+	requestTimeout  = 30 * time.Second
+	maxResponseBody = 10 << 20
+	maxComments     = 300
+)
+
+// HTTPClient implements Client using the versioned GitHub REST API. Its settings
+// are immutable after construction, making it safe for concurrent use.
+type HTTPClient struct {
+	httpClient *http.Client
+	baseURL    *url.URL
+	tokens     TokenSource
+	userAgent  string
+}
+
+var _ Client = (*HTTPClient)(nil)
+
+// New constructs a REST client. Empty baseURL selects api.github.com; an
+// Enterprise base URL can include /api/v3. A nil httpClient uses http.DefaultClient.
+// Each request has a 30 second deadline, including token acquisition and reads.
+// The supplied http.Client is copied; redirects are refused to protect credentials.
+func New(httpClient *http.Client, baseURL string, tokens TokenSource) (*HTTPClient, error) {
+	if tokens == nil {
+		return nil, errors.New("New: token source is required")
+	}
+	if baseURL == "" {
+		baseURL = defaultBaseURL
+	}
+	base, err := url.Parse(baseURL)
+	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" ||
+		base.User != nil || base.RawQuery != "" || base.ForceQuery || base.Fragment != "" || base.Opaque != "" {
+		return nil, errors.New("New: invalid GitHub API base URL")
+	}
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	transport := *httpClient
+	transport.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &HTTPClient{
+		httpClient: &transport, baseURL: base, tokens: tokens, userAgent: "patchbot/" + version.Version,
+	}, nil
+}
+
+func (c *HTTPClient) endpoint(repo RepoRef, parts ...string) (*url.URL, error) {
+	if !validRepoPart(repo.Owner) || !validRepoPart(repo.Name) {
+		return nil, errors.New("invalid repository reference")
+	}
+	path := strings.TrimRight(c.baseURL.EscapedPath(), "/") + "/repos/" +
+		url.PathEscape(repo.Owner) + "/" + url.PathEscape(repo.Name)
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." || strings.ContainsRune(part, 0) {
+			return nil, errors.New("invalid API path component")
+		}
+		path += "/" + url.PathEscape(part)
+	}
+	u := *c.baseURL
+	decoded, err := url.PathUnescape(path)
+	if err != nil {
+		return nil, errors.New("invalid API path")
+	}
+	u.Path, u.RawPath = decoded, path
+	return &u, nil
+}
+
+func validRepoPart(part string) bool {
+	return part != "" && part != "." && part != ".." && !strings.ContainsAny(part, "/\\\x00")
+}
+
+type responseMeta struct {
+	header http.Header
+	status int
+}
+
+func (c *HTTPClient) request(ctx context.Context, method string, target *url.URL, body, out any, statuses ...int) (responseMeta, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	token, err := c.tokens.Token(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return responseMeta{}, ctx.Err()
+		}
+		// A token source's error can itself contain a credential.
+		return responseMeta{}, errors.New("authentication token unavailable")
+	}
+	if token == "" || strings.ContainsAny(token, "\r\n") {
+		return responseMeta{}, errors.New("invalid authentication token")
+	}
+	for _, secret := range tokenForms(token) {
+		if strings.Contains(target.String(), secret) {
+			return responseMeta{}, errors.New("credential found in request URL")
+		}
+	}
+	var data []byte
+	if body != nil {
+		data, err = json.Marshal(body)
+		if err != nil {
+			return responseMeta{}, errors.New("cannot encode request body")
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target.String(), bytes.NewReader(data))
+	if err != nil {
+		return responseMeta{}, errors.New("cannot construct API request")
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("Authorization", "Bearer "+token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if etag, ok := ctx.Value(etagKey{}).(string); ok && etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return responseMeta{}, safeIOError(ctx, err, "API request failed")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	meta := responseMeta{header: resp.Header, status: resp.StatusCode}
+	if !slices.Contains(statuses, resp.StatusCode) {
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+		if readErr != nil {
+			return meta, safeIOError(ctx, readErr, "cannot read API error response")
+		}
+		return meta, responseError(resp.StatusCode, resp.Header, data, token)
+	}
+	data, err = io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
+	if err != nil {
+		return meta, safeIOError(ctx, err, "cannot read API response")
+	}
+	if len(data) > maxResponseBody {
+		return meta, errors.New("API response exceeds 10 MB")
+	}
+	if out != nil && resp.StatusCode != http.StatusNotModified {
+		if err := json.Unmarshal(data, out); err != nil {
+			// Decoder errors can quote response data, including echoed credentials.
+			return meta, errors.New("invalid API JSON response")
+		}
+	}
+	return meta, nil
+}
+
+func safeIOError(ctx context.Context, err error, message string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	return errors.New(message)
+}
+
+// nextPage accepts only links to the same API endpoint, preventing pagination
+// from sending authorization to another host or an unrelated API path.
+func nextPage(current *url.URL, header http.Header) (*url.URL, error) {
+	for _, line := range header.Values("Link") {
+		for _, link := range strings.Split(line, ",") {
+			parts := strings.Split(link, ";")
+			next := false
+			for _, parameter := range parts[1:] {
+				key, value, ok := strings.Cut(strings.TrimSpace(parameter), "=")
+				if ok && strings.EqualFold(key, "rel") && slices.Contains(strings.Fields(strings.Trim(value, "\"")), "next") {
+					next = true
+				}
+			}
+			if !next {
+				continue
+			}
+			ref, err := url.Parse(strings.Trim(strings.TrimSpace(parts[0]), "<>"))
+			if err != nil {
+				return nil, errors.New("invalid pagination URL")
+			}
+			u := current.ResolveReference(ref)
+			if u.Scheme != current.Scheme || u.Host != current.Host || u.EscapedPath() != current.EscapedPath() ||
+				u.User != nil || u.Fragment != "" || u.Opaque != "" {
+				return nil, errors.New("unsafe pagination URL")
+			}
+			return u, nil
+		}
+	}
+	return nil, nil
+}
+
+func operationError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", operation, err)
+}
+package github
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"strings"
+)
+
+// CurrentUser obtains the authenticated bot login for fail-closed comment sync.
+func (c *HTTPClient) CurrentUser(ctx context.Context) (string, error) {
+	target := *c.baseURL
+	target.Path = strings.TrimRight(target.Path, "/") + "/user"
+	target.RawPath = ""
+	var user struct {
+		Login string `json:"login"`
+	}
+	_, err := c.request(ctx, http.MethodGet, &target, nil, &user, http.StatusOK)
+	if err != nil {
+		return "", operationError("CurrentUser", err)
+	}
+	if user.Login == "" {
+		return "", errors.New("CurrentUser: missing login")
+	}
+	return user.Login, nil
+}
+package github
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/url"
+	"strconv"
+	"time"
+)
+
+func (c *HTTPClient) call(ctx context.Context, repo RepoRef, parts []string, method string, in, out any, statuses ...int) (responseMeta, error) {
+	u, err := c.endpoint(repo, parts...)
+	if err != nil {
+		return responseMeta{}, err
+	}
+	return c.request(ctx, method, u, in, out, statuses...)
+}
+
+// GetRepo fetches preflight metadata, including push permission and visibility.
+func (c *HTTPClient) GetRepo(ctx context.Context, ref RepoRef) (Repo, error) {
+	var repo Repo
+	_, err := c.call(ctx, ref, nil, http.MethodGet, nil, &repo, http.StatusOK)
+	return repo, operationError("GetRepo", err)
+}
+
+// GetIssue fetches the issue's current text and metadata.
+func (c *HTTPClient) GetIssue(ctx context.Context, repo RepoRef, number int) (Issue, error) {
+	var issue Issue
+	_, err := c.call(ctx, repo, []string{"issues", strconv.Itoa(number)}, http.MethodGet, nil, &issue, http.StatusOK)
+	return issue, operationError("GetIssue", err)
+}
+
+// GetIssueComment fetches a spec rendering for the runner's tampering check.
+func (c *HTTPClient) GetIssueComment(ctx context.Context, repo RepoRef, id int64) (Comment, error) {
+	var comment Comment
+	_, err := c.call(ctx, repo, []string{"issues", "comments", strconv.FormatInt(id, 10)}, http.MethodGet, nil, &comment, http.StatusOK)
+	return comment, operationError("GetIssueComment", err)
+}
+
+// ListIssueComments follows Link pagination, returning at most 300 comments.
+// A zero since includes all comments; otherwise GitHub filters by updated time.
+func (c *HTTPClient) ListIssueComments(ctx context.Context, repo RepoRef, number int, since time.Time) ([]Comment, error) {
+	comments, _, _, err := c.listComments(ctx, repo, number, since, "")
+	return comments, operationError("ListIssueComments", err)
+}
+
+// ListIssueCommentsSince supports conditional polling. The ETag is returned only
+// for a single-page response: caching one page cannot validate later pages.
+func (c *HTTPClient) ListIssueCommentsSince(ctx context.Context, repo RepoRef, number int, since time.Time, etag string) ([]Comment, string, bool, error) {
+	comments, newETag, unchanged, err := c.listComments(ctx, repo, number, since, etag)
+	return comments, newETag, unchanged, operationError("ListIssueCommentsSince", err)
+}
+
+type etagKey struct{}
+
+func (c *HTTPClient) listComments(ctx context.Context, repo RepoRef, number int, since time.Time, etag string) ([]Comment, string, bool, error) {
+	u, err := c.endpoint(repo, "issues", strconv.Itoa(number), "comments")
+	if err != nil {
+		return nil, "", false, err
+	}
+	query := url.Values{"per_page": {"100"}}
+	if !since.IsZero() {
+		query.Set("since", since.UTC().Format(time.RFC3339Nano))
+	}
+	u.RawQuery = query.Encode()
+	comments := make([]Comment, 0)
+	seen := make(map[string]bool)
+	var newETag string
+	for page := 0; u != nil; page++ {
+		if page >= maxComments || seen[u.String()] {
+			return nil, "", false, errors.New("pagination cycle or page limit exceeded")
+		}
+		seen[u.String()] = true
+		requestCtx := ctx
+		if page == 0 && etag != "" {
+			requestCtx = context.WithValue(ctx, etagKey{}, etag)
+		}
+		var batch []Comment
+		meta, err := c.request(requestCtx, http.MethodGet, u, nil, &batch, http.StatusOK, http.StatusNotModified)
+		if err != nil {
+			return nil, "", false, err
+		}
+		if meta.status == http.StatusNotModified {
+			if page != 0 || etag == "" {
+				return nil, "", false, errors.New("unexpected not-modified response")
+			}
+			if newETag = meta.header.Get("ETag"); newETag == "" {
+				newETag = etag
+			}
+			return nil, newETag, true, nil
+		}
+		if page == 0 {
+			newETag = meta.header.Get("ETag")
+		} else {
+			newETag = ""
+		}
+		remaining := maxComments - len(comments)
+		comments = append(comments, batch[:min(len(batch), remaining)]...)
+		if len(comments) == maxComments {
+			return comments, "", false, nil
+		}
+		u, err = nextPage(u, meta.header)
+		if err != nil {
+			return nil, "", false, err
+		}
+	}
+	return comments, newETag, false, nil
+}
+
+// CreateIssueComment posts text with mentions neutralized.
+func (c *HTTPClient) CreateIssueComment(ctx context.Context, repo RepoRef, number int, body string) (Comment, error) {
+	var comment Comment
+	in := struct {
+		Body string `json:"body"`
+	}{NeutralizeMentions(body)}
+	_, err := c.call(ctx, repo, []string{"issues", strconv.Itoa(number), "comments"}, http.MethodPost, in, &comment, http.StatusCreated)
+	return comment, operationError("CreateIssueComment", err)
+}
+
+// UpdateIssueComment replaces a comment with mention-neutralized text.
+func (c *HTTPClient) UpdateIssueComment(ctx context.Context, repo RepoRef, id int64, body string) error {
+	in := struct {
+		Body string `json:"body"`
+	}{NeutralizeMentions(body)}
+	_, err := c.call(ctx, repo, []string{"issues", "comments", strconv.FormatInt(id, 10)}, http.MethodPatch, in, nil, http.StatusOK)
+	return operationError("UpdateIssueComment", err)
+}
+
+// IsCollaborator checks live repository membership rather than trusting a
+// comment's author_association. Missing membership (404) is not an error.
+func (c *HTTPClient) IsCollaborator(ctx context.Context, repo RepoRef, user string) (bool, error) {
+	_, err := c.call(ctx, repo, []string{"collaborators", user}, http.MethodGet, nil, nil, http.StatusNoContent)
+	var missing *ErrNotFound
+	if errors.As(err, &missing) {
+		return false, nil
+	}
+	return err == nil, operationError("IsCollaborator", err)
+}
+
+// FindOpenPR finds an open pull request whose head belongs to this repository.
+// It returns nil when no matching pull request exists.
+func (c *HTTPClient) FindOpenPR(ctx context.Context, repo RepoRef, headBranch string) (*PullRequest, error) {
+	u, err := c.endpoint(repo, "pulls")
+	if err != nil {
+		return nil, operationError("FindOpenPR", err)
+	}
+	u.RawQuery = url.Values{"state": {"open"}, "head": {repo.Owner + ":" + headBranch}, "per_page": {"100"}}.Encode()
+	var prs []PullRequest
+	_, err = c.request(ctx, http.MethodGet, u, nil, &prs, http.StatusOK)
+	if err != nil {
+		return nil, operationError("FindOpenPR", err)
+	}
+	if len(prs) == 0 {
+		return nil, nil
+	}
+	return &prs[0], nil
+}
+
+// CreatePR publishes a pull request, preserving the harness's draft decision.
+// Both the title and body have mentions neutralized before sending.
+func (c *HTTPClient) CreatePR(ctx context.Context, repo RepoRef, in NewPR) (PullRequest, error) {
+	in.Title, in.Body = NeutralizeMentions(in.Title), NeutralizeMentions(in.Body)
+	var pr PullRequest
+	_, err := c.call(ctx, repo, []string{"pulls"}, http.MethodPost, in, &pr, http.StatusCreated)
+	return pr, operationError("CreatePR", err)
+}
+
+// GetBranch fetches a branch and reports whether it exists.
+func (c *HTTPClient) GetBranch(ctx context.Context, repo RepoRef, branch string) (Branch, bool, error) {
+	var result Branch
+	_, err := c.call(ctx, repo, []string{"branches", branch}, http.MethodGet, nil, &result, http.StatusOK)
+	var missing *ErrNotFound
+	if errors.As(err, &missing) {
+		return Branch{}, false, nil
+	}
+	return result, err == nil, operationError("GetBranch", err)
+}
+
+// BranchExists is a convenience for callers that do not need the branch tip.
+func (c *HTTPClient) BranchExists(ctx context.Context, repo RepoRef, branch string) (bool, error) {
+	_, exists, err := c.GetBranch(ctx, repo, branch)
+	return exists, operationError("BranchExists", err)
+}
+
+// AddLabels adds labels without removing existing labels.
+func (c *HTTPClient) AddLabels(ctx context.Context, repo RepoRef, number int, labels []string) error {
+	if labels == nil {
+		labels = []string{}
+	}
+	in := struct {
+		Labels []string `json:"labels"`
+	}{labels}
+	_, err := c.call(ctx, repo, []string{"issues", strconv.Itoa(number), "labels"}, http.MethodPost, in, nil, http.StatusOK)
+	return operationError("AddLabels", err)
+}
+
+// RemoveLabel removes one label, encoding slashes and spaces as part of its name.
+func (c *HTTPClient) RemoveLabel(ctx context.Context, repo RepoRef, number int, label string) error {
+	_, err := c.call(ctx, repo, []string{"issues", strconv.Itoa(number), "labels", label}, http.MethodDelete, nil, nil, http.StatusOK)
+	return operationError("RemoveLabel", err)
+}
+
+// ListOpenIssues returns one page of current open issues for label polling.
+func (c *HTTPClient) ListOpenIssues(ctx context.Context, repo RepoRef, page int) ([]Issue, error) {
+	u, err := c.endpoint(repo, "issues")
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("state", "open")
+	q.Set("per_page", "100")
+	q.Set("page", strconv.Itoa(page))
+	u.RawQuery = q.Encode()
+	var issues []Issue
+	_, err = c.request(ctx, http.MethodGet, u, nil, &issues, http.StatusOK)
+	return issues, operationError("ListOpenIssues", err)
+}
+// Package github provides the GitHub REST operations needed by the runner.
+package github
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+)
+
+// TokenSource supplies a PAT today and can supply GitHub App tokens later.
+// Implementations must be safe for concurrent calls.
+type TokenSource interface {
+	Token(context.Context) (string, error)
+}
+
+// Client is the runner's GitHub boundary. Missing branches and open PRs return
+// false and nil respectively; other missing resources return *ErrNotFound.
+type Client interface {
+	GetRepo(context.Context, RepoRef) (Repo, error)
+	GetIssue(context.Context, RepoRef, int) (Issue, error)
+	ListIssueComments(context.Context, RepoRef, int, time.Time) ([]Comment, error)
+	ListIssueCommentsSince(context.Context, RepoRef, int, time.Time, string) ([]Comment, string, bool, error)
+	GetIssueComment(context.Context, RepoRef, int64) (Comment, error)
+	CreateIssueComment(context.Context, RepoRef, int, string) (Comment, error)
+	UpdateIssueComment(context.Context, RepoRef, int64, string) error
+	IsCollaborator(context.Context, RepoRef, string) (bool, error)
+	FindOpenPR(context.Context, RepoRef, string) (*PullRequest, error)
+	CreatePR(context.Context, RepoRef, NewPR) (PullRequest, error)
+	GetBranch(context.Context, RepoRef, string) (Branch, bool, error)
+	BranchExists(context.Context, RepoRef, string) (bool, error)
+	AddLabels(context.Context, RepoRef, int, []string) error
+	RemoveLabel(context.Context, RepoRef, int, string) error
+}
+
+// RepoRef identifies a repository without a URL or credentials.
+type RepoRef struct {
+	Owner string
+	Name  string
+}
+
+// Permissions contains the repository capabilities needed for preflight.
+type Permissions struct {
+	Push bool `json:"push"`
+}
+
+// Repo contains repository metadata used for preflight and cloning.
+type Repo struct {
+	Name          string      `json:"name"`
+	FullName      string      `json:"full_name"`
+	DefaultBranch string      `json:"default_branch"`
+	CloneURL      string      `json:"clone_url"`
+	Private       bool        `json:"private"`
+	Permissions   Permissions `json:"permissions"`
+}
+
+// Label is a GitHub issue label.
+type Label struct {
+	Name string `json:"name"`
+}
+
+// Issue includes the current issue text used to invalidate stale approvals.
+type Issue struct {
+	Number            int       `json:"number"`
+	Title             string    `json:"title"`
+	Body              string    `json:"body"`
+	State             string    `json:"state"`
+	Labels            []Label   `json:"labels"`
+	IsPullRequest     bool      `json:"-"`
+	Author            string    `json:"-"`
+	AuthorAssociation string    `json:"author_association"`
+	HTMLURL           string    `json:"html_url"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// UnmarshalJSON normalizes GitHub's nested user and pull_request fields.
+func (i *Issue) UnmarshalJSON(data []byte) error {
+	type plain Issue
+	var wire struct {
+		plain
+		User        struct{ Login string } `json:"user"`
+		PullRequest *json.RawMessage       `json:"pull_request"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*i = Issue(wire.plain)
+	i.Author = wire.User.Login
+	i.IsPullRequest = wire.PullRequest != nil
+	return nil
+}
+
+// Comment retains timestamps so edited commands can be rejected.
+type Comment struct {
+	ID                int64     `json:"id"`
+	Author            string    `json:"-"`
+	AuthorAssociation string    `json:"author_association"`
+	Body              string    `json:"body"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+	HTMLURL           string    `json:"html_url"`
+}
+
+// UnmarshalJSON normalizes GitHub's nested user field.
+func (c *Comment) UnmarshalJSON(data []byte) error {
+	type plain Comment
+	var wire struct {
+		plain
+		User struct{ Login string } `json:"user"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*c = Comment(wire.plain)
+	c.Author = wire.User.Login
+	return nil
+}
+
+// PRBranch identifies the head or base of a pull request.
+type PRBranch struct {
+	Ref string `json:"ref"`
+	SHA string `json:"sha"`
+}
+
+// PullRequest is the result of finding or creating a pull request.
+type PullRequest struct {
+	Number  int      `json:"number"`
+	Title   string   `json:"title"`
+	Body    string   `json:"body"`
+	State   string   `json:"state"`
+	HTMLURL string   `json:"html_url"`
+	Draft   bool     `json:"draft"`
+	Head    PRBranch `json:"head"`
+	Base    PRBranch `json:"base"`
+}
+
+// NewPR supplies the fields required to publish a pull request.
+type NewPR struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+	Head  string `json:"head"`
+	Base  string `json:"base"`
+	Draft bool   `json:"draft"`
+}
+
+// Branch contains the branch name and tip commit.
+type Branch struct {
+	Name   string `json:"name"`
+	Commit struct {
+		SHA string `json:"sha"`
+	} `json:"commit"`
+}
+package gitx
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/execx"
+)
+
+const trustedPath = execx.TrustedPath
+
+// command builds the entire environment explicitly. Credentials are deliberately
+// absent from argv, including -c arguments, and from all non-publication calls.
+func (r *Repo) command(_ context.Context, authenticated bool, args ...string) (*exec.Cmd, error) {
+	if authenticated && (len(args) == 0 || (args[0] != "clone" && args[0] != "push")) {
+		return nil, errors.New("credentials are restricted to clone and push")
+	}
+	for _, arg := range args {
+		if strings.ContainsRune(arg, 0) || (r.token != "" && strings.Contains(arg, r.token)) {
+			return nil, errors.New("invalid git argument")
+		}
+	}
+	protocol := "never"
+	if r.localRemote != "" {
+		protocol = "always"
+	}
+	argv := []string{
+		"--literal-pathspecs",
+		"-c", "core.hooksPath=" + r.hooks,
+		"-c", "core.fsmonitor=false",
+		"-c", "protocol.allow=never",
+		"-c", "protocol.https.allow=always",
+		"-c", "protocol.file.allow=" + protocol,
+		"-c", "submodule.recurse=false",
+		"-c", "fetch.recurseSubmodules=false",
+		"-c", "credential.helper=",
+		"-c", "credential.interactive=false",
+		"-c", "http.followRedirects=false",
+		"-c", "core.attributesFile=/dev/null",
+		"-c", "core.quotePath=false",
+		"-c", "core.pager=cat",
+		"-c", "core.bigFileThreshold=1m",
+		"-c", "commit.gpgSign=false",
+		"-c", "tag.gpgSign=false",
+	}
+	argv = append(argv, args...)
+	cmd := exec.Command(r.git, argv...) // #nosec G204 -- executable is resolved from the configured trusted PATH; literal git subcommands, no shell.
+	cmd.Dir = r.dir
+	cmd.Env = []string{
+		"PATH=" + r.path, "HOME=" + r.home, "TMPDIR=" + r.temp,
+		"LANG=C", "LC_ALL=C", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_TERMINAL_PROMPT=0", "GIT_ATTR_NOSYSTEM=1", "GIT_NO_REPLACE_OBJECTS=1",
+		"GIT_AUTHOR_NAME=" + r.author.Name, "GIT_AUTHOR_EMAIL=" + r.author.Email,
+		"GIT_COMMITTER_NAME=" + r.author.Name, "GIT_COMMITTER_EMAIL=" + r.author.Email,
+	}
+	if authenticated && r.token != "" {
+		encoded := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + r.token))
+		cmd.Env = append(cmd.Env, "GIT_CONFIG_COUNT=1",
+			"GIT_CONFIG_KEY_0=http.https://"+r.host+"/.extraheader",
+			"GIT_CONFIG_VALUE_0=AUTHORIZATION: basic "+encoded)
+	}
+	cmd.WaitDelay = time.Second
+	return cmd, nil
+}
+
+// run never includes argv, environment, stderr, or OS error strings in errors.
+// Even a remote that echoes an encoded/fragmented secret cannot leak it there.
+func (r *Repo) run(ctx context.Context, authenticated bool, args ...string) (string, bool, error) {
+	return r.runIndex(ctx, authenticated, "", args...)
+}
+
+func (r *Repo) runIndex(ctx context.Context, authenticated bool, index string, args ...string) (string, bool, error) {
+	return r.runIndexLimit(ctx, authenticated, index, r.outputCap, args...)
+}
+
+func (r *Repo) runIndexLimit(ctx context.Context, authenticated bool, index string, limit int, args ...string) (string, bool, error) {
+	if r.observeCommand != nil {
+		r.observeCommand(args)
+	}
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+	cmd, err := r.command(ctx, authenticated, args...)
+	if err != nil {
+		return "", false, err
+	}
+	if index != "" {
+		cmd.Env = append(cmd.Env, "GIT_INDEX_FILE="+index)
+	}
+	out, diagnostic := &cappedBuffer{limit: limit}, &cappedBuffer{limit: r.outputCap}
+	cmd.Stdout, cmd.Stderr = out, diagnostic
+	err = execx.RunProcessGroup(ctx, cmd, execx.DefaultGracePeriod)
+	if ctx.Err() != nil {
+		return "", false, fmt.Errorf("git command: %w", ctx.Err())
+	}
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return "", false, fmt.Errorf("git command failed (exit %d)", exitErr.ExitCode())
+		}
+		return "", false, errors.New("git command could not complete")
+	}
+	return string(out.data), out.truncated, nil
+}
+
+func (r *Repo) complete(ctx context.Context, authenticated bool, args ...string) (string, error) {
+	out, truncated, err := r.run(ctx, authenticated, args...)
+	if err == nil && truncated {
+		err = ErrOutputLimit
+	}
+	return out, err
+}
+
+// os/exec serializes writes to each buffer. Continue draining after the cap.
+type cappedBuffer struct {
+	data      []byte
+	limit     int
+	truncated bool
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	keep := min(n, b.limit-len(b.data))
+	b.data = append(b.data, p[:keep]...)
+	b.truncated = b.truncated || keep != n
+	return n, nil
+}
+package gitx
+
+import (
+	"context"
+	"errors"
+	"strings"
+)
+
+// CommitAll stages only enumerated Status paths, then commits with the controlled
+// author/committer identity and no hooks or signing. Policy checks for protected
+// application files belong to the caller's workspace/orchestration layer.
+func (r *Repo) CommitAll(ctx context.Context, msg string, author Author) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.verify(); err != nil {
+		return "", err
+	}
+	if msg == "" || strings.ContainsRune(msg, 0) {
+		return "", errors.New("invalid commit message")
+	}
+	if author == (Author{}) {
+		author = Author{"patchbot", "patchbot@users.noreply.github.com"}
+	}
+	if author.Name == "" || author.Email == "" || strings.ContainsAny(author.Name+author.Email, "\r\n\x00<>") {
+		return "", errors.New("invalid commit identity")
+	}
+	r.author = author
+	changes, err := r.status(ctx)
+	if err != nil {
+		return "", err
+	}
+	paths, err := changedPaths(changes)
+	if err != nil {
+		return "", err
+	}
+	if err := r.noSubmodules(ctx); err != nil {
+		return "", err
+	}
+	if err := r.stage(ctx, "", paths); err != nil {
+		return "", err
+	}
+	if _, err := r.complete(ctx, false, "commit", "--no-verify", "--no-gpg-sign", "-m", msg, "--"); err != nil {
+		return "", err
+	}
+	return r.head(ctx)
+}
+
+// Push verifies metadata and branch guards before pushing an explicit refspec to
+// the original, constructed URL. It never consults remote.pushurl or push defaults.
+// The live remote HEAD check is intentionally unauthenticated: only clone and
+// push receive the token. An inaccessible remote fails closed.
+func (r *Repo) Push(ctx context.Context, branch string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !validBranch(branch) || !strings.HasPrefix(branch, "patchbot/") || branch == r.defaultBranch {
+		return ErrBranchGuard
+	}
+	if err := r.verify(); err != nil {
+		return err
+	}
+	if err := r.noSubmodules(ctx); err != nil {
+		return err
+	}
+	changes, err := r.status(ctx)
+	if err != nil {
+		return err
+	}
+	if _, err := changedPaths(changes); err != nil {
+		return err
+	}
+	head, err := r.complete(ctx, false, "ls-remote", "--symref", "--", r.remote, "HEAD")
+	if err != nil {
+		return err
+	}
+	var liveDefault string
+	for _, line := range strings.Split(head, "\n") {
+		if ref, ok := strings.CutPrefix(line, "ref: refs/heads/"); ok {
+			if name, suffix, ok := strings.Cut(ref, "\t"); ok && suffix == "HEAD" {
+				liveDefault = name
+			}
+		}
+	}
+	if liveDefault == "" || liveDefault == branch {
+		return ErrBranchGuard
+	}
+	_, err = r.complete(ctx, true, "push", "--no-verify", "--recurse-submodules=no", "--", r.remote, "HEAD:refs/heads/"+branch)
+	return err
+}
+
+// RemoteBranchExists queries exactly one branch without inheriting credentials.
+func (r *Repo) RemoteBranchExists(ctx context.Context, branch string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !validBranch(branch) {
+		return false, ErrBranchGuard
+	}
+	if err := r.verify(); err != nil {
+		return false, err
+	}
+	out, err := r.complete(ctx, false, "ls-remote", "--heads", "--", r.remote, "refs/heads/"+branch)
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		sha, ref, ok := strings.Cut(line, "\t")
+		if ok && ref == "refs/heads/"+branch && objectID.MatchString(sha) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+exec
+/bin/zsh -lc "cat internal/runner/{sync,publish}.go; cat internal/config/{config,load,validate}.go; cat internal/gitx/gitx.go; cat internal/github/errors.go; rg -n 'M2[3-6]|GITHUB_TOKEN|TokenSource|CurrentUser|BotLogin|GitHubToken|Token:' internal docs/planning/step2/PLAN.md" in /Users/pappumishra/Documents/selfproject/patchbot
+ succeeded in 0ms:
+package runner
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sort"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/github"
+	"github.com/aryanpappu/patchbot/internal/store"
+)
+
+// SyncWaiting performs one comment/expiry pass, without a background poller.
+// A command is eligible only for the current waiting window, so old comments
+// cannot approve a later revision or a retry. Dry runs never consume commands.
+func (r *Runner) SyncWaiting(ctx context.Context) error {
+	runs, err := r.waitingRuns(ctx)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, run := range runs {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(append(errs, err)...)
+		}
+		if r.expired(run) {
+			if err := r.expire(ctx, run); err != nil && !errors.Is(err, store.ErrConflict) {
+				errs = append(errs, err)
+			}
+			continue
+		}
+		if run.DryRun {
+			continue
+		}
+		if err := r.syncRun(ctx, run); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (r *Runner) syncRun(ctx context.Context, run store.Run) error {
+	bot := r.opts.BotLogin
+	if bot == "" {
+		identity, ok := r.gh.(interface {
+			CurrentUser(context.Context) (string, error)
+		})
+		if !ok {
+			return errors.New("GitHub bot identity unavailable; comment sync disabled")
+		}
+		var err error
+		bot, err = identity.CurrentUser(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	spec, err := r.db.LatestSpec(ctx, run.ID)
+	if err != nil {
+		return err
+	}
+	since := spec.CreatedAt
+	if run.WaitingSince != nil && run.WaitingSince.After(since) {
+		since = *run.WaitingSince
+	}
+	comments, err := r.gh.ListIssueComments(ctx, ref(run.Repo), int(run.IssueNumber), since)
+	if err != nil {
+		return err
+	}
+	sort.Slice(comments, func(i, j int) bool {
+		if comments[i].CreatedAt.Equal(comments[j].CreatedAt) {
+			return comments[i].ID < comments[j].ID
+		}
+		return comments[i].CreatedAt.Before(comments[j].CreatedAt)
+	})
+	for _, comment := range comments {
+		if !comment.CreatedAt.After(since) || (spec.CommentID != nil && comment.ID <= *spec.CommentID) {
+			continue
+		}
+		command, ok := github.ParseCommand(comment)
+		if !ok || (command.Kind != github.CommandApprove && command.Kind != github.CommandRevise) {
+			continue
+		}
+		var collaboratorErr error
+		if !github.EligibleCommand(comment, r.cfg.Defaults.Approvers, func(login string) bool {
+			member, err := r.gh.IsCollaborator(ctx, ref(run.Repo), login)
+			collaboratorErr = err
+			return err == nil && member
+		}, bot) {
+			if collaboratorErr != nil {
+				return collaboratorErr
+			}
+			continue
+		}
+		current, err := r.db.GetRun(ctx, run.ID)
+		if err != nil {
+			return err
+		}
+		if !waiting(current.Status) || current.WaitingSince == nil || !sameTime(current.WaitingSince, run.WaitingSince) {
+			return nil
+		}
+		switch command.Kind {
+		case github.CommandApprove:
+			if current.Status != store.StatusAwaitingApproval {
+				continue
+			}
+			if err := r.approve(ctx, run.ID, comment.Author, "github", &spec, true); err != nil {
+				if errors.Is(err, errCommentEdited) {
+					return errors.Join(err, r.commentEditAdvice(ctx, run, spec))
+				}
+				return err
+			}
+			return nil
+		case github.CommandRevise:
+			return r.revise(ctx, run.ID, command.Notes, comment.Author, "github", &spec)
+		default:
+			continue
+		}
+	}
+	return nil
+}
+
+func (r *Runner) commentEditAdvice(ctx context.Context, run store.Run, spec store.Spec) error {
+	kind := fmt.Sprintf("spec_comment_warning_v%d", spec.Version)
+	if _, err := r.db.GetArtifact(ctx, run.ID, kind, 0); !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	message := "The specification comment was edited on GitHub. Those edits are not imported. Use `/revise <notes>` or edit the specification in patchbot before approving a new version."
+	if _, err := r.comment(ctx, run, message); err != nil {
+		return err
+	}
+	return r.artifact(ctx, run.ID, kind, message)
+}
+
+func sameTime(a, b *time.Time) bool { return a != nil && b != nil && a.Equal(*b) }
+package runner
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/aryanpappu/patchbot/internal/agent"
+	"github.com/aryanpappu/patchbot/internal/github"
+	"github.com/aryanpappu/patchbot/internal/gitx"
+	"github.com/aryanpappu/patchbot/internal/store"
+	"github.com/aryanpappu/patchbot/internal/tools"
+	"github.com/aryanpappu/patchbot/internal/workspace"
+)
+
+func (r *Runner) publicationAvailable(ctx context.Context, run store.Run) error {
+	branch := fmt.Sprintf("patchbot/issue-%d", run.IssueNumber)
+	pr, err := r.gh.FindOpenPR(ctx, ref(run.Repo), branch)
+	if err != nil {
+		return err
+	}
+	if pr != nil {
+		return errors.New("an open PR already exists for the patchbot branch")
+	}
+	exists, err := r.gh.BranchExists(ctx, ref(run.Repo), branch)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return errors.New("patchbot branch already exists; refusing to overwrite it")
+	}
+	return nil
+}
+
+func (r *Runner) validateChanges(ctx context.Context, run store.Run, env *toolEnvironment) error {
+	changes, err := env.repo.Status(ctx)
+	if err != nil {
+		return err
+	}
+	policy, err := workspace.NewPolicy(r.cfg.Repos[run.Repo].Protected)
+	if err != nil {
+		return err
+	}
+	for _, change := range changes {
+		for _, path := range []string{change.Path, change.OriginalPath} {
+			if path == "" {
+				continue
+			}
+			if _, err := policy.Check(path); err != nil {
+				return &agent.Error{Kind: "policy_violations", Message: "patch changes a protected or invalid path"}
+			}
+			if _, err := env.env.WS.Stat(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return &agent.Error{Kind: "policy_violations", Message: "patch contains an unsafe path"}
+			}
+		}
+	}
+	return nil
+}
+
+// publicationApproval checks remote spec freshness first, then the persisted
+// decision and worker generation. Call again at each external write boundary:
+// neither an earlier snapshot nor a heartbeat is publication authorization.
+func (r *Runner) publicationApproval(ctx context.Context, run store.Run, spec store.Spec) (store.Approval, error) {
+	current, err := r.checkedSpec(ctx, run)
+	if err != nil {
+		return store.Approval{}, err
+	}
+	if current.Version != spec.Version || current.Hash != spec.Hash {
+		return store.Approval{}, agent.ErrApprovalDenied
+	}
+	approval, err := r.db.ValidApproval(ctx, run.ID, spec.Version, spec.Hash)
+	if err != nil {
+		return store.Approval{}, fmt.Errorf("%w: matching publication approval: %w", agent.ErrApprovalDenied, err)
+	}
+	persisted, err := r.db.GetRun(ctx, run.ID)
+	if err != nil {
+		return store.Approval{}, err
+	}
+	if persisted.Status != store.StatusRunning || persisted.Phase != store.PhasePublish || persisted.Generation != run.Generation {
+		return store.Approval{}, store.ErrConflict
+	}
+	now := r.now()
+	if approval.CreatedAt.IsZero() || approval.CreatedAt.After(now) || !now.Before(approval.CreatedAt.Add(r.gateOptions().TTL)) {
+		return store.Approval{}, fmt.Errorf("%w: publication approval expired or has an invalid date", agent.ErrApprovalDenied)
+	}
+	return approval, ctx.Err()
+}
+
+func (r *Runner) publish(ctx context.Context, run *store.Run, env *toolEnvironment, meta github.Repo, spec store.Spec, result agent.CodeResult, baseline string, codeErr error, review *reviewState) error {
+	var summary *string
+	if result.Submission != nil {
+		summary = &result.Submission.Summary
+	}
+	if err := r.transition(ctx, run, store.StatusRunning, store.PhasePublish, store.RunPatch{TestsStatus: &result.TestsStatus, PRDraft: &result.Draft, Summary: summary}); err != nil {
+		return err
+	}
+	approval, err := r.publicationApproval(ctx, *run, spec)
+	if err != nil {
+		return err
+	}
+	if err := r.validateChanges(ctx, *run, env); err != nil {
+		return err
+	}
+	diff, err := env.repo.Diff(ctx)
+	if err != nil {
+		return err
+	}
+	if err := r.artifact(ctx, run.ID, "diff", diff); err != nil {
+		return err
+	}
+	live, err := r.gh.GetRepo(ctx, ref(run.Repo))
+	if err != nil {
+		return err
+	}
+	branch, found, err := r.gh.GetBranch(ctx, ref(run.Repo), live.DefaultBranch)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("default branch no longer exists")
+	}
+	moved := live.DefaultBranch != meta.DefaultBranch || branch.Commit.SHA != run.BaseSHA
+	title, body := r.prText(*run, spec, approval, result, baseline, moved, codeErr, review)
+	if err := r.artifact(ctx, run.ID, "pr_title", title); err != nil {
+		return err
+	}
+	if err := r.artifact(ctx, run.ID, "pr_body", body); err != nil {
+		return err
+	}
+	if !run.DryRun {
+		if err := r.publicationAvailable(ctx, *run); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := r.reviewedDiff(ctx, *run, env, review); err != nil {
+		return err
+	}
+	var head string
+	if err := r.operation(ctx, *run, "git", "commit", func() error {
+		var err error
+		head, err = env.repo.CommitAll(ctx, fmt.Sprintf("fix: %s (#%d)", title, run.IssueNumber), gitx.Author{})
+		if err == nil && review != nil {
+			// The commit must contain exactly the reviewed tree.
+			var tree string
+			if tree, err = env.repo.HeadTree(ctx); err == nil && tree != review.last.TreeID {
+				err = errReviewStale
+			}
+		}
+		return err
+	}); err != nil {
+		if errors.Is(err, errReviewStale) {
+			return &agent.Error{Kind: "review_stale", Message: "committed patch differs from the reviewed diff; refusing to publish"}
+		}
+		return err
+	}
+	if err := r.transition(ctx, run, store.StatusRunning, store.PhasePublish, store.RunPatch{HeadSHA: &head}); err != nil {
+		return err
+	}
+	if repo := r.cfg.Repos[run.Repo]; result.LastTest != nil && repo != nil {
+		command, _ := repo.TestCommandID()
+		r.observe(ctx, *run, command, *result.LastTest, head, fmt.Sprintf("run %d verify test attempt %d", run.ID, result.TestAttempts))
+	}
+	if run.DryRun {
+		outcome := "dry_run"
+		return r.transition(ctx, run, store.StatusSucceeded, store.PhasePublish, store.RunPatch{Outcome: &outcome})
+	}
+	var guardErr error
+	if err := r.operation(ctx, *run, "git", "push", func() error {
+		if _, guardErr = r.publicationApproval(ctx, *run, spec); guardErr != nil {
+			return guardErr
+		}
+		return env.repo.Push(ctx, run.Branch)
+	}); err != nil {
+		if guardErr != nil {
+			return err
+		}
+		return &agent.Error{Kind: "push_failed", Message: "could not push guarded patchbot branch"}
+	}
+	var pr github.PullRequest
+	err = r.operation(ctx, *run, "publish", "create_pr", func() error {
+		if _, guardErr = r.publicationApproval(ctx, *run, spec); guardErr != nil {
+			return guardErr
+		}
+		var err error
+		pr, err = r.gh.CreatePR(ctx, ref(run.Repo), github.NewPR{Title: title, Body: body, Head: run.Branch, Base: live.DefaultBranch, Draft: result.Draft})
+		return err
+	})
+	if err != nil {
+		if guardErr != nil {
+			return err
+		}
+		return &agent.Error{Kind: "pr_failed", Message: "branch pushed but pull request creation failed"}
+	}
+	number, outcome := int64(pr.Number), "pr_opened"
+	if result.Draft {
+		outcome = "pr_draft"
+	}
+	if err := r.transition(ctx, run, store.StatusRunning, store.PhasePublish, store.RunPatch{PRNumber: &number, PRURL: &pr.HTMLURL, PRDraft: &result.Draft}); err != nil {
+		return err
+	}
+	note := fmt.Sprintf("patchbot run %d: %s\nHarness tests: %s (%d attempts).", run.ID, pr.HTMLURL, result.TestsStatus, result.TestAttempts)
+	if review != nil && review.last != nil {
+		note += fmt.Sprintf("\nIndependent review: %s (round %d).", review.last.Verdict, review.last.Round)
+	}
+	if _, err := r.comment(ctx, *run, note); err != nil {
+		if err := r.artifact(ctx, run.ID, "publish_comment_warning", "PR opened, but the issue comment could not be posted."); err != nil {
+			return err
+		}
+	}
+	return r.transition(ctx, run, store.StatusSucceeded, store.PhasePublish, store.RunPatch{Outcome: &outcome})
+}
+
+var errReviewStale = errors.New("patch differs from reviewed diff")
+
+// reviewedDiff requires the patch about to be committed to hash to the last
+// reviewed snapshot. Nothing may change the workspace after a review.
+func (r *Runner) reviewedDiff(ctx context.Context, run store.Run, env *toolEnvironment, review *reviewState) error {
+	if review == nil {
+		return nil
+	}
+	if review.last == nil {
+		return &agent.Error{Kind: "review_failed", Message: "no review was recorded for this patch"}
+	}
+	snap, err := r.snapshotDiff(ctx, run, env)
+	if err != nil {
+		return err
+	}
+	if snap.hash != review.last.DiffHash || snap.tree != review.last.TreeID {
+		return &agent.Error{Kind: "review_stale", Message: "workspace diff changed after review; refusing to publish"}
+	}
+	return nil
+}
+
+func (r *Runner) prText(run store.Run, spec store.Spec, approval store.Approval, result agent.CodeResult, baseline string, moved bool, codeErr error, review *reviewState) (string, string) {
+	title := fmt.Sprintf("Fix issue #%d", run.IssueNumber)
+	var b strings.Builder
+	if review != nil && !review.passed() {
+		fmt.Fprintf(&b, "**Draft: independent review did not pass** (%s). The reviewer has not approved this patch; treat it as unreviewed work.\n\n", review.failure())
+	}
+	if result.Salvage {
+		fmt.Fprintf(&b, "Draft salvage: coding stopped (%s). Review the incomplete work.\n\n", result.Reason)
+	}
+	if codeErr != nil {
+		b.WriteString("The agent stopped with a provider error; harness verification follows below.\n\n")
+	}
+	fmt.Fprintf(&b, "Fixes #%d\n\n", run.IssueNumber)
+	link := fmt.Sprintf("stored run %d specification", run.ID)
+	if spec.CommentID != nil {
+		link = fmt.Sprintf("[approved specification](https://github.com/%s/issues/%d#issuecomment-%d)", run.Repo, run.IssueNumber, *spec.CommentID)
+	}
+	fmt.Fprintf(&b, "Approved spec: %s, version %d, SHA-256 `%s`, approved by %s.\n\n", link, spec.Version, spec.Hash, approval.Actor)
+	fmt.Fprintf(&b, "Harness tests: **%s** (%d attempts). Baseline: **%s**.\n\nAcceptance criteria (agent claims; harness result above):\n\n", result.TestsStatus, result.TestAttempts, baseline)
+	if result.TestsStatus == "not_run" {
+		b.WriteString("Unverified: no test command is configured. This PR requires manual verification.\n\n")
+	}
+	if result.Submission != nil {
+		title = result.Submission.PRTitle
+		for index, criterion := range result.Submission.Criteria {
+			tick := " "
+			if criterion.Met {
+				tick = "x"
+			}
+			fmt.Fprintf(&b, "- [%s] AC%d: %s — harness: %s. %s\n", tick, index+1, criterion.Text, result.TestsStatus, criterion.Note)
+		}
+		fmt.Fprintf(&b, "\n%s\n\n%s\n", result.Submission.Summary, result.Submission.PRBody)
+	}
+	if result.LastTest != nil {
+		fmt.Fprintf(&b, "\nHarness exit code: %d; timed out: %t.\n\n```text\n%s\n```\n", result.LastTest.ExitCode, result.LastTest.TimedOut, tools.CapOutput(result.LastTest.Output, 8<<10))
+	}
+	b.WriteString(prReview(review))
+	if moved {
+		fmt.Fprintf(&b, "\nThe default branch has moved since refinement. This patch is based on `%s`; review for integration changes.\n", run.BaseSHA)
+	}
+	cost := "unknown"
+	if run.CostMicros != nil {
+		cost = fmt.Sprintf("%d micro-USD", *run.CostMicros)
+	}
+	tokens := "unknown"
+	if run.InputTokens != nil && run.OutputTokens != nil {
+		tokens = fmt.Sprintf("%d input / %d output", *run.InputTokens, *run.OutputTokens)
+	}
+	fmt.Fprintf(&b, "\nUsage: %s tokens; cost: %s.\n", tokens, cost)
+	fmt.Fprintf(&b, "\nProvider: %s; model: %s.\n\nGenerated by patchbot. Human review is required.\n", run.Provider, run.CodeModel)
+	title = strings.ReplaceAll(strings.ReplaceAll(title, "\n", " "), "\r", " ")
+	if strings.TrimSpace(title) == "" {
+		title = fmt.Sprintf("Fix issue #%d", run.IssueNumber)
+	}
+	return tools.CapOutput(github.NeutralizeMentions(r.redactor.Redact(title)), 200), tools.CapOutput(github.NeutralizeMentions(r.redactor.Redact(b.String())), 60_000)
+}
+// Package config loads, layers and validates the patchbot configuration.
+//
+// Values come from four layers, later ones winning: the embedded defaults, a
+// TOML file, PATCHBOT_* environment variables and command-line flags. The
+// loader records which layer set each value. Secrets never come from a file:
+// the file names an environment variable and the loader reads the secret from
+// it into a secret.Secret.
+package config
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/secret"
+)
+
+// Provider kinds.
+const (
+	KindAnthropic = "anthropic"
+	KindGemini    = "gemini"
+	KindOpenAI    = "openai"
+)
+
+// Run modes.
+const (
+	ModeFix         = "fix"
+	ModeRefine      = "refine"
+	ModeInvestigate = "investigate"
+)
+
+// Config is the effective configuration.
+type Config struct {
+	Defaults  Defaults             `toml:"defaults"`
+	Limits    Limits               `toml:"limits"`
+	Approval  Approval             `toml:"approval"`
+	Review    Review               `toml:"review"`
+	Log       Log                  `toml:"log"`
+	Webhook   Webhook              `toml:"webhook"`
+	Server    Server               `toml:"server"`
+	Data      Data                 `toml:"data"`
+	Memory    Memory               `toml:"memory"`
+	Executor  Executor             `toml:"executor"`
+	Providers map[string]*Provider `toml:"providers"`
+	Repos     map[string]*Repo     `toml:"repos"`
+
+	// path is the config file that was read, or "" when none was found.
+	path string
+	// sources maps a dotted key such as `limits.max_turns` to its Source.
+	sources map[string]Source
+	// home is the user's home directory, used to expand "~/" in Data.Dir.
+	home string
+	// rejectedKeyEnvs are the api_key_env names of a file that failed to
+	// load. They are used only to redact the load error.
+	rejectedKeyEnvs []string
+}
+
+// Defaults are the choices a run uses unless it says otherwise.
+type Defaults struct {
+	// Provider is the name of a [providers.<name>] table.
+	Provider string `toml:"provider"`
+	// Mode is fix, refine or investigate.
+	Mode string `toml:"mode"`
+	// RefineModel and CodeModel fall back to the provider's default_model.
+	RefineModel string `toml:"refine_model"`
+	CodeModel   string `toml:"code_model"`
+	// MaxCostUSD is the budget of one run across every stage.
+	MaxCostUSD float64 `toml:"max_cost_usd"`
+	// Approvers are the GitHub logins whose /approve comments count.
+	Approvers []string `toml:"approvers"`
+	// CommentOnFailure posts a short diagnostic except for cancellation/auth.
+	CommentOnFailure bool `toml:"comment_on_failure"`
+}
+
+// Limits bound one run.
+type Limits struct {
+	MaxTurns        int   `toml:"max_turns"`
+	RefineMaxTurns  int   `toml:"refine_max_turns"`
+	MaxOutputTokens int   `toml:"max_output_tokens"`
+	MaxTotalTokens  int64 `toml:"max_total_tokens"`
+	// HardMaxCostUSD is the ceiling for any per-run budget.
+	HardMaxCostUSD  float64       `toml:"hard_max_cost_usd"`
+	MaxTestAttempts int           `toml:"max_test_attempts"`
+	RunTimeout      time.Duration `toml:"run_timeout"`
+	CmdTimeout      time.Duration `toml:"cmd_timeout"`
+	TestTimeout     time.Duration `toml:"test_timeout"`
+	// CmdOutputBytes is sent to the model per command; CmdStoreBytes is kept.
+	CmdOutputBytes int  `toml:"cmd_output_bytes"`
+	CmdStoreBytes  int  `toml:"cmd_store_bytes"`
+	BaselineTests  bool `toml:"baseline_tests"`
+	// TrustedPath contains operator-controlled absolute tool directories.
+	TrustedPath []string `toml:"trusted_path"`
+}
+
+// Approval controls the spec approval gate.
+type Approval struct {
+	// LocalActor is the name recorded for CLI and UI actions.
+	LocalActor   string        `toml:"local_actor"`
+	PollInterval time.Duration `toml:"poll_interval"`
+	// TTL is how long a run may wait for approval before it expires.
+	TTL          time.Duration `toml:"ttl"`
+	MaxRevisions int           `toml:"max_revisions"`
+}
+
+// Review configures the opt-in sequential reviewer. Approval freezes these
+// values on the run; a later config change does not affect approved runs.
+type Review struct {
+	// Enabled turns on the read-only review stage after harness verification.
+	Enabled bool `toml:"enabled"`
+	// Model is the reviewer model; empty uses the run's refine model.
+	Model string `toml:"model"`
+	// MaxRepairs is the number of review-requested coder repair cycles (0 or 1).
+	MaxRepairs int `toml:"max_repairs"`
+	// MaxTurns bounds each review round.
+	MaxTurns int `toml:"max_turns"`
+	// ReserveFraction of the run's token, cost and time budget is kept back
+	// from coding so the review can still run.
+	ReserveFraction float64 `toml:"reserve_fraction"`
+	// SalvageDraft publishes a clearly marked draft PR when review does not
+	// pass. When false such a run fails without publishing.
+	SalvageDraft bool `toml:"salvage_draft"`
+}
+
+// Log configures logging.
+type Log struct {
+	Level  string `toml:"level"`  // debug, info, warn or error
+	Format string `toml:"format"` // text or json
+}
+
+// Server configures the web interface.
+type Server struct {
+	Addr              string `toml:"addr"`
+	MaxConcurrentRuns int    `toml:"max_concurrent_runs"`
+	MaxQueuedRuns     int    `toml:"max_queued_runs"`
+	VueSrc            string `toml:"vue_src"` // cdn or local
+}
+
+// Memory configures repository memory. Retrieved memory is unverified context
+// in the user turn; it never changes policy, scope or the approval gate.
+type Memory struct {
+	// Enabled turns retrieval, typed observations and lesson proposals on.
+	Enabled bool `toml:"enabled"`
+	// MaxEntries and MaxBytes bound what one stage receives.
+	MaxEntries int `toml:"max_entries"`
+	MaxBytes   int `toml:"max_bytes"`
+	// MaxPending caps pending model lessons per repository; excess proposals
+	// are dropped with an event.
+	MaxPending int `toml:"max_pending"`
+	// ObservationTTL is how long a typed observation stays retrievable.
+	ObservationTTL time.Duration `toml:"observation_ttl"`
+}
+
+// Webhook configures authenticated GitHub wake-up hints.
+type Webhook struct {
+	Enabled       bool              `toml:"enabled"`
+	SecretEnv     string            `toml:"secret_env"`
+	Path          string            `toml:"path"`
+	TriggerLabels map[string]string `toml:"trigger_labels"`
+	// LabelPollInterval is how often open issues are swept for trigger labels
+	// that a missed delivery did not report.
+	LabelPollInterval time.Duration `toml:"label_poll_interval"`
+	Secret            secret.Secret `toml:"-"`
+}
+
+// Data says where the database and workspaces live.
+type Data struct {
+	Dir string `toml:"dir"`
+}
+
+// Executor kinds.
+const (
+	ExecutorLocal     = "local"
+	ExecutorContainer = "container"
+)
+
+// Executor says where repository commands (baseline tests, run_cmd and harness
+// verification) run. Git and file tools always stay on the host.
+type Executor struct {
+	// Kind is local (host process, the default) or container.
+	Kind string `toml:"kind"`
+	// Runtime is podman or docker, resolved through limits.trusted_path.
+	Runtime string `toml:"runtime"`
+	// Image is digest-pinned: name[:tag]@sha256:<digest>.
+	Image     string `toml:"image"`
+	Memory    string `toml:"memory"`
+	CPUs      string `toml:"cpus"`
+	PidsLimit int    `toml:"pids_limit"`
+	TmpfsSize string `toml:"tmpfs_size"`
+	// Network must be "none".
+	Network string `toml:"network"`
+	// User is the non-root numeric uid:gid inside the container.
+	User string `toml:"user"`
+	// UserNS is "" or "keep-id" (podman: host user appears as User).
+	UserNS string `toml:"userns"`
+	// Path is PATH inside the container; it resolves bare command names.
+	Path []string `toml:"path"`
+	// WorkspaceMaxBytes fails a command that grows the workspace beyond it.
+	WorkspaceMaxBytes int64 `toml:"workspace_max_bytes"`
+}
+
+// Container reports whether repository commands run in a container.
+func (e Executor) Container() bool { return e.Kind == ExecutorContainer }
+
+// Provider is one [providers.<name>] table.
+type Provider struct {
+	Kind    string `toml:"kind"`
+	BaseURL string `toml:"base_url"`
+	// APIKeyEnv names the environment variable that holds the API key.
+	APIKeyEnv    string   `toml:"api_key_env"`
+	Models       []string `toml:"models"`
+	DefaultModel string   `toml:"default_model"`
+	// PriceFree states that every model of this provider costs nothing, as
+	// with a local server. It is different from having no prices.
+	PriceFree bool              `toml:"price_free"`
+	Prices    map[string]*Price `toml:"prices"`
+
+	// APIKey is read from the environment variable named by APIKeyEnv.
+	APIKey secret.Secret `toml:"-"`
+}
+
+// Price is one [providers.<name>.prices.<model>] table, in US dollars per
+// million tokens.
+//
+// Every rate is a pointer so that a rate left out of the file can be told
+// apart from a rate of 0. Input and Output are required: a price table with
+// only an input rate must not turn into "output is free", because the budget
+// would then stop counting output tokens. Write 0 for a rate that is free.
+type Price struct {
+	Input  *float64 `toml:"input"`
+	Output *float64 `toml:"output"`
+	// CacheRead and CacheWrite are optional and fall back to Input when nil.
+	CacheRead  *float64 `toml:"cache_read"`
+	CacheWrite *float64 `toml:"cache_write"`
+	// Checked is the day the price was read from the provider's price page.
+	Checked Date `toml:"checked"`
+}
+
+// Repo is one [repos."owner/name"] table. Only listed repositories can run.
+type Repo struct {
+	// Commands maps a command ID such as "test" to the argv it runs.
+	Commands map[string][]string `toml:"commands"`
+	// Protected lists extra paths the agent may neither read nor write.
+	Protected []string `toml:"protected"`
+	// TestCommand is the ID of the command that verifies a change.
+	TestCommand string `toml:"test_command"`
+}
+
+// TestCommandID returns the command that verifies a change: TestCommand, or
+// "test" when that is empty and such a command exists.
+func (r *Repo) TestCommandID() (string, bool) {
+	if r.TestCommand != "" {
+		return r.TestCommand, true
+	}
+	if _, ok := r.Commands["test"]; ok {
+		return "test", true
+	}
+	return "", false
+}
+
+// Date is a calendar day. In TOML it is a local date (2026-11-10) or the same
+// text as a string.
+type Date struct {
+	time.Time
+}
+
+const dateLayout = "2006-01-02"
+
+// UnmarshalTOML implements toml.Unmarshaler.
+func (d *Date) UnmarshalTOML(v any) error {
+	switch v := v.(type) {
+	case time.Time:
+		d.Time = time.Date(v.Year(), v.Month(), v.Day(), 0, 0, 0, 0, time.UTC)
+		return nil
+	case string:
+		t, err := time.Parse(dateLayout, v)
+		if err != nil {
+			// The value is not quoted back: nothing says it is not a secret
+			// pasted into the wrong field.
+			return errors.New("want a date like 2026-01-31")
+		}
+		d.Time = t
+		return nil
+	default:
+		return errors.New("want a date like 2026-01-31")
+	}
+}
+
+// String returns the date as YYYY-MM-DD, or "" for the zero date.
+func (d Date) String() string {
+	if d.IsZero() {
+		return ""
+	}
+	return d.Format(dateLayout)
+}
+
+// Path returns the config file that was read, or "" when none was found.
+func (c *Config) Path() string { return c.path }
+
+// DataDir returns Data.Dir with a leading "~/" expanded.
+func (c *Config) DataDir() string {
+	dir := c.Data.Dir
+	if dir == "~" {
+		return c.home
+	}
+	if rest, ok := strings.CutPrefix(dir, "~/"); ok && c.home != "" {
+		return filepath.Join(c.home, rest)
+	}
+	return dir
+}
+
+// DatabasePath returns the SQLite database file inside the data directory.
+func (c *Config) DatabasePath() string {
+	return filepath.Join(c.DataDir(), "patchbot.sqlite")
+}
+
+// Model returns the model a stage uses with the default provider: the stage's
+// own setting, else the provider's default_model. Stage is "refine" or "code".
+func (c *Config) Model(stage string) string {
+	model := c.Defaults.CodeModel
+	if stage == "refine" {
+		model = c.Defaults.RefineModel
+	}
+	if model != "" {
+		return model
+	}
+	if p := c.Providers[c.Defaults.Provider]; p != nil {
+		return p.DefaultModel
+	}
+	return ""
+}
+
+// Redactor returns a redactor that masks every secret the config holds, as
+// well as token-shaped text. Diagnostics about the config pass through it,
+// because a secret can turn up in any field: a key exported under the wrong
+// variable name becomes a "log level".
+func (c *Config) Redactor() *secret.Redactor {
+	r := secret.NewRedactor()
+	r.AddSecrets(c.Secrets()...)
+	return r
+}
+
+// Secrets returns every secret the config holds, for registering with a
+// secret.Redactor.
+func (c *Config) Secrets() []secret.Secret {
+	var out []secret.Secret
+	if c.Webhook.Secret.IsSet() {
+		out = append(out, c.Webhook.Secret)
+	}
+	for _, name := range sortedKeys(c.Providers) {
+		if key := c.Providers[name].APIKey; key.IsSet() {
+			out = append(out, key)
+		}
+	}
+	return out
+}
+
+// EnsureDataDir creates private storage and refuses an existing public directory
+// or symlink. Doctor reports the same policy without changing the filesystem.
+func (c *Config) EnsureDataDir() error {
+	if err := os.MkdirAll(c.DataDir(), 0o700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(c.DataDir())
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode().Perm() != 0o700 {
+		return errors.New("data directory must be a real directory with mode 0700")
+	}
+	return nil
+}
+package config
+
+import (
+	_ "embed" // for defaults.toml
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"reflect"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/BurntSushi/toml"
+
+	"github.com/aryanpappu/patchbot/internal/secret"
+)
+
+//go:embed defaults.toml
+var defaultsTOML string
+
+// EnvConfig names the environment variable that points at a config file.
+const EnvConfig = "PATCHBOT_CONFIG"
+
+// SourceKind says which layer set a value.
+type SourceKind int
+
+// The layers, lowest precedence first.
+const (
+	SourceUnset SourceKind = iota // no layer set the value; it is the zero value
+	SourceDefault
+	SourceFile
+	SourceEnv
+	SourceFlag
+)
+
+// Source says where a config value came from.
+type Source struct {
+	Kind SourceKind
+	// Name is the environment variable or the flag, for those two kinds.
+	Name string
+}
+
+// String returns a short label such as "file" or "env PATCHBOT_PROVIDER".
+func (s Source) String() string {
+	switch s.Kind {
+	case SourceDefault:
+		return "default"
+	case SourceFile:
+		return "file"
+	case SourceEnv:
+		return "env " + s.Name
+	case SourceFlag:
+		return "flag " + s.Name
+	default:
+		return "unset"
+	}
+}
+
+// Override is one value set on the command line.
+type Override struct {
+	// Key is a dotted config key in a fixed table, such as "defaults.provider".
+	Key string
+	// Value is the flag's text. Lists are comma-separated.
+	Value string
+	// Flag is the flag as the user typed it, such as "--provider".
+	Flag string
+}
+
+// Options tell Load where to look. The zero value reads the real environment.
+type Options struct {
+	// Path is the --config flag. A file named here must exist.
+	Path string
+	// Dir is where ./patchbot.toml is looked for. Empty means the working directory.
+	Dir string
+	// Flags are the command-line overrides, the highest layer.
+	Flags []Override
+	// LookupEnv replaces os.LookupEnv.
+	LookupEnv func(string) (string, bool)
+	// UserConfigDir replaces os.UserConfigDir.
+	UserConfigDir func() (string, error)
+	// UserHomeDir replaces os.UserHomeDir.
+	UserHomeDir func() (string, error)
+}
+
+// envBindings is the complete list of settings an environment variable can
+// change. Secrets are not here: they are named by api_key_env.
+var envBindings = []struct {
+	env  string
+	keys []string
+}{
+	{"PATCHBOT_DATA_DIR", []string{"data.dir"}},
+	{"PATCHBOT_PROVIDER", []string{"defaults.provider"}},
+	// PATCHBOT_MODEL sets both stages; the two specific variables win over it.
+	{"PATCHBOT_MODEL", []string{"defaults.refine_model", "defaults.code_model"}},
+	{"PATCHBOT_REFINE_MODEL", []string{"defaults.refine_model"}},
+	{"PATCHBOT_CODE_MODEL", []string{"defaults.code_model"}},
+	{"PATCHBOT_MAX_COST_USD", []string{"defaults.max_cost_usd"}},
+	{"PATCHBOT_MAX_TURNS", []string{"limits.max_turns"}},
+	{"PATCHBOT_ADDR", []string{"server.addr"}},
+	{"PATCHBOT_LOG_LEVEL", []string{"log.level"}},
+	{"PATCHBOT_LOG_FORMAT", []string{"log.format"}},
+}
+
+// Default returns the embedded defaults with no file, environment or flags.
+func Default() *Config {
+	c := &Config{sources: map[string]Source{}}
+	var layer Config
+	md, err := toml.Decode(defaultsTOML, &layer)
+	if err == nil {
+		err = checkKeys(md)
+	}
+	if err == nil {
+		err = c.apply(&layer, md, Source{Kind: SourceDefault})
+	}
+	if err != nil {
+		// The file is compiled in, so this is a bug that the tests catch.
+		panic("config: embedded defaults.toml is invalid: " + err.Error())
+	}
+	return c
+}
+
+// Load builds the effective configuration: defaults, then the config file,
+// then environment variables, then flags. It reports syntax errors, unknown
+// keys and keys that look like secrets. It does not judge the values; call
+// Validate for that.
+//
+// An error from Load never quotes a value it could not parse, since nothing
+// says the value is not a secret in the wrong place, and it is redacted with
+// every API key the loader could find.
+func Load(opts Options) (*Config, error) {
+	lookupEnv := opts.LookupEnv
+	if lookupEnv == nil {
+		lookupEnv = os.LookupEnv
+	}
+	c, err := load(opts, lookupEnv)
+	// The keys are read even when loading failed, to redact the error.
+	for _, p := range c.Providers {
+		if !envNameRE.MatchString(p.APIKeyEnv) {
+			continue // Validate reports a bad name; never look it up.
+		}
+		if value, ok := lookupEnv(p.APIKeyEnv); ok {
+			p.APIKey = secret.New(strings.TrimSpace(value))
+		}
+	}
+	if envNameRE.MatchString(c.Webhook.SecretEnv) {
+		value, _ := lookupEnv(c.Webhook.SecretEnv)
+		c.Webhook.Secret = secret.New(strings.TrimSpace(value))
+	}
+	if err != nil {
+		// A file that was rejected never became part of c, but the variable
+		// names it gave still say where its keys are.
+		redactor := c.Redactor()
+		for _, name := range c.rejectedKeyEnvs {
+			if value, ok := lookupEnv(name); ok && envNameRE.MatchString(name) {
+				redactor.AddExact(strings.TrimSpace(value))
+			}
+		}
+		return nil, &redactedError{msg: redactor.Redact(err.Error()), err: err}
+	}
+	return c, nil
+}
+
+// redactedError carries a redacted message and keeps the original error
+// reachable for errors.Is and errors.As.
+type redactedError struct {
+	msg string
+	err error
+}
+
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.err }
+
+// load applies the layers. It always returns a Config, complete or not.
+func load(opts Options, lookupEnv func(string) (string, bool)) (*Config, error) {
+	if opts.UserConfigDir == nil {
+		opts.UserConfigDir = os.UserConfigDir
+	}
+	if opts.UserHomeDir == nil {
+		opts.UserHomeDir = os.UserHomeDir
+	}
+	c := Default()
+	if home, err := opts.UserHomeDir(); err == nil {
+		c.home = home
+	}
+
+	path, err := findFile(opts, lookupEnv)
+	if err != nil {
+		return c, err
+	}
+	if path != "" {
+		if err := c.loadFile(path); err != nil {
+			return c, err
+		}
+	}
+
+	for _, b := range envBindings {
+		value, ok := lookupEnv(b.env)
+		if !ok || value == "" {
+			continue
+		}
+		for _, key := range b.keys {
+			if err := c.set(key, value, Source{Kind: SourceEnv, Name: b.env}); err != nil {
+				return c, fmt.Errorf("environment variable %s: %w", b.env, err)
+			}
+		}
+	}
+	for _, o := range opts.Flags {
+		if err := c.set(o.Key, o.Value, Source{Kind: SourceFlag, Name: o.Flag}); err != nil {
+			return c, fmt.Errorf("flag %s: %w", o.Flag, err)
+		}
+	}
+	return c, nil
+}
+
+// Source returns where the value of a dotted key came from. Quote a segment
+// that is not a bare TOML key: `repos."owner/name".test_command`.
+func (c *Config) Source(key string) Source { return c.sources[key] }
+
+// findFile returns the config file to read, or "" when there is none.
+func findFile(opts Options, lookupEnv func(string) (string, bool)) (string, error) {
+	explicit := opts.Path
+	if explicit == "" {
+		explicit, _ = lookupEnv(EnvConfig)
+	}
+	if explicit != "" {
+		if _, err := os.Stat(explicit); err != nil {
+			return "", fmt.Errorf("config file: %w", err)
+		}
+		return explicit, nil
+	}
+
+	candidates := []string{filepath.Join(opts.Dir, "patchbot.toml")}
+	if dir, err := opts.UserConfigDir(); err == nil && dir != "" {
+		candidates = append(candidates, filepath.Join(dir, "patchbot", "config.toml"))
+	}
+	for _, path := range candidates {
+		info, err := os.Stat(path)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			continue
+		case err != nil:
+			return "", fmt.Errorf("config file: %w", err)
+		case info.Mode().IsRegular():
+			return path, nil
+		}
+	}
+	return "", nil
+}
+
+func (c *Config) loadFile(path string) error {
+	data, err := os.ReadFile(path) //nolint:gosec // the user chooses the config file
+	if err != nil {
+		return fmt.Errorf("config file: %w", err)
+	}
+	var layer Config
+	md, err := toml.Decode(string(data), &layer)
+	c.rejectedKeyEnvs = append(c.rejectedKeyEnvs, layer.Webhook.SecretEnv)
+	for _, p := range layer.Providers {
+		if p != nil && p.APIKeyEnv != "" {
+			c.rejectedKeyEnvs = append(c.rejectedKeyEnvs, p.APIKeyEnv)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("config file %s: %s", path, describeDecodeError(err))
+	}
+	if err := checkKeys(md); err != nil {
+		return fmt.Errorf("config file %s: %w", path, err)
+	}
+	if err := c.apply(&layer, md, Source{Kind: SourceFile}); err != nil {
+		return fmt.Errorf("config file %s: %w", path, err)
+	}
+	c.path = path
+	return nil
+}
+
+// tomlPrefixRE matches the prefix of the library's plain errors. Only the
+// line number is retained; the last key can contain a secret.
+var tomlPrefixRE = regexp.MustCompile(`^toml: (?:line (\d+) )?(?:\(last key "(?:[^"\\]|\\.)*"\))?:? ?`)
+
+// describeDecodeError turns a TOML library error into a message that says
+// where the problem is and what kind it is, without the text that caused it.
+// Every diagnostic is a fixed error class, never text copied from the parser:
+// its messages can include keys and values in several quoting styles, even
+// when parsing failed before any API key environment variables were decoded.
+func describeDecodeError(err error) string {
+	line, msg := 0, err.Error()
+	if pe, ok := errors.AsType[toml.ParseError](err); ok {
+		line, msg = pe.Position.Line, pe.Message
+	} else if m := tomlPrefixRE.FindStringSubmatch(msg); m != nil {
+		line, _ = strconv.Atoi(m[1])
+		msg = msg[len(m[0]):]
+	}
+	kind := "invalid TOML syntax or value"
+	switch {
+	case strings.HasPrefix(msg, "invalid duration"):
+		kind = `want a duration string such as "30m"`
+	case msg == "want a date like 2026-01-31":
+		kind = "want a date like 2026-01-31"
+	case strings.Contains(msg, "is out of range"), strings.Contains(msg, "is out of the safe"):
+		kind = "a number is out of range"
+	case strings.HasPrefix(msg, "expected value but found"):
+		kind = "expected a value; text needs quotes"
+	case strings.HasPrefix(msg, "incompatible types:"), strings.HasPrefix(msg, "type mismatch"):
+		kind = "incompatible types"
+	}
+	if line > 0 {
+		return fmt.Sprintf("line %d: %s", line, kind)
+	}
+	return kind
+}
+
+// checkKeys rejects keys that look like secrets and keys the schema does not
+// have. The secret check comes first because its message says what to do.
+func checkKeys(md toml.MetaData) error {
+	var errs []error
+	seen := map[string]bool{}
+	for _, key := range md.Keys() {
+		if name, ok := secretLookingSegment(key); ok && !covered(seen, key) {
+			seen[key.String()] = true
+			errs = append(errs, fmt.Errorf(
+				"key %s: %q looks like a secret; secrets are read only from environment variables, "+
+					"so name the variable with api_key_env and remove the value from the file", key, name))
+		}
+	}
+	for _, key := range md.Undecoded() {
+		if covered(seen, key) {
+			continue
+		}
+		errs = append(errs, fmt.Errorf("unknown key %s", key))
+	}
+	return errors.Join(errs...)
+}
+
+// covered reports whether key or one of its parents is already reported.
+func covered(seen map[string]bool, key toml.Key) bool {
+	for i := 1; i <= len(key); i++ {
+		if seen[key[:i].String()] {
+			return true
+		}
+	}
+	return false
+}
+
+// secretLookingSegment returns the first segment of key whose name suggests it
+// holds a secret. Segments the user names freely (a provider, a repository, a
+// model, a command ID) are not checked.
+func secretLookingSegment(key toml.Key) (string, bool) {
+	for i, seg := range key {
+		if freeName(key, i) {
+			continue
+		}
+		if looksSecret(seg) {
+			return seg, true
+		}
+	}
+	return "", false
+}
+
+func freeName(key toml.Key, i int) bool {
+	switch i {
+	case 1:
+		return key[0] == "providers" || key[0] == "repos"
+	case 3:
+		return (key[0] == "providers" && key[2] == "prices") || (key[0] == "repos" && key[2] == "commands")
+	}
+	return false
+}
+
+// secretWords mark a key name as holding a secret wherever they appear in it,
+// so github_token, apiKey and client-secret are all caught.
+var secretWords = []string{
+	"apikey", "api_key", "api-key", "password", "passwd", "secret", "credential",
+	"private_key", "privatekey", "access_key", "accesskey",
+}
+
+// looksSecret reports whether a key name says its value is a secret. A name
+// ending in _env holds the name of an environment variable, which is fine.
+// "token" counts unless it is the plural counter, as in max_total_tokens.
+func looksSecret(name string) bool {
+	name = strings.ToLower(name)
+	if strings.HasSuffix(name, "_env") {
+		return false
+	}
+	for _, word := range secretWords {
+		if strings.Contains(name, word) {
+			return true
+		}
+	}
+	for rest := name; ; {
+		i := strings.Index(rest, "token")
+		if i < 0 {
+			return false
+		}
+		rest = rest[i+len("token"):]
+		if !strings.HasPrefix(rest, "s") {
+			return true
+		}
+	}
+}
+
+var durationType = reflect.TypeFor[time.Duration]()
+
+// apply copies every value the layer defines into c and records its source.
+// Copying key by key, not table by table, lets a file change one field of a
+// provider the defaults already define.
+func (c *Config) apply(layer *Config, md toml.MetaData, source Source) error {
+	dst := reflect.ValueOf(c).Elem()
+	src := reflect.ValueOf(layer).Elem()
+	// A trigger map is one policy value. Explicit configuration replaces the
+	// built-in labels, so custom labels do not silently retain default triggers.
+	if source.Kind == SourceFile && md.IsDefined("webhook", "trigger_labels") {
+		c.Webhook.TriggerLabels = make(map[string]string)
+		for key := range c.sources {
+			if strings.HasPrefix(key, "webhook.trigger_labels.") {
+				delete(c.sources, key)
+			}
+		}
+	}
+	for _, key := range md.Keys() {
+		if md.Type(key...) == "Hash" {
+			if err := ensureTable(dst, key); err != nil {
+				return fmt.Errorf("key %s: %w", key, err)
+			}
+			continue
+		}
+		value, ok := lookup(src, key)
+		if !ok {
+			return fmt.Errorf("key %s: not in the schema", key)
+		}
+		if value.Type() == durationType && md.Type(key...) != "String" {
+			return fmt.Errorf(`key %s: want a duration string such as "30m"`, key)
+		}
+		if err := assign(dst, key, value); err != nil {
+			return fmt.Errorf("key %s: %w", key, err)
+		}
+		c.sources[key.String()] = source
+	}
+	return nil
+}
+
+// set parses raw for the field at a dotted key and stores it.
+func (c *Config) set(dotted, raw string, source Source) error {
+	key := toml.Key(strings.Split(dotted, "."))
+	field, ok := lookup(reflect.ValueOf(c).Elem(), key)
+	if !ok || !field.CanSet() {
+		return fmt.Errorf("unknown config key %q", dotted)
+	}
+	if err := parseInto(field, raw); err != nil {
+		return fmt.Errorf("%s: %w", dotted, err)
+	}
+	c.sources[key.String()] = source
+	return nil
+}
+
+// parseInto never quotes raw in an error: an override comes from the
+// environment, and a value there may be a secret under the wrong name.
+func parseInto(field reflect.Value, raw string) error {
+	switch field.Interface().(type) {
+	case string:
+		field.SetString(raw)
+	case bool:
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			return errors.New("want true or false")
+		}
+		field.SetBool(v)
+	case int, int64:
+		v, err := strconv.ParseInt(raw, 10, field.Type().Bits())
+		if err != nil {
+			return errors.New("want a whole number")
+		}
+		field.SetInt(v)
+	case float64:
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return errors.New("want a number")
+		}
+		field.SetFloat(v)
+	case time.Duration:
+		v, err := time.ParseDuration(raw)
+		if err != nil {
+			return errors.New(`want a duration such as "30m"`)
+		}
+		field.SetInt(int64(v))
+	case []string:
+		var list []string
+		for item := range strings.SplitSeq(raw, ",") {
+			if item = strings.TrimSpace(item); item != "" {
+				list = append(list, item)
+			}
+		}
+		field.Set(reflect.ValueOf(list))
+	default:
+		return fmt.Errorf("a value of type %s cannot be set this way", field.Type())
+	}
+	return nil
+}
+
+// fieldByTag returns the field of struct v whose toml tag is name.
+func fieldByTag(v reflect.Value, name string) (reflect.Value, bool) {
+	t := v.Type()
+	for i := range t.NumField() {
+		if tag, _, _ := strings.Cut(t.Field(i).Tag.Get("toml"), ","); tag == name && tag != "-" {
+			return v.Field(i), true
+		}
+	}
+	return reflect.Value{}, false
+}
+
+// lookup follows key through structs, pointers and maps.
+func lookup(v reflect.Value, key toml.Key) (reflect.Value, bool) {
+	for _, seg := range key {
+		if v.Kind() == reflect.Pointer {
+			if v.IsNil() {
+				return reflect.Value{}, false
+			}
+			v = v.Elem()
+		}
+		switch v.Kind() {
+		case reflect.Struct:
+			f, ok := fieldByTag(v, seg)
+			if !ok {
+				return reflect.Value{}, false
+			}
+			v = f
+		case reflect.Map:
+			v = v.MapIndex(reflect.ValueOf(seg))
+			if !v.IsValid() {
+				return reflect.Value{}, false
+			}
+		default:
+			return reflect.Value{}, false
+		}
+	}
+	return v, true
+}
+
+// descend returns the container that holds the last segment of key, creating
+// maps and table entries on the way.
+func descend(v reflect.Value, key toml.Key) (reflect.Value, error) {
+	for _, seg := range key[:len(key)-1] {
+		next, err := child(v, seg)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		v = next
+	}
+	return v, nil
+}
+
+// child returns the table named seg inside v, creating it when v is a map.
+func child(v reflect.Value, seg string) (reflect.Value, error) {
+	switch v.Kind() {
+	case reflect.Struct:
+		f, ok := fieldByTag(v, seg)
+		if !ok {
+			return reflect.Value{}, fmt.Errorf("no table %q", seg)
+		}
+		return f, nil
+	case reflect.Map:
+		if v.Type().Elem().Kind() != reflect.Pointer {
+			return reflect.Value{}, fmt.Errorf("%q is not a table", seg)
+		}
+		if v.IsNil() {
+			v.Set(reflect.MakeMap(v.Type()))
+		}
+		k := reflect.ValueOf(seg)
+		elem := v.MapIndex(k)
+		if !elem.IsValid() || elem.IsNil() {
+			elem = reflect.New(v.Type().Elem().Elem())
+			v.SetMapIndex(k, elem)
+		}
+		return elem.Elem(), nil
+	default:
+		return reflect.Value{}, fmt.Errorf("%q is not a table", seg)
+	}
+}
+
+// ensureTable makes the table at key exist, so an empty [providers.x] still
+// creates the provider.
+func ensureTable(root reflect.Value, key toml.Key) error {
+	parent, err := descend(root, key)
+	if err != nil {
+		return err
+	}
+	table, err := child(parent, key[len(key)-1])
+	if err != nil {
+		return err
+	}
+	if table.Kind() == reflect.Map && table.IsNil() {
+		table.Set(reflect.MakeMap(table.Type()))
+	}
+	return nil
+}
+
+// assign stores value at key.
+func assign(root reflect.Value, key toml.Key, value reflect.Value) error {
+	parent, err := descend(root, key)
+	if err != nil {
+		return err
+	}
+	last := key[len(key)-1]
+	switch parent.Kind() {
+	case reflect.Struct:
+		f, ok := fieldByTag(parent, last)
+		if !ok {
+			return fmt.Errorf("no key %q", last)
+		}
+		f.Set(value)
+	case reflect.Map:
+		if parent.IsNil() {
+			parent.Set(reflect.MakeMap(parent.Type()))
+		}
+		parent.SetMapIndex(reflect.ValueOf(last), value)
+	default:
+		return fmt.Errorf("%q cannot hold a value", last)
+	}
+	return nil
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}
+package config
+
+import (
+	"errors"
+	"fmt"
+	"math"
+	"net"
+	"net/url"
+	"path"
+	"regexp"
+	"slices"
+	"strings"
+
+	"github.com/aryanpappu/patchbot/internal/execx"
+	"github.com/aryanpappu/patchbot/internal/secret"
+)
+
+var (
+	// Upper case only: it is the convention, and it keeps most pasted keys
+	// from passing as a variable name and being printed back.
+	envNameRE      = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,63}$`)
+	providerNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+	loginRE        = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9]|-[A-Za-z0-9]){0,38}$`)
+	repoRE         = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9]|-[A-Za-z0-9]){0,38}/[A-Za-z0-9._-]{1,100}$`)
+	commandIDRE    = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+)
+
+// shellMeta are the characters a shell gives meaning to. argv is run without
+// a shell, so one of these in the program name is a mistake or an attempt to
+// smuggle in a shell command line.
+const shellMeta = " \t\r\n|&;<>()$`\\\"'*?[]{}~!#=%^"
+
+// Validate checks the values of a loaded configuration and returns every
+// problem it finds, joined with errors.Join. Messages never contain a secret.
+//
+// A message may quote a bad value to help the user find it. Every message is
+// therefore redacted with the secrets the config holds: a key exported under
+// the wrong variable name would otherwise be printed as, say, a log level.
+func (c *Config) Validate() error {
+	v := validator{redactor: c.Redactor()}
+	c.validateDefaults(&v)
+	c.validateLimits(&v)
+	c.validateFixed(&v)
+	c.validateExecutor(&v)
+	w := c.Webhook
+	v.check(envNameRE.MatchString(w.SecretEnv), "webhook.secret_env: must name an environment variable")
+	v.check(strings.HasPrefix(w.Path, "/") && w.Path != "/" && path.Clean(w.Path) == w.Path && !strings.ContainsAny(w.Path, "{} ?#\\"), "webhook.path: must be a clean literal path starting with /")
+	v.check(!w.Enabled || w.Secret.IsSet(), "webhook.secret_env: enabled webhooks require a secret")
+	for label, mode := range w.TriggerLabels {
+		v.check(strings.TrimSpace(label) != "" && len(label) <= 100, "webhook.trigger_labels: invalid label")
+		v.check(slices.Contains([]string{ModeFix, ModeRefine, ModeInvestigate}, mode), "webhook.trigger_labels: invalid mode")
+	}
+	for _, name := range sortedKeys(c.Providers) {
+		c.validateProvider(&v, name, c.Providers[name])
+	}
+	for _, name := range sortedKeys(c.Repos) {
+		validateRepo(&v, name, c.Repos[name])
+	}
+	return errors.Join(v.errs...)
+}
+
+type validator struct {
+	errs     []error
+	redactor *secret.Redactor
+}
+
+func (v *validator) addf(format string, args ...any) {
+	v.errs = append(v.errs, errors.New(v.redactor.Redact(fmt.Sprintf(format, args...))))
+}
+
+// check adds the message when ok is false.
+func (v *validator) check(ok bool, format string, args ...any) {
+	if !ok {
+		v.addf(format, args...)
+	}
+}
+
+func (c *Config) validateDefaults(v *validator) {
+	d := c.Defaults
+	v.check(slices.Contains([]string{ModeFix, ModeRefine, ModeInvestigate}, d.Mode),
+		"defaults.mode: %q is not one of fix, refine, investigate", d.Mode)
+
+	if len(d.Approvers) == 0 {
+		v.addf("defaults.approvers: list at least one GitHub login; coding starts only after one of them approves the spec")
+	}
+	for _, login := range d.Approvers {
+		v.check(loginRE.MatchString(login), "defaults.approvers: %q is not a GitHub login", login)
+	}
+
+	_, ok := c.Providers[d.Provider]
+	switch {
+	case d.Provider == "":
+		v.addf("defaults.provider: not set")
+	case !ok:
+		v.addf("defaults.provider: no [providers.%s] table; configured providers: %s",
+			d.Provider, orNone(sortedKeys(c.Providers)))
+	default:
+		for _, stage := range []string{"refine", "code"} {
+			if c.Model(stage) == "" {
+				v.addf("no model for the %s stage: set defaults.%s_model or providers.%s.default_model "+
+					"(`patchbot models --provider %s` lists the choices)", stage, stage, d.Provider, d.Provider)
+			}
+		}
+	}
+
+	if !validMoney(d.MaxCostUSD) || d.MaxCostUSD <= 0 {
+		v.addf("defaults.max_cost_usd: must be greater than 0")
+	} else if validMoney(c.Limits.HardMaxCostUSD) && d.MaxCostUSD > c.Limits.HardMaxCostUSD {
+		v.addf("defaults.max_cost_usd (%v) is above limits.hard_max_cost_usd (%v)",
+			d.MaxCostUSD, c.Limits.HardMaxCostUSD)
+	}
+}
+
+func (c *Config) validateLimits(v *validator) {
+	l := c.Limits
+	if err := execx.ValidateTrustedPath(l.TrustedPath, c.DataDir()); err != nil {
+		v.addf("limits.trusted_path: %s", err)
+	}
+	v.check(validMoney(l.HardMaxCostUSD) && l.HardMaxCostUSD > 0, "limits.hard_max_cost_usd: must be greater than 0")
+	for _, f := range []struct {
+		key   string
+		value int64
+	}{
+		{"limits.max_turns", int64(l.MaxTurns)},
+		{"limits.refine_max_turns", int64(l.RefineMaxTurns)},
+		{"limits.max_output_tokens", int64(l.MaxOutputTokens)},
+		{"limits.max_total_tokens", l.MaxTotalTokens},
+		{"limits.max_test_attempts", int64(l.MaxTestAttempts)},
+		{"limits.run_timeout", int64(l.RunTimeout)},
+		{"limits.cmd_timeout", int64(l.CmdTimeout)},
+		{"limits.test_timeout", int64(l.TestTimeout)},
+		{"limits.cmd_output_bytes", int64(l.CmdOutputBytes)},
+		{"limits.cmd_store_bytes", int64(l.CmdStoreBytes)},
+		{"approval.poll_interval", int64(c.Approval.PollInterval)},
+		{"approval.ttl", int64(c.Approval.TTL)},
+		{"webhook.label_poll_interval", int64(c.Webhook.LabelPollInterval)},
+		{"approval.max_revisions", int64(c.Approval.MaxRevisions)},
+		{"server.max_concurrent_runs", int64(c.Server.MaxConcurrentRuns)},
+		{"server.max_queued_runs", int64(c.Server.MaxQueuedRuns)},
+	} {
+		v.check(f.value > 0, "%s: must be greater than 0", f.key)
+	}
+	rv := c.Review
+	v.check(rv.MaxRepairs == 0 || rv.MaxRepairs == 1, "review.max_repairs: must be 0 or 1")
+	v.check(rv.MaxTurns > 0, "review.max_turns: must be greater than 0")
+	v.check(rv.ReserveFraction >= 0 && rv.ReserveFraction <= 0.5, "review.reserve_fraction: must be between 0 and 0.5")
+	v.check(rv.Model == "" || validModelID(rv.Model), "review.model: %q is not a valid model ID", rv.Model)
+	v.check(l.CmdOutputBytes <= l.CmdStoreBytes || l.CmdStoreBytes <= 0,
+		"limits.cmd_output_bytes (%d) is above limits.cmd_store_bytes (%d)", l.CmdOutputBytes, l.CmdStoreBytes)
+}
+
+func (c *Config) validateFixed(v *validator) {
+	v.check(strings.TrimSpace(c.Approval.LocalActor) != "", "approval.local_actor: not set")
+	v.check(slices.Contains([]string{"debug", "info", "warn", "error"}, c.Log.Level),
+		"log.level: %q is not one of debug, info, warn, error", c.Log.Level)
+	v.check(slices.Contains([]string{"text", "json"}, c.Log.Format),
+		"log.format: %q is not one of text, json", c.Log.Format)
+	v.check(slices.Contains([]string{"cdn", "local"}, c.Server.VueSrc),
+		"server.vue_src: %q is not one of cdn, local", c.Server.VueSrc)
+	if host, port, err := net.SplitHostPort(c.Server.Addr); err != nil || host == "" || port == "" {
+		v.addf("server.addr: %q is not host:port", c.Server.Addr)
+	}
+	v.check(strings.TrimSpace(c.Data.Dir) != "", "data.dir: not set")
+	m := c.Memory
+	v.check(m.MaxEntries >= 1 && m.MaxEntries <= 100, "memory.max_entries: must be between 1 and 100")
+	v.check(m.MaxBytes >= 256 && m.MaxBytes <= 65536, "memory.max_bytes: must be between 256 and 65536")
+	v.check(m.MaxPending >= 1 && m.MaxPending <= 1000, "memory.max_pending: must be between 1 and 1000")
+	v.check(m.ObservationTTL > 0, "memory.observation_ttl: must be greater than 0")
+}
+
+func (c *Config) validateExecutor(v *validator) {
+	e := c.Executor
+	v.check(slices.Contains([]string{ExecutorLocal, ExecutorContainer}, e.Kind),
+		"executor.kind: %q is not one of local, container", e.Kind)
+	if !e.Container() {
+		return
+	}
+	v.check(slices.Contains([]string{execx.RuntimePodman, execx.RuntimeDocker}, e.Runtime),
+		"executor.runtime: %q is not one of podman, docker", e.Runtime)
+	if e.Image == "" {
+		v.addf("executor.image: required for kind container; pin it by digest (name@sha256:...)")
+	} else if err := execx.ValidateImage(e.Image); err != nil {
+		v.addf("executor.image: %s", err)
+	}
+	if err := execx.ValidateSize(e.Memory); err != nil {
+		v.addf("executor.memory: %s", err)
+	}
+	if err := execx.ValidateSize(e.TmpfsSize); err != nil {
+		v.addf("executor.tmpfs_size: %s", err)
+	}
+	if err := execx.ValidateCPUs(e.CPUs); err != nil {
+		v.addf("executor.cpus: %s", err)
+	}
+	v.check(e.PidsLimit > 0, "executor.pids_limit: must be greater than 0")
+	v.check(e.WorkspaceMaxBytes > 0, "executor.workspace_max_bytes: must be greater than 0")
+	v.check(e.Network == "none", "executor.network: %q is not allowed; only \"none\" is supported", e.Network)
+	if err := execx.ValidateUser(e.User); err != nil {
+		v.addf("executor.user: %s", err)
+	}
+	v.check(e.UserNS == "" || (e.UserNS == "keep-id" && e.Runtime == execx.RuntimePodman),
+		"executor.userns: %q must be empty or \"keep-id\" with runtime podman", e.UserNS)
+	if err := execx.ValidateContainerPath(e.Path); err != nil {
+		v.addf("executor.path: %s", err)
+	}
+}
+
+func (c *Config) validateProvider(v *validator, name string, p *Provider) {
+	at := "providers." + name
+	v.check(providerNameRE.MatchString(name),
+		"%s: a provider name uses lower-case letters, digits, - and _", at)
+	v.check(slices.Contains([]string{KindAnthropic, KindGemini, KindOpenAI}, p.Kind),
+		"%s.kind: %q is not one of anthropic, gemini, openai", at, p.Kind)
+
+	if p.APIKeyEnv != "" && !envNameRE.MatchString(p.APIKeyEnv) {
+		// The value is not echoed: the usual cause is a key pasted here.
+		v.addf("%s.api_key_env: must be the name of an environment variable (upper-case letters, digits "+
+			"and _), not the key itself", at)
+	}
+	if p.BaseURL != "" {
+		u, err := url.Parse(p.BaseURL)
+		switch {
+		case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "":
+			v.addf("%s.base_url: must be an http or https URL", at)
+		case u.User != nil:
+			v.addf("%s.base_url: must not contain a user name or password", at)
+		case u.RawQuery != "" || u.Fragment != "":
+			v.addf("%s.base_url: must not contain a query or fragment", at)
+		}
+	}
+	if p.Kind == KindOpenAI && p.BaseURL == "" {
+		v.addf("%s.base_url: required for kind openai (for example https://api.openai.com/v1)", at)
+	}
+
+	for _, model := range p.Models {
+		v.check(validModelID(model), "%s.models: %q is not a model ID", at, model)
+	}
+	if p.DefaultModel != "" {
+		v.check(validModelID(p.DefaultModel), "%s.default_model: %q is not a model ID", at, p.DefaultModel)
+	}
+	if p.PriceFree && len(p.Prices) > 0 {
+		v.addf("%s: price_free = true and a prices table contradict each other; keep one", at)
+	}
+	for _, model := range sortedKeys(p.Prices) {
+		price := p.Prices[model]
+		pat := fmt.Sprintf("%s.prices.%s", at, model)
+		v.check(validModelID(model), "%s: %q is not a model ID", pat, model)
+		for _, rate := range []struct {
+			name  string
+			value *float64
+		}{{"input", price.Input}, {"output", price.Output}} {
+			switch {
+			case rate.value == nil:
+				v.addf("%s.%s: missing; a price needs both input and output, and a rate that is "+
+					"really free must be written as 0", pat, rate.name)
+			case !validMoney(*rate.value):
+				v.addf("%s.%s: must be 0 or more", pat, rate.name)
+			}
+		}
+		v.check(price.CacheRead == nil || validMoney(*price.CacheRead), "%s.cache_read: must be 0 or more", pat)
+		v.check(price.CacheWrite == nil || validMoney(*price.CacheWrite), "%s.cache_write: must be 0 or more", pat)
+	}
+}
+
+func validateRepo(v *validator, name string, r *Repo) {
+	at := fmt.Sprintf("repos.%q", name)
+	_, repo, _ := strings.Cut(name, "/")
+	if !repoRE.MatchString(name) || repo == "." || repo == ".." {
+		v.addf("%s: a repository key looks like \"owner/name\"", at)
+	}
+	for _, id := range sortedKeys(r.Commands) {
+		argv := r.Commands[id]
+		cat := fmt.Sprintf("%s.commands.%s", at, id)
+		v.check(commandIDRE.MatchString(id),
+			"%s: a command ID uses lower-case letters, digits, - and _, and starts with a letter", cat)
+		switch {
+		case len(argv) == 0:
+			v.addf("%s: must be a non-empty argv array such as [\"go\", \"test\", \"./...\"]", cat)
+			continue
+		case argv[0] == "":
+			v.addf("%s: the program name is empty", cat)
+		case strings.HasPrefix(argv[0], "-"):
+			v.addf("%s: the program name %q starts with a dash", cat, argv[0])
+		case strings.ContainsAny(argv[0], shellMeta) || strings.ContainsFunc(argv[0], isControl):
+			v.addf("%s: the program name %q contains a shell metacharacter; commands run without a shell, "+
+				"so give the program and each argument as separate array items", cat, argv[0])
+		}
+		for i, arg := range argv {
+			v.check(!strings.ContainsRune(arg, 0), "%s: argument %d contains a NUL byte", cat, i)
+		}
+	}
+	if r.TestCommand != "" {
+		if _, ok := r.Commands[r.TestCommand]; !ok {
+			v.addf("%s.test_command: no command %q in commands (have: %s)",
+				at, r.TestCommand, orNone(sortedKeys(r.Commands)))
+		}
+	}
+	for _, path := range r.Protected {
+		v.check(validProtectedPath(path),
+			"%s.protected: %q must be a relative path inside the repository, with no \"..\"", at, path)
+	}
+}
+
+// Warnings returns problems that do not stop patchbot from starting: a model
+// with no price, an API key variable that is not set, and the like. A warning
+// names the environment variable and never its value.
+func (c *Config) Warnings() []string {
+	var out []string
+	redactor := c.Redactor()
+	warnf := func(format string, args ...any) {
+		out = append(out, redactor.Redact(fmt.Sprintf(format, args...)))
+	}
+
+	for _, name := range sortedKeys(c.Providers) {
+		p := c.Providers[name]
+		switch {
+		case p.APIKeyEnv == "" && p.Kind != KindOpenAI:
+			warnf("provider %q: api_key_env is not set, so requests carry no API key", name)
+		case p.APIKey.IsSet() && len(p.APIKey.Reveal()) < secret.MinValueLen:
+			warnf("provider %q: credential in %s is shorter than %d characters and cannot be masked; use a longer credential", name, p.APIKeyEnv, secret.MinValueLen)
+		case p.APIKeyEnv != "" && envNameRE.MatchString(p.APIKeyEnv) && !p.APIKey.IsSet():
+			warnf("provider %q: environment variable %s is not set; the provider cannot be used until it is",
+				name, p.APIKeyEnv)
+		}
+		if p.PriceFree {
+			continue
+		}
+		for _, model := range c.providerModels(name) {
+			price, ok := p.Prices[model]
+			switch {
+			case !ok:
+				warnf("provider %q: model %q has no price, so its cost is unknown and only the token limit applies; "+
+					"add [providers.%s.prices.%q] or set price_free = true", name, model, name, model)
+			case price.Checked.IsZero():
+				warnf("provider %q: the price of model %q has no checked date", name, model)
+			}
+		}
+	}
+
+	if len(c.Repos) == 0 {
+		warnf(`no [repos."owner/name"] table: no run can start until a repository is listed`)
+	}
+	for _, name := range sortedKeys(c.Repos) {
+		if _, ok := c.Repos[name].TestCommandID(); !ok {
+			warnf("repo %q: no test command, so its pull requests will be drafts marked unverified", name)
+		}
+	}
+	if host, _, err := net.SplitHostPort(c.Server.Addr); err == nil && !isLoopback(host) {
+		warnf("server.addr %q is not a loopback address; patchbot serve will require PATCHBOT_UI_TOKEN", c.Server.Addr)
+	}
+	return out
+}
+
+// providerModels returns the models a provider is expected to run: its list,
+// its default and, for the default provider, the two stage models.
+func (c *Config) providerModels(name string) []string {
+	p := c.Providers[name]
+	models := slices.Clone(p.Models)
+	add := func(model string) {
+		if model != "" && !slices.Contains(models, model) {
+			models = append(models, model)
+		}
+	}
+	add(p.DefaultModel)
+	if name == c.Defaults.Provider {
+		add(c.Defaults.RefineModel)
+		add(c.Defaults.CodeModel)
+	}
+	return models
+}
+
+func validMoney(f float64) bool {
+	return f >= 0 && !math.IsInf(f, 0) && !math.IsNaN(f)
+}
+
+func validModelID(id string) bool {
+	return id != "" && len(id) <= 200 && !strings.ContainsFunc(id, func(r rune) bool {
+		return isControl(r) || r == ' '
+	})
+}
+
+func validProtectedPath(path string) bool {
+	if path == "" || strings.HasPrefix(path, "/") || strings.ContainsRune(path, 0) || strings.Contains(path, `\`) {
+		return false
+	}
+	for seg := range strings.SplitSeq(strings.TrimSuffix(path, "/"), "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
+
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func orNone(items []string) string {
+	if len(items) == 0 {
+		return "none"
+	}
+	return strings.Join(items, ", ")
+}
+// Package gitx owns deterministic git operations for one disposable checkout.
+// Calls are serialized. Close removes private git HOME/hooks/temp directories;
+// the caller owns removal of the checkout. This is not a sandbox against hostile
+// processes running as the same user; callers must stop repository commands
+// before inspecting or publishing the checkout.
+package gitx
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/execx"
+)
+
+const (
+	// DefaultTimeout bounds every git invocation, including version checks.
+	DefaultTimeout = 2 * time.Minute
+	// DefaultOutputCap bounds stdout and stderr independently.
+	DefaultOutputCap = 256 << 10
+	// MinimumGitVersion includes fixes for CVE-2022-23521 and the 2025 clone
+	// vulnerabilities, including CVE-2025-48384. Older Git must not clone repos.
+	MinimumGitVersion = "2.50.1"
+)
+
+var (
+	// ErrTampered indicates changed git configuration or unexpected hooks.
+	ErrTampered = errors.New("git metadata was tampered with")
+	// ErrBranchGuard indicates an unsafe publication branch.
+	ErrBranchGuard = errors.New("git branch guard refused publication")
+	// ErrSubmodules indicates an unsupported submodule declaration.
+	ErrSubmodules = errors.New("repositories with .gitmodules are refused")
+	// ErrOutputLimit means structured output could not be read in full.
+	ErrOutputLimit = errors.New("git output exceeded its limit")
+)
+
+// CloneOptions describes validated repository coordinates, never an arbitrary
+// production URL. Branch is the branch to clone; DefaultBranch defaults to it
+// and should come from trusted repository metadata when cloning another branch.
+type CloneOptions struct {
+	Dir           string
+	Host          string
+	Owner         string
+	Name          string
+	Branch        string
+	DefaultBranch string
+	Depth         int
+	Token         string
+	Timeout       time.Duration
+	OutputCap     int
+	// TrustedPath is shared with command policies and doctor. Nil selects defaults.
+	TrustedPath []string
+	// ExcludedRoots includes the application data and workspace roots.
+	ExcludedRoots []string
+	// TestOnlyLocalRemote explicitly enables file transport. Only tests should
+	// set it, to an absolute local bare repository path. No local hard links.
+	TestOnlyLocalRemote string
+}
+
+// Author is operator-controlled identity, used for both author and committer.
+// The zero value selects patchbot <patchbot@users.noreply.github.com>.
+type Author struct {
+	Name  string
+	Email string
+}
+
+// Repo is one checkout. Its credentials and remote URL stay private.
+type Repo struct {
+	mu                                                    sync.Mutex
+	dir, git, home, hooks, temp, private                  string
+	host, remote, localRemote, token, base, defaultBranch string
+	configHash                                            string
+	author                                                Author
+	timeout                                               time.Duration
+	outputCap                                             int
+	closed                                                bool
+	path                                                  string
+	// observeCommand is a per-repository test seam, called under mu.
+	observeCommand func([]string)
+}
+
+var (
+	coordinate = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
+	hostname   = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$`)
+	objectID   = regexp.MustCompile(`^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$`)
+)
+
+// Clone checks MinimumGitVersion once and clones into a nonexistent Dir.
+// On failure it removes only directories it created, including a partial clone.
+func Clone(ctx context.Context, opts CloneOptions) (_ *Repo, cloneErr error) {
+	if runtime.GOOS == "windows" || runtime.GOOS == "plan9" {
+		return nil, errors.New("git process groups require a Unix host")
+	}
+	if !filepath.IsAbs(opts.Dir) || strings.ContainsRune(opts.Dir, 0) || opts.Depth < 0 ||
+		opts.Timeout < 0 || opts.OutputCap < 0 || !validBranch(opts.Branch) {
+		return nil, errors.New("invalid clone options")
+	}
+	if opts.DefaultBranch == "" {
+		opts.DefaultBranch = opts.Branch
+	}
+	if !validBranch(opts.DefaultBranch) || strings.ContainsRune(opts.Token, 0) {
+		return nil, errors.New("invalid clone options")
+	}
+	if _, err := os.Lstat(opts.Dir); !errors.Is(err, os.ErrNotExist) {
+		return nil, errors.New("clone destination must not exist")
+	}
+	r := &Repo{dir: opts.Dir, host: opts.Host, token: opts.Token, defaultBranch: opts.DefaultBranch,
+		timeout: opts.Timeout, outputCap: opts.OutputCap, localRemote: opts.TestOnlyLocalRemote,
+		author: Author{"patchbot", "patchbot@users.noreply.github.com"}}
+	if r.timeout == 0 {
+		r.timeout = DefaultTimeout
+	}
+	if r.outputCap == 0 {
+		r.outputCap = DefaultOutputCap
+	}
+	if r.outputCap < 64 {
+		return nil, errors.New("output cap must be at least 64 bytes")
+	}
+	if r.localRemote != "" {
+		if !filepath.IsAbs(r.localRemote) || strings.ContainsRune(r.localRemote, 0) {
+			return nil, errors.New("test remote must be an absolute local path")
+		}
+		r.remote = (&url.URL{Scheme: "file", Path: r.localRemote}).String()
+	} else {
+		if !hostname.MatchString(opts.Host) || strings.Contains(opts.Host, "..") ||
+			!coordinate.MatchString(opts.Owner) || !coordinate.MatchString(opts.Name) ||
+			opts.Owner == "." || opts.Owner == ".." || opts.Name == "." || opts.Name == ".." {
+			return nil, errors.New("invalid repository coordinates")
+		}
+		r.remote = "https://" + opts.Host + "/" + opts.Owner + "/" + opts.Name + ".git"
+	}
+	dirs := opts.TrustedPath
+	if dirs == nil {
+		dirs = filepath.SplitList(execx.TrustedPath)
+	}
+	r.path = strings.Join(dirs, string(filepath.ListSeparator))
+	var err error
+	r.git, err = ResolveGit(dirs, append([]string{opts.Dir}, opts.ExcludedRoots...)...)
+	if err != nil {
+		return nil, err
+	}
+	private, err := os.MkdirTemp("", "patchbot-git-")
+	if err != nil {
+		return nil, errors.New("create private git directories failed")
+	}
+	r.private = private
+	defer func() {
+		if cloneErr != nil {
+			_ = os.RemoveAll(private)
+		}
+	}()
+	r.home, r.hooks, r.temp = filepath.Join(private, "home"), filepath.Join(private, "hooks"), filepath.Join(private, "tmp")
+	for _, dir := range []string{r.home, r.hooks, r.temp} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			return nil, errors.New("create private git directory failed")
+		}
+	}
+	// Reserve the destination ourselves so a failed clone never removes a
+	// directory another actor created between validation and git clone.
+	if err := os.Mkdir(opts.Dir, 0700); err != nil {
+		return nil, errors.New("reserve clone destination failed")
+	}
+	defer func() {
+		if cloneErr != nil {
+			_ = os.RemoveAll(opts.Dir)
+		}
+	}()
+	r.dir = private
+	version, err := r.complete(ctx, false, "--version")
+	if err != nil {
+		return nil, err
+	}
+	if err := checkGitVersion(version); err != nil {
+		return nil, err
+	}
+	args := []string{"clone", "--no-local", "--single-branch", "--no-tags", "--no-recurse-submodules", "--template=" + r.hooks, "--branch", opts.Branch}
+	if opts.Depth > 0 {
+		args = append(args, "--depth", fmt.Sprint(opts.Depth))
+	}
+	args = append(args, "--", r.remote, opts.Dir)
+	if _, err := r.complete(ctx, true, args...); err != nil {
+		return nil, err
+	}
+	r.dir = opts.Dir
+	if err := r.noSubmodules(ctx); err != nil {
+		return nil, err
+	}
+	r.base, err = r.head(ctx)
+	if err != nil {
+		return nil, err
+	}
+	r.configHash, err = r.hashConfig()
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// Dir is the absolute checkout path; it remains valid after Close.
+func (r *Repo) Dir() string { return r.dir }
+
+// Close discards credentials and removes the private git execution directories.
+// The workspace owner is responsible for removing the checkout itself.
+func (r *Repo) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.closed, r.token = true, ""
+	if err := os.RemoveAll(r.private); err != nil {
+		return errors.New("remove private git directories failed")
+	}
+	return nil
+}
+
+func validBranch(name string) bool {
+	if name == "" || name == "@" || strings.HasPrefix(name, "-") || strings.HasSuffix(name, ".") ||
+		strings.ContainsAny(name, " ~^:?*[\\\x00\t\r\n") || strings.Contains(name, "..") || strings.Contains(name, "@{") {
+		return false
+	}
+	for _, part := range strings.Split(name, "/") {
+		if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return false
+		}
+		for _, ch := range part {
+			if ch < 32 || ch == 127 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (r *Repo) head(ctx context.Context) (string, error) {
+	out, err := r.complete(ctx, false, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return "", err
+	}
+	sha := strings.TrimSpace(out)
+	if !objectID.MatchString(sha) {
+		return "", errors.New("git returned an invalid commit ID")
+	}
+	return sha, nil
+}
+
+// HeadSHA returns the checked-out commit ID.
+func (r *Repo) HeadSHA(ctx context.Context) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.verify(); err != nil {
+		return "", err
+	}
+	return r.head(ctx)
+}
+
+// CheckoutSHA detaches at a full commit ID and updates the base for future diffs.
+// Fetches by ID when shallow history does not contain the approved spec's base.
+// As required, fetch gets no token; a private host must permit this fetch without
+// credentials, or the caller must initially use a full clone.
+func (r *Repo) CheckoutSHA(ctx context.Context, sha string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !objectID.MatchString(sha) {
+		return errors.New("checkout requires a full commit ID")
+	}
+	if err := r.verify(); err != nil {
+		return err
+	}
+	if _, err := r.complete(ctx, false, "cat-file", "-e", sha+"^{commit}"); err != nil {
+		if _, err := r.complete(ctx, false, "fetch", "--no-tags", "--recurse-submodules=no", "--depth=1", "--", r.remote, sha); err != nil {
+			return err
+		}
+	}
+	if _, err := r.complete(ctx, false, "checkout", "--detach", sha, "--"); err != nil {
+		return err
+	}
+	if err := r.noSubmodules(ctx); err != nil {
+		return err
+	}
+	var err error
+	r.base, err = r.head(ctx)
+	return err
+}
+
+// CreateBranch creates and switches to a new local branch.
+func (r *Repo) CreateBranch(ctx context.Context, name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !validBranch(name) {
+		return ErrBranchGuard
+	}
+	if err := r.verify(); err != nil {
+		return err
+	}
+	_, err := r.complete(ctx, false, "switch", "--no-guess", "-c", name, "--")
+	return err
+}
+
+func (r *Repo) noSubmodules(ctx context.Context) error {
+	// ls-tree also finds .gitmodules hidden by a sparse checkout or deletion.
+	out, err := r.complete(ctx, false, "ls-tree", "-r", "-z", "--name-only", "HEAD")
+	if err != nil {
+		return err
+	}
+	for _, path := range strings.Split(out, "\x00") {
+		for _, part := range strings.Split(path, "/") {
+			if strings.EqualFold(part, ".gitmodules") {
+				return ErrSubmodules
+			}
+		}
+	}
+	return nil
+}
+
+// ResolveGit is the single git lookup used by clone/push and doctor.
+func ResolveGit(dirs []string, excluded ...string) (string, error) {
+	return execx.ResolveExecutable("git", dirs, excluded...)
+}
+package github
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const maxErrorBody = 1024
+
+// APIError is a bounded, credential-redacted GitHub error response.
+// Use errors.As to inspect this or one of the specific status error types.
+type APIError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("GitHub HTTP %d: %s", e.StatusCode, e.Message)
+}
+
+// ErrNotFound indicates HTTP 404.
+type ErrNotFound struct{ APIError }
+
+// Unwrap exposes the common API error metadata.
+func (e *ErrNotFound) Unwrap() error { return &e.APIError }
+
+// ErrUnauthorized indicates HTTP 401.
+type ErrUnauthorized struct{ APIError }
+
+// Unwrap exposes the common API error metadata.
+func (e *ErrUnauthorized) Unwrap() error { return &e.APIError }
+
+// ErrForbidden indicates HTTP 403 without evidence of a rate limit.
+type ErrForbidden struct{ APIError }
+
+// Unwrap exposes the common API error metadata.
+func (e *ErrForbidden) Unwrap() error { return &e.APIError }
+
+// ErrRateLimited indicates a primary or secondary rate limit. Reset is zero
+// when GitHub provides no valid reset or retry header; the caller chooses backoff.
+type ErrRateLimited struct {
+	APIError
+	Reset time.Time
+}
+
+// Unwrap exposes the common API error metadata.
+func (e *ErrRateLimited) Unwrap() error { return &e.APIError }
+
+// ErrValidation indicates HTTP 422, including GitHub's validation message.
+type ErrValidation struct{ APIError }
+
+// Unwrap exposes the common API error metadata.
+func (e *ErrValidation) Unwrap() error { return &e.APIError }
+
+func responseError(status int, header http.Header, body []byte, token string) error {
+	message := string(body)
+	var wire struct{ Message string }
+	if json.Unmarshal(body, &wire) == nil && wire.Message != "" {
+		message = wire.Message
+	}
+	limited := strings.ToLower(message)
+	api := APIError{StatusCode: status, Message: redactMessage(message, token)}
+	switch {
+	case status == http.StatusTooManyRequests || (status == http.StatusForbidden &&
+		(header.Get("X-RateLimit-Remaining") == "0" || header.Get("Retry-After") != "" ||
+			strings.Contains(limited, "rate limit") || strings.Contains(limited, "abuse detection"))):
+		return &ErrRateLimited{APIError: api, Reset: rateReset(header, time.Now())}
+	case status == http.StatusNotFound:
+		return &ErrNotFound{api}
+	case status == http.StatusUnauthorized:
+		return &ErrUnauthorized{api}
+	case status == http.StatusForbidden:
+		return &ErrForbidden{api}
+	case status == http.StatusUnprocessableEntity:
+		return &ErrValidation{api}
+	default:
+		return &api
+	}
+}
+
+func rateReset(header http.Header, now time.Time) time.Time {
+	var reset time.Time
+	if seconds, err := strconv.ParseInt(header.Get("X-RateLimit-Reset"), 10, 64); err == nil && seconds >= 0 {
+		reset = time.Unix(seconds, 0).UTC()
+	}
+	retry := header.Get("Retry-After")
+	// Bound the conversion to time.Duration so a hostile header cannot overflow.
+	if seconds, err := strconv.ParseInt(retry, 10, 64); err == nil && seconds >= 0 && seconds <= 1<<32 {
+		if after := now.Add(time.Duration(seconds) * time.Second); after.After(reset) {
+			reset = after
+		}
+	} else if after, err := http.ParseTime(retry); err == nil && after.After(reset) {
+		reset = after
+	}
+	return reset
+}
+
+func tokenForms(token string) []string {
+	if token == "" {
+		return nil
+	}
+	return []string{token, url.QueryEscape(token), url.PathEscape(token),
+		base64.StdEncoding.EncodeToString([]byte(token)), base64.RawStdEncoding.EncodeToString([]byte(token))}
+}
+
+func redactMessage(message, token string) string {
+	for _, secret := range tokenForms(token) {
+		message = strings.ReplaceAll(message, secret, "[redacted]")
+		// A truncated response may end partway through a credential.
+		for n := min(len(secret)-1, len(message)); n > 0; n-- {
+			if strings.HasSuffix(message, secret[:n]) {
+				message = message[:len(message)-n] + "[redacted]"
+				break
+			}
+		}
+	}
+	if len(message) > maxErrorBody {
+		message = message[:maxErrorBody]
+	}
+	return message
+}
+docs/planning/step2/PLAN.md:46:| M23 | Login-based dashboard | Verify the Cloudflare Access JWT (`Cf-Access-Jwt-Assertion`, team JWKS, audience tag) server-side and record the logged-in email as the approval actor; replaces the dropped UI token. Optional local user/password login for non-Cloudflare installs. |
+docs/planning/step2/PLAN.md:47:| M24 | Repository management in the dashboard | Add/edit/remove allowlisted repos (commands, test command, protected paths, image) from the UI, stored in SQLite with audit; config file stays the bootstrap. Requires M23 login first. |
+docs/planning/step2/PLAN.md:48:| M25 | Per-repo container image | `[repos."x"] image = ...` overriding `[executor] image`, so Go and PHP repos run side by side. |
+docs/planning/step2/PLAN.md:49:| M26 | Create issue from the dashboard | Write a feature request in the UI → patchbot opens the GitHub issue and starts refine. |
+internal/secret/writer.go:142:	case swallowToken:
+internal/github/identity.go:10:// CurrentUser obtains the authenticated bot login for fail-closed comment sync.
+internal/github/identity.go:11:func (c *HTTPClient) CurrentUser(ctx context.Context) (string, error) {
+internal/github/identity.go:20:		return "", operationError("CurrentUser", err)
+internal/github/identity.go:23:		return "", errors.New("CurrentUser: missing login")
+internal/cli/runs.go:165:		value, _ := lookup("GITHUB_TOKEN")
+internal/github/http.go:31:	tokens     TokenSource
+internal/github/http.go:41:func New(httpClient *http.Client, baseURL string, tokens TokenSource) (*HTTPClient, error) {
+internal/github/types.go:10:// TokenSource supplies a PAT today and can supply GitHub App tokens later.
+internal/github/types.go:12:type TokenSource interface {
+internal/cli/doctor.go:57:	token, _ := lookup("GITHUB_TOKEN")
+internal/cli/doctor.go:117:		add("FAIL", "GitHub credential", "set GITHUB_TOKEN")
+internal/cli/doctor.go:119:		add("PASS", "GitHub credential", "GITHUB_TOKEN is set")
+internal/cli/doctor.go:245:		CurrentUser(context.Context) (string, error)
+internal/cli/doctor.go:248:		_, err = identity.CurrentUser(ctx)
+internal/cli/doctor.go:251:		add("FAIL", "GitHub /user", "identity check failed; check GITHUB_TOKEN")
+internal/cli/doctor_test.go:71:	vars := map[string]string{"ANTHROPIC_API_KEY": "fixture-provider-key", "GITHUB_TOKEN": "dummy-github-token"}
+internal/cli/doctor_test.go:130:		code, out, errs := runApp(t, validConfig, map[string]string{"GITHUB_TOKEN": "plain-github-credential", "PATCHBOT_UI_TOKEN": "tiny"}, command, "--plain-github-credential-tiny")
+internal/cli/doctor_test.go:217:	vars := map[string]string{"ANTHROPIC_API_KEY": "code", "GITHUB_TOKEN": "test", "PATCHBOT_UI_TOKEN": "ok"}
+internal/cli/cli.go:69:	for _, name := range []string{"GITHUB_TOKEN", "PATCHBOT_UI_TOKEN"} {
+internal/cli/serve.go:55:	githubToken, _ := lookup("GITHUB_TOKEN")
+internal/cli/serve.go:99:	service, err := server.New(ctx, cfg, db, server.Options{Token: secret.New(uiToken), Runner: runnerOpts})
+internal/cli/doctor_container_test.go:28:		script := fmt.Sprintf("#!/bin/sh\necho \"XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR GH=$GITHUB_TOKEN KEY=$ANTHROPIC_API_KEY\" > %q\ncase \"$1\" in\ninfo) echo '%s' ;;\nimage) %s ;;\nesac\n", envLog, rootless, image)
+internal/cli/doctor_container_test.go:38:	vars := map[string]string{"ANTHROPIC_API_KEY": "fixture-provider-key", "GITHUB_TOKEN": "dummy-github-token", "XDG_RUNTIME_DIR": "/run/user/4242"}
+internal/cli/config.go:149:	for _, name := range []string{"GITHUB_TOKEN", "PATCHBOT_UI_TOKEN"} {
+internal/runner/runner_test.go:127:	f.opts = runner.Options{GitHub: client, Tokens: tokens, BotLogin: "patchbot", Clock: f.clock, HeartbeatInterval: 5 * time.Millisecond, Constructors: llm.Constructors{"anthropic": func(llm.ProviderConfig) (llm.Provider, error) { return f.p, nil }}, Clone: func(ctx context.Context, opts gitx.CloneOptions) (*gitx.Repo, error) {
+internal/execx/env_test.go:21:	t.Setenv("GITHUB_TOKEN", "parent-github-secret")
+internal/execx/container_test.go:147:	vars := map[string]string{"XDG_RUNTIME_DIR": "/run/user/1001", "GITHUB_TOKEN": "ghp_secret", "DOCKER_HOST": "unix:///run/user/1001/docker.sock",
+internal/execx/container_test.go:398:		env := []string{"HOME=/private/x/home", "TMPDIR=/private/x/tmp", "GOCACHE=/private/x/home/go-cache", "PATH=/usr/bin", "GITHUB_TOKEN=leak"}
+internal/execx/container_test.go:414:		if strings.Contains(joined, "GITHUB_TOKEN") || strings.Contains(joined, "leak") {
+internal/runner/recovery_test.go:336:	f.opts.BotLogin = ""
+internal/runner/phases.go:60:		return nil, errors.New("GitHub token unavailable; set GITHUB_TOKEN")
+internal/runner/phases.go:70:		repo, cloneErr = r.opts.Clone(ctx, gitx.CloneOptions{Dir: filepath.Join(dir, "repo"), Host: "github.com", Owner: ref(run.Repo).Owner, Name: ref(run.Repo).Name, Branch: meta.DefaultBranch, DefaultBranch: meta.DefaultBranch, Token: token, TrustedPath: r.cfg.Limits.TrustedPath, ExcludedRoots: []string{r.cfg.DataDir()}})
+internal/execx/local_unix_test.go:201:	t.Setenv("GITHUB_TOKEN", "parent-github-secret")
+internal/runner/sync.go:44:	bot := r.opts.BotLogin
+internal/runner/sync.go:47:			CurrentUser(context.Context) (string, error)
+internal/runner/sync.go:53:		bot, err = identity.CurrentUser(ctx)
+internal/runner/smoke_test.go:44:		case "GITHUB_TOKEN":
+internal/runner/smoke_test.go:52:		cmd.Env = []string{"PATCHBOT_SMOKE_KEY=fake-provider-credential", "GITHUB_TOKEN=fixture-credential"}
+internal/runner/README.md:21:GitHub client resolves the identity from `/user`; tests can supply `BotLogin`.
+internal/runner/runner.go:43:	Tokens       github.TokenSource
+internal/runner/runner.go:51:	BotLogin          string
+internal/runner/runner.go:95:		return "", errors.New("set GITHUB_TOKEN")
+internal/runner/runner.go:128:		opts.Tokens = Token{Value: secret.New(os.Getenv("GITHUB_TOKEN"))}
+internal/server/fixture_test.go:155:	opts := Options{Runner: runner.Options{GitHub: f.gh, Tokens: runner.Token{Value: secret.New(testCredential)}, BotLogin: "patchbot", HeartbeatInterval: 10 * time.Millisecond, Constructors: llm.Constructors{"anthropic": func(llm.ProviderConfig) (llm.Provider, error) { return f.provider, nil }}, Clone: func(ctx context.Context, opts gitx.CloneOptions) (*gitx.Repo, error) {
+internal/server/server.go:123:	s.redactor.AddSecrets(secret.New(os.Getenv("GITHUB_TOKEN")))
+internal/gitx/gitx_test.go:70:		Branch: "main", Depth: depth, Token: fakeToken, TestOnlyLocalRemote: f.bare})
+internal/gitx/gitx_test.go:442:		for _, forbidden := range []string{"GIT_ASKPASS=", "SSH_ASKPASS=", "GITHUB_TOKEN=", "GIT_SSH_COMMAND="} {
+
+exec
+/bin/zsh -lc "cat internal/github/commands.go; sed -n '1,175p' internal/runner/runner.go; sed -n '25,90p' internal/runner/phases.go; cat docs/planning/step2/PLAN.md; rg -n 'secret|env|Approvers|Repos|repo' internal/config/{load,validate,show,config}.go | head -100; rg -n 'RateLimited|Reset|backoff' internal/runner internal/server internal/cli; cat internal/execx/env.go" in /Users/pappumishra/Documents/selfproject/patchbot
+ succeeded in 0ms:
+package github
+
+import (
+	"strings"
+	"unicode"
+)
+
+// CommandKind names a comment action. Authorization is checked separately.
+type CommandKind string
+
+// Supported comment actions.
+const (
+	CommandApprove CommandKind = "approve"
+	CommandReject  CommandKind = "reject"
+	CommandRevise  CommandKind = "revise"
+	CommandAnswer  CommandKind = "answer"
+)
+
+// Command is a parsed action with optional multiline notes.
+type Command struct {
+	Kind  CommandKind
+	Notes string
+}
+
+// ParseCommand recognizes an action only on the first nonempty line. A quoted
+// or fenced first line is not a command. Approve and reject take no inline
+// arguments; revise and answer require text, which may start on the next line.
+func ParseCommand(comment Comment) (Command, bool) {
+	body := strings.TrimSpace(strings.ReplaceAll(comment.Body, "\r\n", "\n"))
+	first, rest, _ := strings.Cut(body, "\n")
+	first = strings.TrimSpace(first)
+	name, inline := first, ""
+	if index := strings.IndexFunc(first, unicode.IsSpace); index >= 0 {
+		name, inline = first[:index], strings.TrimSpace(first[index:])
+	}
+	var kind CommandKind
+	switch strings.ToLower(name) {
+	case "/approve":
+		kind = CommandApprove
+	case "/reject":
+		kind = CommandReject
+	case "/revise":
+		kind = CommandRevise
+	case "/answer":
+		kind = CommandAnswer
+	default:
+		return Command{}, false
+	}
+	if (kind == CommandApprove || kind == CommandReject) && inline != "" {
+		return Command{}, false
+	}
+	notes := strings.TrimSpace(inline + "\n" + rest)
+	if (kind == CommandRevise || kind == CommandAnswer) && notes == "" {
+		return Command{}, false
+	}
+	return Command{Kind: kind, Notes: notes}, true
+}
+
+// EligibleCommand checks identity, edit status and live collaborator membership.
+// The runner supplies its own login explicitly; an unknown bot identity fails
+// closed. The callback can adapt Client.IsCollaborator and must return false on
+// error. Run status, spec integrity and comment ordering belong to the runner.
+func EligibleCommand(comment Comment, approvers []string, isCollaborator func(string) bool, botLogin string) bool {
+	if botLogin == "" || comment.Author == "" || strings.EqualFold(comment.Author, botLogin) ||
+		comment.CreatedAt.IsZero() || !comment.UpdatedAt.Equal(comment.CreatedAt) || isCollaborator == nil {
+		return false
+	}
+	for _, approver := range approvers {
+		if strings.EqualFold(approver, comment.Author) {
+			return isCollaborator(comment.Author)
+		}
+	}
+	return false
+}
+// Package runner orchestrates durable issue runs and their approval boundary.
+package runner
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/agent"
+	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/execx"
+	"github.com/aryanpappu/patchbot/internal/github"
+	"github.com/aryanpappu/patchbot/internal/gitx"
+	"github.com/aryanpappu/patchbot/internal/llm"
+	"github.com/aryanpappu/patchbot/internal/llm/providers"
+	"github.com/aryanpappu/patchbot/internal/secret"
+	"github.com/aryanpappu/patchbot/internal/store"
+	"github.com/aryanpappu/patchbot/internal/tools"
+	"github.com/aryanpappu/patchbot/internal/workspace"
+)
+
+// Options supplies trusted infrastructure. Clone, Executor and Constructors are
+// test seams; production uses gitx, execx and the raw provider constructors.
+type Options struct {
+	// Dispatch hands durable work to an owning manager. Nil runs synchronously.
+	Dispatch func(context.Context, int64, func(context.Context) error) error
+	// Admit reserves bounded dispatch capacity before any durable mutation.
+	// The returned context carries admission through Dispatch; release is always called.
+	Admit func(context.Context) (context.Context, func(), error)
+	// ActionChannel is ui for the local web server; otherwise local actions use cli.
+	ActionChannel string
+	// Redactor adds CLI/server credentials to model and persistence boundaries.
+	Redactor *secret.Redactor
+
+	GitHub       github.Client
+	Tokens       github.TokenSource
+	Constructors llm.Constructors
+	Clone        func(context.Context, gitx.CloneOptions) (*gitx.Repo, error)
+	Executor     func(string) (execx.Executor, error)
+	// ContainerSweep removes containers left by a previous process. Nil uses
+	// execx.SweepContainers when [executor] kind is container.
+	ContainerSweep    func(context.Context) (int, error)
+	Clock             func() time.Time
+	BotLogin          string
+	HeartbeatInterval time.Duration
+	StaleAfter        time.Duration
+	// DisableFailureComments suppresses the otherwise enabled failure comment.
+	DisableFailureComments bool
+}
+
+// Request fixes provider/model and limits for the lifetime of a new run.
+type Request struct {
+	// IngressKey is supplied only by automatic label reconciliation.
+	IngressKey             string
+	Repo                   string
+	Issue                  int64
+	Mode, Provider, Model  string
+	RefineModel, CodeModel string
+	DryRun                 bool
+	MaxCostMicros          int64
+}
+
+// Runner is safe for concurrent actions. Long work owns a per-run context;
+// Cancel also works from another process through the persisted status.
+type Runner struct {
+	cfg      *config.Config
+	db       store.Store
+	gh       github.Client
+	opts     Options
+	redactor *secret.Redactor
+	mu       sync.Mutex
+	active   map[int64]context.CancelFunc
+	controls map[int64]*sync.Mutex
+}
+
+type runLimits struct {
+	Agent       agent.Limits
+	RefineTurns int
+	Timeout     time.Duration
+}
+
+// Token is a secret-backed PAT source, shared by GitHub and git clone/push.
+type Token struct{ Value secret.Secret }
+
+// Token supplies a credential without embedding it in diagnostics.
+func (t Token) Token(context.Context) (string, error) {
+	if !t.Value.IsSet() {
+		return "", errors.New("set GITHUB_TOKEN")
+	}
+	return t.Value.Reveal(), nil
+}
+
+// New prepares the runner and recovers expired heartbeats on startup.
+// The caller owns the store and closes it after runner work has finished.
+func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) (*Runner, error) {
+	if cfg == nil || db == nil {
+		return nil, errors.New("runner requires configuration and storage")
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	if opts.Clock == nil {
+		opts.Clock = time.Now
+	}
+	if opts.Clone == nil {
+		opts.Clone = gitx.Clone
+	}
+	if opts.Executor == nil {
+		opts.Executor = defaultExecutor(cfg)
+	}
+	if opts.Constructors == nil {
+		opts.Constructors = providers.Constructors(providers.Options{})
+	}
+	if opts.HeartbeatInterval <= 0 {
+		opts.HeartbeatInterval = 10 * time.Second
+	}
+	if opts.StaleAfter <= 0 {
+		opts.StaleAfter = time.Minute
+	}
+	if opts.Tokens == nil {
+		opts.Tokens = Token{Value: secret.New(os.Getenv("GITHUB_TOKEN"))}
+	}
+	gh := opts.GitHub
+	if gh == nil {
+		var err error
+		gh, err = github.New(nil, "", opts.Tokens)
+		if err != nil {
+			return nil, err
+		}
+	}
+	r := &Runner{cfg: cfg, db: db, gh: gh, opts: opts, redactor: cfg.Redactor(), active: make(map[int64]context.CancelFunc), controls: make(map[int64]*sync.Mutex)}
+	r.redactor.Extend(opts.Redactor)
+	if token, err := opts.Tokens.Token(ctx); err == nil {
+		r.redactor.AddSecrets(secret.New(token))
+	}
+	if err := r.RecoverStale(ctx); err != nil {
+		return nil, err
+	}
+	r.sweepContainers(ctx)
+	manager, err := workspace.NewManager(cfg.DataDir())
+	if err != nil {
+		return nil, err
+	}
+	_, sweepErr := manager.Sweep(ctx, max(24*time.Hour, cfg.Limits.RunTimeout+cfg.Limits.TestTimeout+opts.StaleAfter))
+	if err := errors.Join(sweepErr, manager.Close()); err != nil {
+		return nil, err
+	}
+	if err := r.expireWaiting(ctx); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (r *Runner) now() time.Time { return r.opts.Clock().UTC() }
+func (r *Runner) control(id int64) *sync.Mutex {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.controls[id] == nil {
+		r.controls[id] = &sync.Mutex{}
+	}
+	return r.controls[id]
+}
+
+// ErrInvalidRequest identifies a rejected operator input without quoting it.
+var ErrInvalidRequest = errors.New("invalid run request")
+
+var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
+
+	env  *tools.Env
+	dir  string
+}
+
+func (e *toolEnvironment) close() error {
+	if e == nil || e.dir == "" {
+		return nil
+	}
+	dir := e.dir
+	e.dir = ""
+	err := errors.Join(e.env.WS.Close(false), e.repo.Close())
+	root, openErr := os.OpenRoot(filepath.Dir(dir))
+	if openErr != nil {
+		return errors.Join(err, openErr)
+	}
+	defer func() { _ = root.Close() }()
+	return errors.Join(err, root.RemoveAll(filepath.Base(dir)))
+}
+
+func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha string) (_ *toolEnvironment, err error) {
+	base := filepath.Join(r.cfg.DataDir(), "workspaces")
+	if err := os.MkdirAll(base, 0700); err != nil {
+		return nil, errors.New("create workspace directory failed")
+	}
+	dir, err := os.MkdirTemp(base, "run-"+strconv.FormatInt(run.ID, 10)+"-")
+	if err != nil {
+		return nil, errors.New("create run workspace failed")
+	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	token, err := r.opts.Tokens.Token(ctx)
+	if err != nil {
+		return nil, errors.New("GitHub token unavailable; set GITHUB_TOKEN")
+	}
+	var repo *gitx.Repo
+	defer func() {
+		if err != nil && repo != nil {
+			_ = repo.Close()
+		}
+	}()
+	err = r.operation(ctx, run, "git", "clone", func() error {
+		var cloneErr error
+		repo, cloneErr = r.opts.Clone(ctx, gitx.CloneOptions{Dir: filepath.Join(dir, "repo"), Host: "github.com", Owner: ref(run.Repo).Owner, Name: ref(run.Repo).Name, Branch: meta.DefaultBranch, DefaultBranch: meta.DefaultBranch, Token: token, TrustedPath: r.cfg.Limits.TrustedPath, ExcludedRoots: []string{r.cfg.DataDir()}})
+		return cloneErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	if sha != "" {
+		if err := r.operation(ctx, run, "git", "checkout_sha", func() error { return repo.CheckoutSHA(ctx, sha) }); err != nil {
+			return nil, err
+		}
+	}
+	ws, err := workspace.Open(repo.Dir(), workspace.Options{Protected: r.cfg.Repos[run.Repo].Protected})
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_ = ws.Close(false)
+		}
+	}()
+	policy, err := execx.NewPolicy(ws.Dir(), r.cfg.Repos[run.Repo].Commands, r.cfg.CommandPolicyOptions())
+# patchbot Step 2 plan (merged, owner-approved 2026-11-13)
+
+Sources: claude-position.md, codex-round1.md, claude-round2.md, codex-round2.md (Codex final word; where it
+adds stricter acceptance criteria for M17/M18 those criteria win).
+
+Deploy target: Oracle Mumbai CyberPanel box (aarch64, 4 OCPU/24 GB, Ubuntu 24.04). It also hosts the live
+site stock.mishra.eu.org, so isolation is mandatory and patchbot is fully separated from CyberPanel users.
+
+## Agreed principles
+1. Memory: auto-active memory = typed observations only (command ID, exit status, base/head SHA, policy
+   digest, timeout flag, evidence ref). Prose lessons are `pending` until operator approval. All memory is
+   delivered as an untrusted data block, never in system instructions. Per-stage selected entry IDs +
+   content hashes are frozen and recorded. Memory cannot change command policy, protected paths, repo
+   scope or the approved spec. Off switch. No FTS/embeddings in v1; deterministic bounded selection.
+2. Orchestration: planner/coder split already exists (RefineModel/CodeModel). Add only an opt-in
+   sequential reviewer: read-only tools, structured verdict bound to spec hash + diff hash, one repair
+   cycle with re-verification, shared budget/deadline. Timeout/refusal/malformed verdict never approves.
+   Off by default.
+3. Isolation: every repo command (baseline, agent run_cmd, harness tests) runs in a rootless container:
+   `--network none`, read-only rootfs + tmpfs, `--cap-drop ALL`, no-new-privileges, pids/memory/cpu limits,
+   non-root UID, only the per-run workspace mounted. The service user is never in the `docker` group and
+   never sees a rootful socket. Git with the token stays host-side; file tools stay host-side (os.Root).
+4. Webhooks are wake-up hints: HMAC over raw body, durable delivery dedupe, then reconcile against GitHub
+   state; polling remains. Labels can start refinement, never approve. Off by default.
+5. Deploy: dedicated `patchbot` Unix user (not a CyberPanel/site user), systemd, loopback bind + UI token,
+   Cloudflare Tunnel + Access (owner only), host git >= 2.50.1, one active run, cgroup caps leaving the live
+   site >= 2 OCPU / 12 GB, SQLite online backup + restore drill.
+
+## Milestones
+| # | Milestone | Owner | Done when |
+|---|---|---|---|
+| M16 | Live baseline on Mac with a demo repo | Claude (needs owner GitHub token + model key) | refine→approve→code→test→PR on demo repo; evidence recorded in docs/M16-REPORT.md |
+| M17 | Container executor (podman/docker rootless, `executor = "local"\|"container"`) | Claude agent | adversarial tests: host-file read, net egress, fork bomb, disk fill, descendant kill on cancel all contained; local executor unchanged |
+| M18 | Deploy rehearsal on Mumbai | Claude | user/systemd/tunnel/Access up; doctor green; backup+restore and restart/stale-run drills pass |
+| M19 | Server pilot + fault drill | Claude | approve, obsolete approval, repair, cancel, restart, PR ambiguity on server; live-site impact measured |
+| M20 | Memory v1 | Claude agent | tests: repo separation, pending/revoked never retrieved, zero-exit stdout poison never becomes trusted prose, memory can't alter policy/approval, frozen selection recorded |
+| M21 | Opt-in reviewer | Claude agent | verdict bound to spec+diff hash; fail-closed; one repair + re-verify; budget shared; seeded-defect fake tests |
+| M22 | Webhook/label ingress (off by default) | Codex | HMAC, bounded body, durable dedupe, reconcile; duplicate/reordered/missed delivery tests; no label approval |
+
+Migration numbers reserved: 0003 memory, 0004 reviewer, 0005 webhooks.
+Every milestone: `make ci` green, code-review pass, one conventional commit, merged into `development`.
+
+## Owner requests after the first pilot round (2026-11-13), to build together later
+| # | Milestone | Notes |
+|---|---|---|
+| M23 | Login-based dashboard | Verify the Cloudflare Access JWT (`Cf-Access-Jwt-Assertion`, team JWKS, audience tag) server-side and record the logged-in email as the approval actor; replaces the dropped UI token. Optional local user/password login for non-Cloudflare installs. |
+| M24 | Repository management in the dashboard | Add/edit/remove allowlisted repos (commands, test command, protected paths, image) from the UI, stored in SQLite with audit; config file stays the bootstrap. Requires M23 login first. |
+| M25 | Per-repo container image | `[repos."x"] image = ...` overriding `[executor] image`, so Go and PHP repos run side by side. |
+| M26 | Create issue from the dashboard | Write a feature request in the UI → patchbot opens the GitHub issue and starts refine. |
+
+Interim (2026-11-13): UI token removed on Mumbai at owner request. Port 8080 on loopback is limited by
+iptables (owner match) to root (cloudflared) and the patchbot user, so other local users and CyberPanel
+sites cannot reach the API; Cloudflare Access (owner only) is the only login.
+internal/config/show.go:14:	"github.com/aryanpappu/patchbot/internal/secret"
+internal/config/show.go:20:func (c *Config) WriteEffective(w io.Writer, extra ...*secret.Redactor) error {
+internal/config/show.go:21:	p := &printer{sources: c.sources, redactor: secret.NewRedactor()}
+internal/config/show.go:40:	redactor *secret.Redactor
+internal/config/show.go:96:		if isProvider && name == "api_key_env" && provider.APIKeyEnv != "" && !envNameRE.MatchString(provider.APIKeyEnv) {
+internal/config/show.go:97:			text = strconv.Quote(secret.Mask) // most likely a key pasted into the wrong field
+internal/config/show.go:133:		return secret.Mask
+internal/config/show.go:149:		return "# api key: none (api_key_env is not set)"
+internal/config/show.go:150:	case !envNameRE.MatchString(p.APIKeyEnv):
+internal/config/show.go:151:		return "# api key: not read (api_key_env is not a variable name)"
+internal/config/show.go:153:		return fmt.Sprintf("# api key: %s (set in $%s)", secret.Mask, p.APIKeyEnv)
+internal/config/show.go:169:// isTable reports whether v prints as a TOML table and not as a value.
+internal/config/show.go:185:// formatValue renders a value as TOML. It reports false for an optional value
+internal/config/show.go:187:func formatValue(v reflect.Value, r *secret.Redactor) (string, bool) {
+internal/config/config.go:4:// TOML file, PATCHBOT_* environment variables and command-line flags. The
+internal/config/config.go:6:// the file names an environment variable and the loader reads the secret from
+internal/config/config.go:7:// it into a secret.Secret.
+internal/config/config.go:17:	"github.com/aryanpappu/patchbot/internal/secret"
+internal/config/config.go:47:	Repos     map[string]*Repo     `toml:"repos"`
+internal/config/config.go:55:	// rejectedKeyEnvs are the api_key_env names of a file that failed to
+internal/config/config.go:71:	// Approvers are the GitHub logins whose /approve comments count.
+internal/config/config.go:72:	Approvers []string `toml:"approvers"`
+internal/config/config.go:140:// Memory configures repository memory. Retrieved memory is unverified context
+internal/config/config.go:148:	// MaxPending caps pending model lessons per repository; excess proposals
+internal/config/config.go:158:	SecretEnv     string            `toml:"secret_env"`
+internal/config/config.go:162:	// that a missed delivery did not report.
+internal/config/config.go:164:	Secret            secret.Secret `toml:"-"`
+internal/config/config.go:178:// Executor says where repository commands (baseline tests, run_cmd and harness
+internal/config/config.go:203:// Container reports whether repository commands run in a container.
+internal/config/config.go:210:	// APIKeyEnv names the environment variable that holds the API key.
+internal/config/config.go:211:	APIKeyEnv    string   `toml:"api_key_env"`
+internal/config/config.go:219:	// APIKey is read from the environment variable named by APIKeyEnv.
+internal/config/config.go:220:	APIKey secret.Secret `toml:"-"`
+internal/config/config.go:240:// Repo is one [repos."owner/name"] table. Only listed repositories can run.
+internal/config/config.go:279:			// The value is not quoted back: nothing says it is not a secret
+internal/config/config.go:334:// Redactor returns a redactor that masks every secret the config holds, as
+internal/config/config.go:336:// because a secret can turn up in any field: a key exported under the wrong
+internal/config/config.go:338:func (c *Config) Redactor() *secret.Redactor {
+internal/config/config.go:339:	r := secret.NewRedactor()
+internal/config/config.go:344:// Secrets returns every secret the config holds, for registering with a
+internal/config/config.go:345:// secret.Redactor.
+internal/config/config.go:346:func (c *Config) Secrets() []secret.Secret {
+internal/config/config.go:347:	var out []secret.Secret
+internal/config/config.go:360:// or symlink. Doctor reports the same policy without changing the filesystem.
+internal/config/validate.go:15:	"github.com/aryanpappu/patchbot/internal/secret"
+internal/config/validate.go:21:	envNameRE      = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,63}$`)
+internal/config/validate.go:24:	repoRE         = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9]|-[A-Za-z0-9]){0,38}/[A-Za-z0-9._-]{1,100}$`)
+internal/config/validate.go:34:// problem it finds, joined with errors.Join. Messages never contain a secret.
+internal/config/validate.go:37:// therefore redacted with the secrets the config holds: a key exported under
+internal/config/validate.go:46:	v.check(envNameRE.MatchString(w.SecretEnv), "webhook.secret_env: must name an environment variable")
+internal/config/validate.go:48:	v.check(!w.Enabled || w.Secret.IsSet(), "webhook.secret_env: enabled webhooks require a secret")
+internal/config/validate.go:56:	for _, name := range sortedKeys(c.Repos) {
+internal/config/validate.go:57:		validateRepo(&v, name, c.Repos[name])
+internal/config/validate.go:64:	redactor *secret.Redactor
+internal/config/validate.go:83:	if len(d.Approvers) == 0 {
+internal/config/validate.go:86:	for _, login := range d.Approvers {
+internal/config/validate.go:214:	if p.APIKeyEnv != "" && !envNameRE.MatchString(p.APIKeyEnv) {
+internal/config/validate.go:216:		v.addf("%s.api_key_env: must be the name of an environment variable (upper-case letters, digits "+
+internal/config/validate.go:265:	at := fmt.Sprintf("repos.%q", name)
+internal/config/validate.go:266:	_, repo, _ := strings.Cut(name, "/")
+internal/config/validate.go:267:	if !repoRE.MatchString(name) || repo == "." || repo == ".." {
+internal/config/validate.go:268:		v.addf("%s: a repository key looks like \"owner/name\"", at)
+internal/config/validate.go:299:			"%s.protected: %q must be a relative path inside the repository, with no \"..\"", at, path)
+internal/config/validate.go:305:// names the environment variable and never its value.
+internal/config/validate.go:317:			warnf("provider %q: api_key_env is not set, so requests carry no API key", name)
+internal/config/validate.go:318:		case p.APIKey.IsSet() && len(p.APIKey.Reveal()) < secret.MinValueLen:
+internal/config/validate.go:319:			warnf("provider %q: credential in %s is shorter than %d characters and cannot be masked; use a longer credential", name, p.APIKeyEnv, secret.MinValueLen)
+internal/config/validate.go:320:		case p.APIKeyEnv != "" && envNameRE.MatchString(p.APIKeyEnv) && !p.APIKey.IsSet():
+internal/config/validate.go:321:			warnf("provider %q: environment variable %s is not set; the provider cannot be used until it is",
+internal/config/validate.go:339:	if len(c.Repos) == 0 {
+internal/config/validate.go:340:		warnf(`no [repos."owner/name"] table: no run can start until a repository is listed`)
+internal/config/validate.go:342:	for _, name := range sortedKeys(c.Repos) {
+internal/config/validate.go:343:		if _, ok := c.Repos[name].TestCommandID(); !ok {
+internal/config/validate.go:344:			warnf("repo %q: no test command, so its pull requests will be drafts marked unverified", name)
+internal/config/load.go:19:	"github.com/aryanpappu/patchbot/internal/secret"
+internal/config/load.go:25:// EnvConfig names the environment variable that points at a config file.
+internal/config/load.go:43:	// Name is the environment variable or the flag, for those two kinds.
+internal/config/load.go:47:// String returns a short label such as "file" or "env PATCHBOT_PROVIDER".
+internal/config/load.go:55:		return "env " + s.Name
+internal/config/load.go:73:// Options tell Load where to look. The zero value reads the real environment.
+internal/config/load.go:89:// envBindings is the complete list of settings an environment variable can
+internal/config/load.go:90:// change. Secrets are not here: they are named by api_key_env.
+internal/config/load.go:91:var envBindings = []struct {
+internal/config/load.go:92:	env  string
+internal/config/load.go:108:// Default returns the embedded defaults with no file, environment or flags.
+internal/config/load.go:127:// then environment variables, then flags. It reports syntax errors, unknown
+internal/config/load.go:128:// keys and keys that look like secrets. It does not judge the values; call
+internal/config/load.go:132:// says the value is not a secret in the wrong place, and it is redacted with
+internal/config/load.go:142:		if !envNameRE.MatchString(p.APIKeyEnv) {
+internal/config/load.go:143:			continue // Validate reports a bad name; never look it up.
+internal/config/load.go:146:			p.APIKey = secret.New(strings.TrimSpace(value))
+internal/config/load.go:149:	if envNameRE.MatchString(c.Webhook.SecretEnv) {
+internal/config/load.go:151:		c.Webhook.Secret = secret.New(strings.TrimSpace(value))
+internal/config/load.go:158:			if value, ok := lookupEnv(name); ok && envNameRE.MatchString(name) {
+internal/config/load.go:200:	for _, b := range envBindings {
+internal/config/load.go:201:		value, ok := lookupEnv(b.env)
+internal/config/load.go:206:			if err := c.set(key, value, Source{Kind: SourceEnv, Name: b.env}); err != nil {
+internal/config/load.go:207:				return c, fmt.Errorf("environment variable %s: %w", b.env, err)
+internal/config/load.go:220:// that is not a bare TOML key: `repos."owner/name".test_command`.
+internal/config/load.go:281:// line number is retained; the last key can contain a secret.
+internal/server/README.md:86:  backoff until an explicit end frame matches that sequence.
+package execx
+
+import (
+	"errors"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+// TrustedPath is independent of the caller's PATH and excludes the checkout.
+// These directories must be controlled by the operator, as must their binaries.
+const TrustedPath = "/usr/bin:/bin"
+
+var errInvalidEnv = errors.New("invalid explicit environment entry")
+
+// MinimalEnv constructs a child environment without reading os.Environ. home and
+// tmp should be private absolute per-run directories, created by the caller.
+// Extras can override ordinary variables, but cannot replace the fixed base
+// settings or introduce secret-like names. Dependency downloads remain allowed;
+// automatic toolchain downloads and ambient Go configuration are disabled.
+func MinimalEnv(home, tmp string, extra map[string]string) []string {
+	return minimalEnv(home, tmp, extra, TrustedPath)
+}
+
+func minimalEnv(home, tmp string, extra map[string]string, path string) []string {
+	values := map[string]string{
+		"PATH": path, "HOME": home, "TMPDIR": tmp, "LANG": "C.UTF-8",
+		"GOTOOLCHAIN": "local", "GOENV": "off", "GOFLAGS": "", "GOWORK": "off",
+		"GOCACHE": filepath.Join(home, "go-cache"), "GOPATH": filepath.Join(home, "go"), "CI": "1",
+	}
+	for name, value := range extra {
+		if _, fixed := values[name]; !fixed && validEnv(name, value) {
+			values[name] = value
+		}
+	}
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	env := make([]string, 0, len(names))
+	for _, name := range names {
+		if validEnv(name, values[name]) {
+			env = append(env, name+"="+values[name])
+		}
+	}
+	return env
+}
+
+func validEnv(name, value string) bool {
+	if name == "" || strings.ContainsAny(name, "=\x00") || strings.ContainsRune(value, 0) {
+		return false
+	}
+	upper := strings.ToUpper(name)
+	for _, word := range []string{"TOKEN", "KEY", "SECRET", "PASSWORD"} {
+		if strings.Contains(upper, word) {
+			return false
+		}
+	}
+	for _, prefix := range []string{"AWS_", "GH_", "GITHUB_", "ANTHROPIC_", "OPENAI_", "GEMINI_", "GOOGLE_"} {
+		if strings.HasPrefix(upper, prefix) {
+			return false
+		}
+	}
+	return true
+}
+
+func scrubEnv(env []string) ([]string, error) {
+	clean := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, value, ok := strings.Cut(entry, "=")
+		if !ok || name == "" || strings.ContainsRune(entry, 0) {
+			return nil, errInvalidEnv
+		}
+		if validEnv(name, value) {
+			clean = append(clean, entry)
+		}
+	}
+	return clean, nil
+}
+
+web search: 
+web search: site.docs.github.com GitHub App installation access token repositories expires permissions user endpoint rate limit ...
+codex
+The recommendation has two serious gaps: a PAT owned by the sole approver makes `sync.go` reject that owner’s `/approve` comments as bot comments, and an App token can’t be dropped into the current global `TokenSource` safely. Git also retains the clone-time token through push, so refreshing REST credentials alone won’t handle expiry mid-run.
+exec
+/bin/zsh -lc "rg -n 'RateLimited|Reset|backoff' internal/runner internal/server internal/cli; sed -n '240,270p' internal/config/config.go; rg -n 'Permissions.Push|Private|GetRepo' internal/runner/ingress.go internal/runner/*.go | head -25; git status --short" in /Users/pappumishra/Documents/selfproject/patchbot
+ succeeded in 0ms:
+internal/server/README.md:86:  backoff until an explicit end frame matches that sequence.
+// Repo is one [repos."owner/name"] table. Only listed repositories can run.
+type Repo struct {
+	// Commands maps a command ID such as "test" to the argv it runs.
+	Commands map[string][]string `toml:"commands"`
+	// Protected lists extra paths the agent may neither read nor write.
+	Protected []string `toml:"protected"`
+	// TestCommand is the ID of the command that verifies a change.
+	TestCommand string `toml:"test_command"`
+}
+
+// TestCommandID returns the command that verifies a change: TestCommand, or
+// "test" when that is empty and such a command exists.
+func (r *Repo) TestCommandID() (string, bool) {
+	if r.TestCommand != "" {
+		return r.TestCommand, true
+	}
+	if _, ok := r.Commands["test"]; ok {
+		return "test", true
+	}
+	return "", false
+}
+
+// Date is a calendar day. In TOML it is a local date (2026-11-10) or the same
+// text as a string.
+type Date struct {
+	time.Time
+}
+
+const dateLayout = "2006-01-02"
+
+// UnmarshalTOML implements toml.Unmarshaler.
+internal/runner/ingress.go:44:	meta, err := r.gh.GetRepo(ctx, ref(repo))
+internal/runner/ingress.go:174:	meta, err := r.gh.GetRepo(ctx, ref(repo))
+internal/runner/ingress.go:44:	meta, err := r.gh.GetRepo(ctx, ref(repo))
+internal/runner/ingress.go:174:	meta, err := r.gh.GetRepo(ctx, ref(repo))
+internal/runner/publish.go:113:	live, err := r.gh.GetRepo(ctx, ref(run.Repo))
+internal/runner/runner_test.go:83:	f.meta = github.Repo{FullName: "owner/repo", DefaultBranch: "main", Permissions: github.Permissions{Push: true}}
+internal/runner/phases.go:106:	meta, err := r.gh.GetRepo(ctx, ref(run.Repo))
+internal/runner/phases.go:120:	if run.Mode == config.ModeFix && !meta.Permissions.Push {
+?? docs/planning/auth/
+
+web search: 
+web search: site:docs.github.com rest collaborators check if user repository collaborator fine grained metadata read ...
+apply patch
+patch: completed
+/Users/pappumishra/Documents/selfproject/patchbot/docs/planning/auth/codex-round1.md
+diff --git a/docs/planning/auth/codex-round1.md b/docs/planning/auth/codex-round1.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..2c900d96e668ee566cb2b89a40c5fef98cca43f0
+--- /dev/null
++++ b/docs/planning/auth/codex-round1.md
+@@ -0,0 +1,85 @@
++# Auth review: Codex round 1 (2026-11-13)
++
++Claude has the right destination but understates both the pilot bug and the migration.
++“Zero code” is not the same as “works for this owner.”
++
++## Options A–D
++- **A — agree: reject.** `runner.Token` shares one credential across REST and Git;
++  `config.Repos` restricts legitimate scheduling, not what a stolen credential can access.
++  A classic `repo` PAT gives this shared host an unnecessary account-wide blast radius.
++- **B — qualified agreement for a bounded pilot.** Selected repos and a short expiry are
++  sensible; `runner.New` already loads `GITHUB_TOKEN`. But a fine-grained PAT targets one
++  resource owner, not arbitrary repos across owners. Do not promise universal coverage.
++  More seriously, `github.CurrentUser` returns the PAT owner's login and `sync.go` passes
++  it to `EligibleCommand`, which rejects that author's commands. If ary anpappu's account
++  is both token owner and sole approver, its `/approve` never counts. Use the actual owner
++  login (aryanpappu); do not spoof `BotLogin` to bypass this separation.
++  A separately authenticated approval channel or distinct bot account is required today.
++  Claude's universal “max 1 year” claim is too strong: expiry is policy-dependent ([PAT docs][pat]).
++- **C — agree: reject as the default.** `config.Repo` has no credential field, and
++  `TokenSource.Token(ctx)` has no repo argument. This needs routing changes, not just a
++  SQLite column. Per-token scope helps with one leaked token; service compromise exposes
++  all tokens and the encryption key. N manual rotations buy little here.
++- **D — agree as the target, disagree that the existing seam makes it straightforward.**
++  `TokenSource` is concurrency-safe but repo-blind; `runner.New` builds one global REST
++  client. Single-repo tokens need explicit repo-bound clients/sources for runs AND polling,
++  comment sync, preflight and future issue creation. Never use a mutable “current repo.”
++  Installation tokens expire after one hour and can be narrowed by repo IDs ([App docs][app]).
++  The private key remains a long-lived credential able to mint across the App's installations.
++  PR/comment identity improves, but commits do not automatically become `patchbot[bot]`:
++  `publish.go` passes `gitx.Author{}`; `gitx.CommitAll` hardcodes patchbot's name/email.
++
++## Risks and requirements Claude missed
++- **Shared-host key custody:** an env private key is not a security boundary against root,
++  same-UID compromise, debugging or dumps. Preserve Step 2's dedicated Unix user and rootless
++  executor; keep the key outside workspaces, SQLite, backups and containers. Prefer a protected
++  service credential file over a widely inherited env value; document the remaining host trust.
++  Single-repo tokens limit token theft, not theft of the signing key on the same host.
++- **Expiry/cache:** `phases.go` obtains a token once for `CloneOptions.Token`; `gitx.Repo`
++  retains it until `Close`. REST calls reacquire via `http.go`, but push reuses the old token.
++  Cache in memory by installation + immutable repo ID + permission set, coalesce concurrent
++  minting, refresh before expiry with skew margin, and acquire fresh credentials per Git
++  network operation. Cover resumed runs and waiting-window sync, not just one-hour coding.
++  Invalidate on revocation/auth failure; bound retries and never blindly replay external writes.
++- **Identity/approval:** installation auth must not depend on `/user` (`identity.go`). Resolve
++  and verify App bot identity separately; preserve allowlisted approver + live collaborator +
++  unedited-comment checks in `commands.go`/`sync.go`. Membership errors must fail closed.
++  M23's verified email actor is a separate authorization path, not a GitHub login mapping.
++- **Private repos already have a transport gap:** `gitx.Push` does unauthenticated `ls-remote`;
++  `CheckoutSHA` may do unauthenticated fetch. A valid PAT/App token does not fix those failures.
++  Extend narrowly scoped network auth deliberately, preserving argv secrecy and host/URL guards.
++- **Rate limits:** `github/errors.go` classifies limits and reset times; runner/server have no
++  corresponding GitHub backoff. `SyncWaiting` uses nonconditional comment listing despite the
++  ETag API. Per-repo tokens do not create independent installation quotas. Bound polling/minting,
++  honor Retry-After/reset with jitter and cancellation, and distinguish limits from revocation.
++- **M24 validation:** after M23 authorization, accept canonical owner/name, not arbitrary URLs.
++  Verify installation ownership, selected immutable repo ID, granted/token permissions, default
++  branch, issue availability and actual Git read access. Public `GetRepo` success alone proves
++  little; `Permissions.Push` in current preflight is not an App permission model. Verify contents,
++  issues and PR write grants plus metadata read for collaborator checks ([endpoint docs][collab]);
++  report ruleset/workflow restrictions honestly without a destructive test push. Fail closed
++  before saving; audit actor/result without secrets, recheck at run/publication time, and define
++  repo removal/edit effects on active runs. GitHub installation changes remain a separate action.
++- **Storage/rotation:** M24 stores repo policy in SQLite, not credentials. Current config secrets
++  are env-backed; encrypted SQLite adds key custody, WAL/backups and restore complications.
++  Keep only credential references/App IDs in DB. `runner.New` registers one initial token with
++  the redactor: every minted/replacement token and encoded Git form needs equivalent protection.
++  PAT replacement currently needs restart/reconstruction; schedule expiry alerts and a tested
++  rotation runbook. App key rotation needs overlap, mint verification, old-key removal, cache
++  invalidation and explicit outstanding-token revocation handling after compromise.
++
++## Final recommendation and acceptance criteria
++Use B only for the small pilot with an explicitly proven approval path and scheduled rotation.
++Build D as a prerequisite to enabling M24 broadly; keep PAT mode explicit for local/dev, never
++silently fall back to a broader PAT after App denial. M23 login does not grant GitHub access.
++M25 images must never receive credentials; M26 needs issue-create API support (absent from
++`github.Client` today), issues-write permission and audited authenticated actor attribution.
++Accept D only after tests prove concurrent cross-repo isolation, expiry between clone/push/PR,
++revocation and key rotation, correct App identity and owner approval, private-repo publication,
++rate-limit recovery, denied M24 saves and zero secrets in logs/artifacts/DB/container env.
++Preserve `publish.go`'s approval rechecks before push and PR creation; test ambiguous PR failure
++without duplicate writes. Run `make ci` and a disposable-repo end-to-end drill before rollout.
++
++[app]: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation
++[pat]: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens
++[collab]: https://docs.github.com/en/rest/collaborators/collaborators
+
+apply patch
+patch: completed
+/Users/pappumishra/Documents/selfproject/patchbot/docs/planning/auth/codex-round1.md
+diff --git a/docs/planning/auth/codex-round1.md b/docs/planning/auth/codex-round1.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..ef582ac281c0ac3f0790b5ce6c52e3338aee65ef
+--- /dev/null
++++ b/docs/planning/auth/codex-round1.md
+@@ -0,0 +1,85 @@
++# Auth review: Codex round 1 (2026-11-13)
++
++Claude has the right destination but understates both the pilot bug and the migration.
++“Zero code” is not the same as “works for this owner.”
++
++## Options A–D
++- **A — agree: reject.** `runner.Token` shares one credential across REST and Git;
++  `config.Repos` restricts legitimate scheduling, not what a stolen credential can access.
++  A classic `repo` PAT gives this shared host an unnecessary account-wide blast radius.
++- **B — qualified agreement for a bounded pilot.** Selected repos and a short expiry are
++  sensible; `runner.New` already loads `GITHUB_TOKEN`. But a fine-grained PAT targets one
++  resource owner, not arbitrary repos across owners. Do not promise universal coverage.
++  More seriously, `github.CurrentUser` returns the PAT owner's login and `sync.go` passes
++  it to `EligibleCommand`, which rejects that author's commands. If aryanpappu's account
++  is both token owner and sole approver, its `/approve` never counts. Do not spoof
++  `BotLogin` to bypass this separation.
++  A separately authenticated approval channel or distinct bot account is required today.
++  Claude's universal “max 1 year” claim is too strong: expiry is policy-dependent ([PAT docs][pat]).
++- **C — agree: reject as the default.** `config.Repo` has no credential field, and
++  `TokenSource.Token(ctx)` has no repo argument. This needs routing changes, not just a
++  SQLite column. Per-token scope helps with one leaked token; service compromise exposes
++  all tokens and the encryption key. N manual rotations buy little here.
++- **D — agree as the target, disagree that the existing seam makes it straightforward.**
++  `TokenSource` is concurrency-safe but repo-blind; `runner.New` builds one global REST
++  client. Single-repo tokens need explicit repo-bound clients/sources for runs AND polling,
++  comment sync, preflight and future issue creation. Never use a mutable “current repo.”
++  Installation tokens expire after one hour and can be narrowed by repo IDs ([App docs][app]).
++  The private key remains a long-lived credential able to mint across the App's installations.
++  PR/comment identity improves, but commits do not automatically become `patchbot[bot]`:
++  `publish.go` passes `gitx.Author{}`; `gitx.CommitAll` hardcodes patchbot's name/email.
++
++## Risks and requirements Claude missed
++- **Shared-host key custody:** an env private key is not a security boundary against root,
++  same-UID compromise, debugging or dumps. Preserve Step 2's dedicated Unix user and rootless
++  executor; keep the key outside workspaces, SQLite, backups and containers. Prefer a protected
++  service credential file over a widely inherited env value; document the remaining host trust.
++  Single-repo tokens limit token theft, not theft of the signing key on the same host.
++- **Expiry/cache:** `phases.go` obtains a token once for `CloneOptions.Token`; `gitx.Repo`
++  retains it until `Close`. REST calls reacquire via `http.go`, but push reuses the old token.
++  Cache in memory by installation + immutable repo ID + permission set, coalesce concurrent
++  minting, refresh before expiry with skew margin, and acquire fresh credentials per Git
++  network operation. Cover resumed runs and waiting-window sync, not just one-hour coding.
++  Invalidate on revocation/auth failure; bound retries and never blindly replay external writes.
++- **Identity/approval:** installation auth must not depend on `/user` (`identity.go`). Resolve
++  and verify App bot identity separately; preserve allowlisted approver + live collaborator +
++  unedited-comment checks in `commands.go`/`sync.go`. Membership errors must fail closed.
++  M23's verified email actor is a separate authorization path, not a GitHub login mapping.
++- **Private repos already have a transport gap:** `gitx.Push` does unauthenticated `ls-remote`;
++  `CheckoutSHA` may do unauthenticated fetch. A valid PAT/App token does not fix those failures.
++  Extend narrowly scoped network auth deliberately, preserving argv secrecy and host/URL guards.
++- **Rate limits:** `github/errors.go` classifies limits and reset times; runner/server have no
++  corresponding GitHub backoff. `SyncWaiting` uses nonconditional comment listing despite the
++  ETag API. Per-repo tokens do not create independent installation quotas. Bound polling/minting,
++  honor Retry-After/reset with jitter and cancellation, and distinguish limits from revocation.
++- **M24 validation:** after M23 authorization, accept canonical owner/name, not arbitrary URLs.
++  Verify installation ownership, selected immutable repo ID, granted/token permissions, default
++  branch, issue availability and actual Git read access. Public `GetRepo` success alone proves
++  little; `Permissions.Push` in current preflight is not an App permission model. Verify contents,
++  issues and PR write grants plus metadata read for collaborator checks ([endpoint docs][collab]);
++  report ruleset/workflow restrictions honestly without a destructive test push. Fail closed
++  before saving; audit actor/result without secrets, recheck at run/publication time, and define
++  repo removal/edit effects on active runs. GitHub installation changes remain a separate action.
++- **Storage/rotation:** M24 stores repo policy in SQLite, not credentials. Current config secrets
++  are env-backed; encrypted SQLite adds key custody, WAL/backups and restore complications.
++  Keep only credential references/App IDs in DB. `runner.New` registers one initial token with
++  the redactor: every minted/replacement token and encoded Git form needs equivalent protection.
++  PAT replacement currently needs restart/reconstruction; schedule expiry alerts and a tested
++  rotation runbook. App key rotation needs overlap, mint verification, old-key removal, cache
++  invalidation and explicit outstanding-token revocation handling after compromise.
++
++## Final recommendation and acceptance criteria
++Use B only for the small pilot with an explicitly proven approval path and scheduled rotation.
++Build D as a prerequisite to enabling M24 broadly; keep PAT mode explicit for local/dev, never
++silently fall back to a broader PAT after App denial. M23 login does not grant GitHub access.
++M25 images must never receive credentials; M26 needs issue-create API support (absent from
++`github.Client` today), issues-write permission and audited authenticated actor attribution.
++Accept D only after tests prove concurrent cross-repo isolation, expiry between clone/push/PR,
++revocation and key rotation, correct App identity and owner approval, private-repo publication,
++rate-limit recovery, denied M24 saves and zero secrets in logs/artifacts/DB/container env.
++Preserve `publish.go`'s approval rechecks before push and PR creation; test ambiguous PR failure
++without duplicate writes. Run `make ci` and a disposable-repo end-to-end drill before rollout.
++
++[app]: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation
++[pat]: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens
++[collab]: https://docs.github.com/en/rest/collaborators/collaborators
+
+exec
+/bin/zsh -lc 'wc -l docs/planning/auth/codex-round1.md; git diff --stat; git status --short' in /Users/pappumishra/Documents/selfproject/patchbot
+ succeeded in 0ms:
+      85 docs/planning/auth/codex-round1.md
+?? docs/planning/auth/
+
+codex
+Wrote [codex-round1.md](/Users/pappumishra/Documents/selfproject/patchbot/docs/planning/auth/codex-round1.md) — 85 lines, covering A–D, the recommendation, missed risks, and acceptance criteria.
+
+Key findings: owner PAT approval is rejected as bot activity; App integration needs repo-aware credential routing; Git retains tokens through push.
+
+No code changed.
+tokens used
+45,002
+Wrote [codex-round1.md](/Users/pappumishra/Documents/selfproject/patchbot/docs/planning/auth/codex-round1.md) — 85 lines, covering A–D, the recommendation, missed risks, and acceptance criteria.
+
+Key findings: owner PAT approval is rejected as bot activity; App integration needs repo-aware credential routing; Git retains tokens through push.
+
+No code changed.
