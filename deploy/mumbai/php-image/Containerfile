@@ -1,0 +1,8 @@
+FROM docker.io/library/php:8.4-cli-alpine
+RUN apk add --no-cache icu-libs libzip && apk add --no-cache --virtual .b icu-dev libzip-dev $PHPIZE_DEPS \
+ && docker-php-ext-install intl zip bcmath && apk del .b
+COPY --from=docker.io/library/composer:2 /usr/bin/composer /usr/bin/composer
+WORKDIR /opt/app
+COPY composer.json composer.lock ./
+RUN composer install --no-interaction --no-scripts --no-autoloader --prefer-dist && chmod -R a+rX /opt/app
+COPY run-tests.php /opt/patchbot/run-tests.php

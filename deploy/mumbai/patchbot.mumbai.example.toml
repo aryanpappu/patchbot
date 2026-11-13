@@ -1,0 +1,73 @@
+# patchbot on Oracle Mumbai (arm64). Secrets live in /srv/patchbot/patchbot.env.
+[defaults]
+provider = "gemini"
+mode = "fix"
+refine_model = "gemini-3.5-flash"
+code_model = "gemini-3.5-flash"
+max_cost_usd = 1.0
+approvers = ["aryanpappu"]
+comment_on_failure = true
+
+[limits]
+hard_max_cost_usd = 3.0
+run_timeout = "30m"
+trusted_path = ["/usr/bin", "/bin"]
+
+[approval]
+local_actor = "aryanpappu"
+
+[server]
+addr = "127.0.0.1:8080"
+max_concurrent_runs = 1
+max_queued_runs = 4
+vue_src = "local"
+
+[data]
+dir = "/srv/patchbot/data"
+
+[memory]
+enabled = true
+
+[review]
+enabled = false
+
+[executor]
+kind = "container"
+runtime = "podman"
+# Built on the host from /srv/patchbot/images/php (PHP 8.4 + composer deps of aryanpappu/pappumishra).
+# One global image for now; per-repo images are a follow-up.
+image = "localhost/patchbot-php-pappumishra@sha256:370925ddcc87487a2478b363b1805e81b77d087dbf9b4dc6bc2e7f41febec2c4"
+memory = "2g"
+cpus = "0.8"
+pids_limit = 512
+tmpfs_size = "512m"
+network = "none"
+user = "65532:65532"
+userns = "keep-id"
+workspace_max_bytes = 1073741824
+
+[providers.anthropic]
+kind = "anthropic"
+api_key_env = "ANTHROPIC_API_KEY"
+models = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"]
+default_model = "claude-sonnet-5-5"
+
+[providers.gemini]
+kind = "gemini"
+api_key_env = "GEMINI_API_KEY"
+models = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"]
+default_model = "gemini-3.5-flash"
+
+[providers.ollama]
+kind = "openai"
+base_url = "https://ai.mishra.eu.org/v1"
+api_key_env = "OLLAMA_API_KEY"
+models = ["qwen2.5:7b"]
+default_model = "qwen2.5:7b"
+price_free = true
+
+# Owner's portfolio site (Laravel 12 + Filament + Inertia/React).
+[repos."aryanpappu/pappumishra"]
+commands = { test = ["php", "/opt/patchbot/run-tests.php"] }
+test_command = "test"
+protected = [".env", ".github/", ".claude/", "fix-403-production.sh", "fix-litespeed-403.sh"]
