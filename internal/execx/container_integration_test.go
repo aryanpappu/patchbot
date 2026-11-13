@@ -4,6 +4,7 @@ package execx
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -54,6 +55,9 @@ func integrationExecutor(t *testing.T, mutate func(*ContainerConfig)) (*Containe
 		userns = "keep-id"
 	}
 	hostEnv := RuntimeHostEnv([]string{"/usr/local/bin", "/usr/bin", "/bin"}, os.LookupEnv)
+	if flavor == RuntimeDocker {
+		hostEnv = append(hostEnv, "DOCKER_CONFIG="+filepath.Join(t.TempDir(), "docker-config"))
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	probe := exec.CommandContext(ctx, runtime, "image", "inspect", image) // #nosec G204 G702 -- operator-supplied test runtime.
@@ -64,11 +68,19 @@ func integrationExecutor(t *testing.T, mutate func(*ContainerConfig)) (*Containe
 	cfg := ContainerConfig{
 		Runtime: runtime, Flavor: flavor, Image: image, Memory: "256m", CPUs: "1", PidsLimit: 64,
 		TmpfsSize: "16m", Network: "none", User: "65532:65532", UserNS: userns, HostEnv: hostEnv,
+		WorkspaceMaxBytes: 64 << 20,
 	}
 	if mutate != nil {
 		mutate(&cfg)
 	}
 	root := t.TempDir()
+	// A minimal git directory, mounted read-only over /work/.git.
+	if err := os.MkdirAll(filepath.Join(root, ".git", "refs", "heads"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	e, err := NewContainerExecutor(root, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -191,5 +203,55 @@ func TestIntegrationContainerCancelKillsDescendants(t *testing.T) {
 	}
 	if containerExists(t, e, name) {
 		t.Fatal("container (and its sleeping descendants) survived cancellation")
+	}
+}
+
+func TestIntegrationContainerGitDirIsReadOnly(t *testing.T) {
+	e, root := integrationExecutor(t, nil)
+	for _, script := range []string{
+		"echo 'ref: refs/heads/evil' > /work/.git/HEAD",
+		"echo 0000000000000000000000000000000000000000 > /work/.git/refs/heads/main",
+		"mkdir /work/.git/hooks",
+		"mv /work/.git /work/git-moved",
+		"rm -rf /work/.git",
+	} {
+		if r := runIn(t, e, root, time.Minute, "sh", "-c", script); r.ExitCode == 0 {
+			t.Errorf("%q succeeded; .git must be read-only", script)
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(root, ".git", "HEAD")); err != nil || string(data) != "ref: refs/heads/main\n" { // #nosec G304 -- test workspace.
+		t.Fatalf("HEAD changed: %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git", "refs", "heads", "main")); err == nil {
+		t.Fatal("a ref was created through the container")
+	}
+	if r := runIn(t, e, root, time.Minute, "sh", "-c", "echo ok > /work/file.txt"); r.ExitCode != 0 {
+		t.Fatalf("worktree must stay writable: %+v", r)
+	}
+}
+
+func TestIntegrationContainerWorkspaceLimit(t *testing.T) {
+	e, root := integrationExecutor(t, func(c *ContainerConfig) { c.WorkspaceMaxBytes = 1 << 20 })
+	result, err := e.Run(t.Context(), Spec{Argv: []string{"dd", "if=/dev/zero", "of=/work/big", "bs=1048576", "count=4"}, Dir: root, Timeout: time.Minute})
+	t.Logf("workspace fill: %+v err=%v", result, err)
+	if !errors.Is(err, ErrWorkspaceLimit) {
+		t.Fatalf("want ErrWorkspaceLimit, got %v", err)
+	}
+}
+
+func TestIntegrationSweepRemovesLabelledContainers(t *testing.T) {
+	e, root := integrationExecutor(t, nil)
+	name := "patchbot-sweep-test"
+	argv := containerArgv(e.cfg, name, root, "", ContainerWorkdir, nil, []string{"sleep", "300"})
+	create := exec.CommandContext(t.Context(), argv[0], argv[1:]...) // #nosec G204 G702 -- test runtime.
+	create.Env = e.cfg.HostEnv
+	if output, err := create.CombinedOutput(); err != nil {
+		t.Fatalf("create: %v %s", err, output)
+	}
+	if n, err := SweepContainers(t.Context(), e.cfg); err != nil || n < 1 {
+		t.Fatalf("SweepContainers = %d, %v", n, err)
+	}
+	if containerExists(t, e, name) {
+		t.Fatal("sweep left a labelled container")
 	}
 }

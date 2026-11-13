@@ -147,6 +147,8 @@ type Executor struct {
 	UserNS string `toml:"userns"`
 	// Path is PATH inside the container; it resolves bare command names.
 	Path []string `toml:"path"`
+	// WorkspaceMaxBytes fails a command that grows the workspace beyond it.
+	WorkspaceMaxBytes int64 `toml:"workspace_max_bytes"`
 }
 
 // Container reports whether repository commands run in a container.

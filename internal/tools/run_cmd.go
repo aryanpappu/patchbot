@@ -106,6 +106,13 @@ func ExecuteCommand(ctx context.Context, env *Env, name string, args []string, t
 	if result.Cancelled {
 		return result, context.Canceled
 	}
+	// Containment failures are fatal and carry operator-meaningful text. Only
+	// the sentinel is surfaced, never runtime output.
+	for _, fatal := range []error{execx.ErrWorkspaceLimit, execx.ErrContainerNotRemoved} {
+		if errors.Is(err, fatal) {
+			return result, fmt.Errorf("command executor: %w", fatal)
+		}
+	}
 	if err != nil {
 		return result, errors.New("command executor could not run the command")
 	}

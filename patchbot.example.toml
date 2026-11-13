@@ -72,6 +72,11 @@ user = "65532:65532"                # non-root numeric uid:gid inside the contai
 userns = ""
 # PATH inside the container; bare command names resolve against it.
 path = ["/usr/local/go/bin", "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
+# A command that leaves the checkout larger than this (or unreadable) fails.
+workspace_max_bytes = 2147483648       # 2 GiB
+# The repo's .git is always mounted read-only inside the container. Docker uses
+# a private empty DOCKER_CONFIG under the data dir; select a rootless daemon
+# with DOCKER_HOST (docker contexts are not used).
 
 [providers.anthropic]
 kind = "anthropic"                  # anthropic, gemini, openai

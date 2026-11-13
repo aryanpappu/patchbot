@@ -83,17 +83,27 @@ the tests.
 ## Container execution (M17)
 
 `NewContainerExecutor(root, ContainerConfig)` implements the same `Executor`
-interface. Each `Run` starts `<runtime> run --rm --name patchbot-<random>
+interface. Each `Run` creates `<runtime> create --name patchbot-<random>
 --label io.patchbot.managed=true --pull never --network none --read-only
 --tmpfs /tmp:rw,nosuid,nodev,size=S --cap-drop ALL --security-opt
 no-new-privileges --pids-limit N --memory M --cpus C --user U [--userns
-keep-id:uid=U,gid=G] --workdir /work/<rel> -v <root>:/work:rw -e ... IMAGE
-argv...`. The image must be digest-pinned and already present. Arguments after
-the image are literal; there is no shell. The runtime CLI itself runs through
-`LocalExecutor`, so the output cap, redaction, timeout and CLI process-group
-cleanup are shared. On timeout or cancellation the container is killed by name
-(killing every process in its PID namespace) and force-removed. Exit codes pass
-through; interrupted runs report `-1`; runtime failure (125) is an error.
+keep-id:uid=U,gid=G] [--http-proxy=false] --workdir /work/<rel> -v
+<root>:/work:rw -v <root>/.git:/work/.git:ro -e ... IMAGE argv...`, then runs
+`start --attach <name>`. The image must be digest-pinned and already present.
+Arguments after the image are literal; there is no shell. A `.git` gitlink file
+or symlink is refused. The runtime CLI runs through a `LocalExecutor` rooted at
+`/`, never the workspace, so the output cap, redaction, timeout and CLI cleanup
+are shared and nothing a container does to `/work` can break cleanup. On
+timeout or cancellation the container is killed by name. After every command it
+is `rm -f`'d and its absence confirmed with `ps` (twice after an interrupted
+create), retrying for up to `ReconcileTimeout`; otherwise `Run` fails with
+`ErrContainerNotRemoved`. So no container process outlives `Run`, and host git
+never runs beside one. Then the workspace is walked (no symlink following,
+bounded entries); growth past `WorkspaceMaxBytes` or an unreadable entry fails
+with `ErrWorkspaceLimit`. Exit codes pass through; interrupted runs report
+`-1`; runtime failure (125) is an error. `SweepContainers` removes labelled
+leftovers; the runner calls it at startup only when no run is queued/running.
+Proxy variables are set explicitly empty in every container.
 
 The container environment is the command's explicit env after the usual
 secret filter, with `PATH` replaced by the configured container path and the

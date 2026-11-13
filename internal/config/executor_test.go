@@ -52,6 +52,7 @@ func TestExecutorValidation(t *testing.T) {
 		{"pids", container + "pids_limit = 0\n", "executor.pids_limit: must be greater than 0"},
 		{"keep-id docker", container + "runtime = \"docker\"\nuserns = \"keep-id\"\n", "executor.userns"},
 		{"path", container + "path = [\"bin\"]\n", "executor.path"},
+		{"workspace max", container + "workspace_max_bytes = 0\n", "executor.workspace_max_bytes: must be greater than 0"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -88,9 +89,17 @@ func TestExecutorShownWithSources(t *testing.T) {
 	}
 	squeezed := strings.Join(strings.FieldsFunc(b.String(), func(r rune) bool { return r == ' ' }), " ")
 	for _, want := range []string{"[executor]", `kind = "container" # file`, `image = "` + pinnedImage + `" # file`,
-		`runtime = "podman" # default`, `network = "none" # default`, `user = "65532:65532" # default`, "pids_limit = 512 # default"} {
+		`runtime = "podman" # default`, `network = "none" # default`, `user = "65532:65532" # default`, "pids_limit = 512 # default", "workspace_max_bytes = 2147483648 # default"} {
 		if !strings.Contains(squeezed, want) {
 			t.Errorf("config show lacks %q:\n%s", want, b.String())
 		}
+	}
+}
+
+func TestDockerGetsPrivateConfigDir(t *testing.T) {
+	t.Parallel()
+	c := loadString(t, validBase+"[executor]\nkind = \"container\"\nruntime = \"docker\"\nimage = \""+pinnedImage+"\"\n", nil)
+	if !strings.HasPrefix(c.DockerConfigDir(), c.DataDir()) {
+		t.Fatalf("docker config dir %q is outside the data dir", c.DockerConfigDir())
 	}
 }

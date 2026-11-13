@@ -59,6 +59,7 @@ network = "none"
 user = "65532:65532"
 userns = ""
 path = ["/usr/local/go/bin", "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
+workspace_max_bytes = 2147483648
 
 [providers.anthropic]
 kind = "anthropic"

@@ -172,6 +172,7 @@ func (c *Config) validateExecutor(v *validator) {
 		v.addf("executor.cpus: %s", err)
 	}
 	v.check(e.PidsLimit > 0, "executor.pids_limit: must be greater than 0")
+	v.check(e.WorkspaceMaxBytes > 0, "executor.workspace_max_bytes: must be greater than 0")
 	v.check(e.Network == "none", "executor.network: %q is not allowed; only \"none\" is supported", e.Network)
 	if err := execx.ValidateUser(e.User); err != nil {
 		v.addf("executor.user: %s", err)
