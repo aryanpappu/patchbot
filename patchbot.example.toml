@@ -50,6 +50,13 @@ vue_src = "cdn"                     # cdn or local (vendored Vue is included)
 [data]
 dir = "~/.patchbot"                 # private 0700 directory; SQLite is 0600
 
+[memory]
+enabled = true                      # false: runs neither retrieve nor write memory
+max_entries = 12                    # entries given to one stage (observations use at most half)
+max_bytes = 4096                    # rendered bytes given to one stage
+max_pending = 20                    # pending model lessons per repo; excess proposals are dropped
+observation_ttl = "720h"            # typed observations older than this are not retrieved
+
 [providers.anthropic]
 kind = "anthropic"                  # anthropic, gemini, openai
 base_url = ""                       # empty uses the adapter's official endpoint

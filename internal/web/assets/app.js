@@ -11,6 +11,11 @@
   const money = value => value == null ? "unknown" : `$${(value / 1000000).toFixed(4)}`;
   const human = value => String(value || "pending").replaceAll("_", " ");
   const block = value => h("pre", { class: "output", tabindex: 0 }, text(value));
+  // Escape every rune a lesson may not contain (format, bidi, tag, private-use,
+  // separators, controls other than newline/tab) so nothing hides from review.
+  const printable = /[\p{L}\p{M}\p{N}\p{P}\p{S} \n\t]/u;
+  const visible = value => Array.from(String(value ?? ""), c => printable.test(c) ? c
+    : String.fromCharCode(92) + "u{" + c.codePointAt(0).toString(16).toUpperCase() + "}").join("");
   const link = (url, label) => {
     try {
       const parsed = new URL(url);
@@ -61,11 +66,14 @@
         locked: initial.auth_required && !token, tokenInput: "", busy: false, ready: false,
         error: "", notice: "", providers: [], repos: [], models: [], modelWarning: "",
         runs: [], cursor: "", awaiting: null, detail: initial.initial || null, artifacts: [], events: [],
-        streamStatus: "Connecting", version: "", compare: "", editor: null, notes: ""
+        streamStatus: "Connecting", version: "", compare: "", editor: null, notes: "",
+        memory: { enabled: true, entries: [] }
       });
       const query = new URLSearchParams(location.search);
       const filters = reactive({ repo: query.get("repo") || "", issue: query.get("issue") || "", status: query.get("status") || "" });
       const form = reactive({ repo: "", issue: "", mode: "fix", budget: "2", dry: true, provider: "", model: "", separate: false, refine: "" });
+      const memoryFilters = reactive({ repo: "", status: "pending" });
+      const memoryForm = reactive({ repo: "", text: "" });
       let stopStream = null, refreshTimer = null, pollTimer = null, lastID = 0, modelRequest = 0;
       let refreshing = null, disposed = false;
 
@@ -77,6 +85,7 @@
         s.detail = null;
         s.runs = []; s.events = []; s.artifacts = []; s.editor = null;
         s.providers = []; s.repos = []; s.models = []; s.awaiting = null;
+        s.memory = { enabled: true, entries: [] };
         lastID = 0;
         modelRequest++;
         if (stopStream) stopStream.abort();
@@ -157,6 +166,30 @@
         }
         history.replaceState(null, "", "/runs?" + params);
         await countAwaiting();
+      }
+      async function loadMemory() {
+        const params = new URLSearchParams();
+        if (memoryFilters.repo) params.set("repo", memoryFilters.repo);
+        if (memoryFilters.status) params.set("status", memoryFilters.status);
+        s.memory = await request("/api/memory?" + params);
+      }
+      function memoryAction(entry, name) {
+        if (s.busy) return;
+        void work(async () => {
+          // Bind the decision to the exact content hash shown to the operator.
+          try { await send(`/api/memory/${entry.id}/${name}`, { content_hash: entry.content_hash }); }
+          finally { if (!s.locked) await loadMemory(); }
+          s.notice = `Memory ${entry.id}: ${name} accepted.`;
+        });
+      }
+      function addLesson(event) {
+        event.preventDefault();
+        void work(async () => {
+          try { await send("/api/memory", { repo: memoryForm.repo, text: memoryForm.text }); }
+          finally { if (!s.locked) await loadMemory(); }
+          memoryForm.text = "";
+          s.notice = "Operator lesson saved and approved.";
+        });
       }
       const can = action => !!s.detail?.capabilities?.[`can_${action}`];
       async function loadDetail(fresh = false) {
@@ -266,6 +299,7 @@
         const providers = await request("/api/providers");
         s.providers = providers.providers; s.repos = providers.repos;
         form.repo = s.repos[0] || "";
+        memoryForm.repo = s.repos[0] || "";
         form.provider = providers.defaults.provider;
         form.mode = providers.defaults.mode;
         form.model = providers.defaults.code_model || "";
@@ -279,7 +313,7 @@
           if (stopStream) stopStream.abort();
           stopStream = new AbortController();
           void follow(stopStream.signal);
-        } else if (initial.page === "runs") await loadRuns();
+        } else if (initial.page === "runs") { await loadRuns(); await loadMemory(); }
         s.ready = true;
         if (initial.page !== "runs") void loadModels();
       }
@@ -370,8 +404,37 @@
           h("div", { class: "actions" }, [
             button("First page", () => work(() => loadRuns("")), s.busy || !query.get("cursor")),
             button("Older runs", () => work(() => loadRuns(s.cursor)), s.busy || !s.cursor)
-          ])
+          ]),
+          memoryView()
         ];
+      }
+      function memoryView() {
+        const m = s.memory;
+        return panel("Repository memory", [
+          h("p", "Memory is unverified context for the model. It never changes command policy, protected paths, repository scope or approval. Only approved lessons and fresh observations are retrieved."),
+          m.enabled ? null : h("p", { class: "warning", role: "status" }, "Memory is disabled: runs neither retrieve nor write memory."),
+          h("form", { class: "filters", onSubmit: event => { event.preventDefault(); void work(loadMemory); } }, [
+            field("Repository", select(memoryFilters, "repo", [["", "All repositories"], ...s.repos.map(repo => [repo, repo])])),
+            field("Status", select(memoryFilters, "status", [["", "All statuses"], ...["pending", "approved", "active", "rejected", "revoked"].map(v => [v, v])])),
+            h("button", { type: "submit", disabled: s.busy }, "Show memory")
+          ]),
+          (m.entries || []).length ? h("ul", { class: "runs" }, m.entries.map(e => h("li", { key: e.id }, [
+            h("strong", `#${e.id} · ${e.repo} · ${e.kind} · ${e.status} · ${e.source}${e.run_id ? " · run " + e.run_id : ""}`),
+            block(visible(e.kind === "lesson" ? (e.text || "(forgotten: text erased)") : e.summary)),
+            h("p", h("small", `Content hash ${e.content_hash}`)),
+            h("div", { class: "actions" }, [
+              e.kind === "lesson" && e.status === "pending" ? button("Approve", () => memoryAction(e, "approve"), s.busy) : null,
+              e.kind === "lesson" && e.status === "pending" ? button("Reject", () => memoryAction(e, "reject"), s.busy) : null,
+              e.status !== "revoked" ? button("Forget", () => memoryAction(e, "forget"), s.busy) : null
+            ])
+          ]))) : h("p", "No memory entries match these filters."),
+          h("form", { onSubmit: addLesson }, [
+            h("h3", "Add an operator lesson (approved immediately)"),
+            field("Repository", select(memoryForm, "repo", s.repos.map(repo => [repo, repo]))),
+            field("Lesson (up to 600 bytes)", area(memoryForm, "text", { required: true, maxlength: 600 })),
+            h("button", { type: "submit", disabled: s.busy || !memoryForm.text.trim() || !memoryForm.repo }, "Add lesson")
+          ])
+        ]);
       }
       function editorView() {
         const e = s.editor;
@@ -449,7 +512,7 @@
         if (!s.locked) void work(boot);
         pollTimer = setInterval(() => {
           if (s.locked || !s.ready || s.busy || disposed) return;
-          const refresh = initial.page === "detail" ? loadDetail : initial.page === "runs" ? loadRuns : null;
+          const refresh = initial.page === "detail" ? loadDetail : initial.page === "runs" ? async () => { await loadRuns(); await loadMemory(); } : null;
           if (refresh) void refresh().catch(error => { s.error = error.message; });
         }, 15000);
       });

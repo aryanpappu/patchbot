@@ -33,11 +33,16 @@ func newInvestigateRegistry(env *tools.Env) (*stageRegistry, error) {
 
 // No write-capable stage registry can be constructed without Check's private
 // token. Revalidate it immediately before registering writes and commands.
-func newCodeRegistry(ctx context.Context, approval approvalToken, env *tools.Env, runID int64, issueHash string, criteria []string) (*stageRegistry, error) {
+func newCodeRegistry(ctx context.Context, approval approvalToken, env *tools.Env, runID int64, issueHash string, criteria []string, lessons *tools.LessonBox) (*stageRegistry, error) {
 	if _, err := validateApproval(ctx, approval, runID, issueHash); err != nil {
 		return nil, err
 	}
-	r, err := tools.NewCodeRegistry(env, tools.RunCmd{}, tools.Submit{Criteria: criteria})
+	extra := []tools.Tool{tools.RunCmd{}, tools.Submit{Criteria: criteria}}
+	if lessons != nil {
+		// Proposals are inert: they are stored pending and never consulted by policy.
+		extra = append(extra, tools.ProposeLesson{Box: lessons})
+	}
+	r, err := tools.NewCodeRegistry(env, extra...)
 	if err != nil {
 		return nil, &Error{Kind: "internal", Message: "build code tools failed"}
 	}
@@ -60,6 +65,9 @@ type RefineRequest struct {
 	Store       SpecStore
 	Session     *Session
 	Limits      Limits
+	// Memory is the runner's frozen, rendered selection. It is delivered as
+	// untrusted data in the user turn, never in the system prompt.
+	Memory string
 }
 
 // SpecResult is either an approval-ready spec or questions requiring an answer.
@@ -95,6 +103,7 @@ func (l *Loop) Refine(ctx context.Context, req RefineRequest) (SpecResult, error
 	if req.Notes != "" {
 		task += "\n" + untrusted("revision notes or answers", stage.redactor().Redact(req.Notes))
 	}
+	task += memoryData(stage.redactor().Redact(req.Memory))
 	session := startStage(req.Session, refinePrompt, task)
 	lim := req.Limits
 	if lim.MaxTurns <= 0 {
@@ -127,6 +136,8 @@ type InvestigateRequest struct {
 	Title, Body string
 	Session     *Session
 	Limits      Limits
+	// Memory is a frozen selection delivered as untrusted user-turn data.
+	Memory string
 }
 
 // ReportResult contains the investigation outcome and a redacted report.
@@ -143,7 +154,7 @@ func (l *Loop) Investigate(ctx context.Context, req InvestigateRequest) (ReportR
 	if err != nil {
 		return ReportResult{}, &Error{Kind: "internal", Message: "build investigation tools failed"}
 	}
-	session := startStage(req.Session, investigatePrompt, issueData(stage.redactor().Redact(req.Title), stage.redactor().Redact(req.Body)))
+	session := startStage(req.Session, investigatePrompt, issueData(stage.redactor().Redact(req.Title), stage.redactor().Redact(req.Body))+memoryData(stage.redactor().Redact(req.Memory)))
 	outcome, err := stage.Run(ctx, session, req.Limits)
 	result := ReportResult{Outcome: outcome}
 	if outcome.Submission != nil {
@@ -171,6 +182,11 @@ type CodeRequest struct {
 	// OnPhase runs after the approval checks and write registry construction,
 	// before code or harness tests execute. A failed lifecycle write stops work.
 	OnPhase func(context.Context, store.Phase) error
+	// Memory is a frozen selection delivered as untrusted user-turn data.
+	Memory string
+	// ProposeLessons registers the inert propose_lesson tool. It is set from
+	// configuration only, never from memory content.
+	ProposeLessons bool
 }
 
 // CodeResult tells the runner whether there is anything to publish and whether
@@ -186,12 +202,14 @@ type CodeResult struct {
 	TestsStatus  string
 	TestAttempts int
 	LastTest     *execx.Result
+	// Lessons are redacted model proposals for the runner to store as pending.
+	Lessons []string
 }
 
 // Code requires a private concrete capability produced by Check. It revalidates the
 // capability before constructing any write tools. There is deliberately no
 // overload accepting only a CodeRequest, and no approval boolean in that request.
-func (l *Loop) Code(ctx context.Context, approval approvalToken, req CodeRequest) (CodeResult, error) {
+func (l *Loop) Code(ctx context.Context, approval approvalToken, req CodeRequest) (out CodeResult, _ error) {
 	spec, err := validateApproval(ctx, approval, req.RunID, IssueHash(req.Title, req.Body))
 	if err != nil {
 		return CodeResult{}, err
@@ -204,16 +222,22 @@ func (l *Loop) Code(ctx context.Context, approval approvalToken, req CodeRequest
 		return CodeResult{}, &Error{Kind: "internal", Message: "code requires harness change detection"}
 	}
 	stage := *l
-	stage.tools, err = newCodeRegistry(ctx, approval, stage.Env, req.RunID, IssueHash(req.Title, req.Body), draft.AcceptanceCriteria)
+	var box *tools.LessonBox
+	if req.ProposeLessons {
+		box = &tools.LessonBox{}
+	}
+	stage.tools, err = newCodeRegistry(ctx, approval, stage.Env, req.RunID, IssueHash(req.Title, req.Body), draft.AcceptanceCriteria, box)
 	if err != nil {
 		return CodeResult{}, err
 	}
-	session := startStage(req.Session, codePrompt, issueData(stage.redactor().Redact(req.Title), stage.redactor().Redact(req.Body))+"\nApproved specification:\n"+untrusted("approved specification", stage.redactor().Redact(spec.BodyMD)))
+	session := startStage(req.Session, codePrompt, issueData(stage.redactor().Redact(req.Title), stage.redactor().Redact(req.Body))+"\nApproved specification:\n"+untrusted("approved specification", stage.redactor().Redact(spec.BodyMD))+memoryData(stage.redactor().Redact(req.Memory)))
 	if req.Baseline != "" {
 		feedback(session, untrusted("harness baseline tests", stage.redactor().Redact(req.Baseline)))
 	}
 	lim := req.Limits.defaults()
 	result := CodeResult{TestsStatus: "not_run"}
+	// Proposals made before any stop, including salvage, reach the runner.
+	defer func() { out.Lessons = box.Lessons() }()
 	for {
 		if req.OnPhase != nil {
 			if err := req.OnPhase(ctx, store.PhaseCode); err != nil {

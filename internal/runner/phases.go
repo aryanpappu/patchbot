@@ -167,8 +167,16 @@ func (r *Runner) refine(ctx context.Context, run *store.Run, prior *store.Spec, 
 		return err
 	}
 	limits.Agent.MaxTurns = limits.RefineTurns
+	stage := "refine"
 	if run.Mode == config.ModeInvestigate {
-		report, err := loop.Investigate(ctx, agent.InvestigateRequest{Title: issue.Title, Body: issue.Body, Session: session, Limits: limits.Agent})
+		stage = "investigate"
+	}
+	remembered, err := r.selectMemory(ctx, *run, stage)
+	if err != nil {
+		return err
+	}
+	if run.Mode == config.ModeInvestigate {
+		report, err := loop.Investigate(ctx, agent.InvestigateRequest{Title: issue.Title, Body: issue.Body, Session: session, Limits: limits.Agent, Memory: remembered})
 		if err != nil {
 			return err
 		}
@@ -192,7 +200,7 @@ func (r *Runner) refine(ctx context.Context, run *store.Run, prior *store.Spec, 
 		}
 		return r.transition(ctx, run, store.StatusSucceeded, store.PhaseRefine, store.RunPatch{Outcome: &outcome, Summary: &report.ReportMD})
 	}
-	result, err := loop.Refine(ctx, agent.RefineRequest{RunID: run.ID, Title: issue.Title, Body: issue.Body, Prior: prior, Notes: notes, Store: r.db, Session: session, Limits: limits.Agent})
+	result, err := loop.Refine(ctx, agent.RefineRequest{RunID: run.ID, Title: issue.Title, Body: issue.Body, Prior: prior, Notes: notes, Store: r.db, Session: session, Limits: limits.Agent, Memory: remembered})
 	if err != nil {
 		if result.Reason != "" && result.Reason != agent.EndSubmitted {
 			return budgetError(result.Reason)
@@ -378,6 +386,8 @@ func (r *Runner) code(ctx context.Context, run *store.Run) (err error) {
 		if err != nil {
 			return err
 		}
+		// Only the typed result is remembered; baseline output never is.
+		r.observe(ctx, *run, command, test, run.BaseSHA, fmt.Sprintf("run %d artifact baseline", run.ID))
 		baseline = "failed"
 		baselineInfo = fmt.Sprintf("exit_code: %d; timed_out: %t\n%s", test.ExitCode, test.TimedOut, tools.CapOutput(test.Output, 8<<10))
 		if test.ExitCode == 0 && !test.TimedOut {
@@ -418,7 +428,11 @@ func (r *Runner) code(ctx context.Context, run *store.Run) (err error) {
 	if err != nil {
 		return err
 	}
-	result, codeErr := loop.Code(ctx, token, agent.CodeRequest{RunID: run.ID, Title: issue.Title, Body: issue.Body, Changes: env.repo, Baseline: baselineInfo, TestCommand: command, Session: session, Limits: limits.Agent, OnPhase: func(c context.Context, phase store.Phase) error {
+	remembered, err := r.selectMemory(ctx, codeRun, "code")
+	if err != nil {
+		return err
+	}
+	result, codeErr := loop.Code(ctx, token, agent.CodeRequest{RunID: run.ID, Title: issue.Title, Body: issue.Body, Changes: env.repo, Baseline: baselineInfo, TestCommand: command, Session: session, Limits: limits.Agent, Memory: remembered, ProposeLessons: r.cfg.Memory.Enabled, OnPhase: func(c context.Context, phase store.Phase) error {
 		if run.Status == store.StatusApproved {
 			if err := r.db.StartCode(c, run.ID, spec.Version, spec.Hash, run.Generation); err != nil {
 				return err
@@ -429,6 +443,8 @@ func (r *Runner) code(ctx context.Context, run *store.Run) (err error) {
 		}
 		return r.transition(c, run, store.StatusRunning, phase, store.RunPatch{})
 	}})
+	// Auxiliary: never aborts the run or hides codeErr.
+	r.saveLessons(ctx, *run, result.Lessons)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

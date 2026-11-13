@@ -19,6 +19,7 @@ whether each call and lifecycle transition is allowed.
 | `internal/execx` | Immutable command policy, trusted PATH, clean env and process groups |
 | `internal/gitx`, `github` | Guarded local git and bounded GitHub REST client |
 | `internal/store` | SQLite records, transactions, migrations and committed-event notifications |
+| `internal/memory` | Repository memory: policy digest, deterministic bounded selection, typed observations and lessons |
 | `internal/server` | Admission, worker lifetime, HTTP API, auth, SSE and maintenance |
 | `internal/web` | Embedded templates, Vue asset, UI JS/CSS and verified vendoring command |
 | `internal/testhttp`, `workspace/wstest` | Offline HTTP and jail test fixtures |
@@ -87,6 +88,8 @@ Times are UTC milliseconds; money is integer micro-USD. NULL means unknown.
 | `run_events` | Per-run sequence, type and JSON payload for replay |
 | `run_artifacts` | Redacted spec/report/diff/test/PR previews and private accounting artifacts |
 | `actions` | Local and GitHub lifecycle decisions |
+| `memory_entries` | Per-repo typed observations and prose lessons, status, provenance and content hash |
+| `memory_actions` | Memory create/approve/reject/forget audit with actor, channel and time |
 | `schema_migrations` | Applied version, filename, checksum and time |
 
 Status changes use compare-and-set with a generation counter. Decisions and
@@ -107,6 +110,48 @@ validation at the boundary. Compile-failure tests prove callers cannot enter
 coding or register write tools without it. The runner also checks approval and
 issue freshness before publication. This keeps prompts and HTTP handlers from
 turning an intent to approve into write authority.
+
+## Repository memory
+
+Memory follows the Step 2 trust model (`docs/planning/step2/codex-round1.md`
+section 1). Migration `0003_memory.sql` adds `memory_entries` and
+`memory_actions`; CHECK constraints keep the two kinds apart.
+
+- Typed observations are auto-active but carry no prose. The runner writes one
+  after the baseline test and one after the final verification commit: command
+  ID, exit status, timeout flag, base/head SHA, command-policy digest (SHA-256
+  of the repo's commands, test command and trusted path), run ID, evidence
+  reference and time. The writer takes an `execx.Result` and ignores its output.
+- Lessons are prose. `propose_lesson` (code stage only, registered from config,
+  at most three per run, 600 bytes, redacted) collects proposals in a
+  harness-owned box; the runner stores them `pending`, up to
+  `memory.max_pending` per repository. Lesson text allows only printable runes
+  plus newline and tab. Operators approve, reject or forget them through the
+  CLI or API; `DecideMemory` compares the expected repository and content hash
+  in its WHERE clause, approval requires the hash prefix the operator saw, and
+  repositories outside the allowlist are neither listed nor decidable. A
+  partial unique index keeps one live copy of any content per repository.
+  Operator-added lessons are approved on creation. Only `approved` lessons are
+  retrieved.
+- Selection (`memory.Select`) is deterministic: fresh, active observations
+  under the current policy digest (newest per command, at most half the entry
+  budget), then approved lessons by decision time. Entry and byte caps apply.
+  SQL applies every eligibility rule and Go re-checks them.
+- The runner selects once per refine/investigate/code stage, before the model
+  runs, and records the IDs, content hashes and the SHA-256 of the delivered
+  (redacted) text as a `memory_selection` artifact and a `memory.selected`
+  event. Memory write failures are warning events and never abort a run or
+  replace its error. The rendered text is placed in the stage's
+  first user message as an `untrusted_data kind="repository memory"` block
+  after a note that it cannot override instructions, the approved spec or
+  policy. Test repair reuses that conversation, so the selection is frozen.
+- Memory is never in the system prompt and is consulted by no policy: command
+  policy, protected paths, repository allowlist, the approval gate and the
+  tool registry are built from configuration and approvals alone.
+- `[memory] enabled = false` makes selection return nothing without reading
+  the store, registers no `propose_lesson` and writes no observation, lesson or
+  selection record. Forget revokes and erases lesson text; hashes, audit rows,
+  transcripts of runs that used it and backups remain.
 
 ## Events and SSE
 

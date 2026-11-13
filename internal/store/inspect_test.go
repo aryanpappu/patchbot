@@ -32,7 +32,8 @@ func TestCheckMigrationsReadOnly(t *testing.T) {
 			if (err != nil) != (tc.query != "") {
 				t.Fatalf("count %d, error %v", n, err)
 			}
-			if tc.query == "" && n != 2 {
+			files, _ := migrationFiles.ReadDir("migrations")
+			if tc.query == "" && n != len(files) {
 				t.Fatalf("count %d", n)
 			}
 		})

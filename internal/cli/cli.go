@@ -25,6 +25,7 @@ Commands:
   cancel   Cancel an active run
   runs     List runs and optionally sync GitHub comments
   retry    Start a new run linked to a failed run
+  memory   List, approve, reject, forget or add repository memory
   models   List available models
   doctor   Check local setup (offline unless --online)
   config   Check or show configuration
@@ -109,6 +110,8 @@ func (a *App) Run(args []string) int {
 		return a.runControl(name, flags.Args()[1:])
 	case "serve":
 		return a.runServe(flags.Args()[1:])
+	case "memory":
+		return a.runMemory(flags.Args()[1:])
 	default:
 		flags.Usage()
 		return 2

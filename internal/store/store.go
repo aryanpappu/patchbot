@@ -281,6 +281,7 @@ type Store interface {
 	ListActions(ctx context.Context, runID int64) ([]Action, error)
 	SaveArtifact(context.Context, Artifact) error
 	GetArtifact(ctx context.Context, runID int64, kind string, attempt int64) (Artifact, error)
+	MemoryStore
 	Close() error
 }
 

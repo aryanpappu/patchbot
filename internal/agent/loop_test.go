@@ -192,7 +192,7 @@ func TestLoopRefusalAndTruncation(t *testing.T) {
 			cut := fake.Step{Stop: reason, ToolCalls: []llm.ToolCall{{Name: "write_file", Args: json.RawMessage(`{"path":"README.md","content":`)}}}
 			l, p, _, _ := setup(t, cut, submitStep())
 			token, _, run := approved(t)
-			reg, err := newCodeRegistry(t.Context(), token, l.Env, run.ID, IssueHash("title", "body"), draftSpec().AcceptanceCriteria)
+			reg, err := newCodeRegistry(t.Context(), token, l.Env, run.ID, IssueHash("title", "body"), draftSpec().AcceptanceCriteria, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -354,7 +354,7 @@ func TestLoopSecretsNeverReachRecorderOrNextRequest(t *testing.T) {
 		return execx.Result{Output: strings.Repeat("a", 1900) + key + strings.Repeat("a", 6200) + key + strings.Repeat("z", 280000), ExitCode: 1}, nil
 	}
 	token, _, run := approved(t)
-	registry, err := newCodeRegistry(t.Context(), token, l.Env, run.ID, IssueHash("title", "body"), draftSpec().AcceptanceCriteria)
+	registry, err := newCodeRegistry(t.Context(), token, l.Env, run.ID, IssueHash("title", "body"), draftSpec().AcceptanceCriteria, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
