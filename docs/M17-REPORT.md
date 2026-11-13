@@ -100,3 +100,9 @@ PATCHBOT_CONTAINER_TEST=1 PATCHBOT_CONTAINER_IMAGE=docker.io/library/busybox@sha
   or the repo must vendor them. A separate fetch phase is future work.
 - The workspace bind mount is read-write: a malicious command can still modify the checkout (as before);
   the harness diff/check and protected paths still apply after the command.
+
+## Server evidence (Mumbai, 2026-11-13)
+Ran as user `patchbot` (rootless podman 4.9.3, arm64, cgroup v2), image
+`docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662`:
+all six `Integration` tests PASS (identity/workspace, host-file read denied, no network,
+fork bomb capped, tmpfs bounded, cancel kills descendants in 6.1 s).
