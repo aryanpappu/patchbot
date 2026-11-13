@@ -148,7 +148,7 @@ func Load(opts Options) (*Config, error) {
 	}
 	if envNameRE.MatchString(c.Webhook.SecretEnv) {
 		value, _ := lookupEnv(c.Webhook.SecretEnv)
-		c.Webhook.Secret = secret.New(value)
+		c.Webhook.Secret = secret.New(strings.TrimSpace(value))
 	}
 	if err != nil {
 		// A file that was rejected never became part of c, but the variable

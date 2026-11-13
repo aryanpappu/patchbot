@@ -133,6 +133,7 @@ func (c *Config) validateLimits(v *validator) {
 		{"limits.cmd_store_bytes", int64(l.CmdStoreBytes)},
 		{"approval.poll_interval", int64(c.Approval.PollInterval)},
 		{"approval.ttl", int64(c.Approval.TTL)},
+		{"webhook.label_poll_interval", int64(c.Webhook.LabelPollInterval)},
 		{"approval.max_revisions", int64(c.Approval.MaxRevisions)},
 		{"server.max_concurrent_runs", int64(c.Server.MaxConcurrentRuns)},
 		{"server.max_queued_runs", int64(c.Server.MaxQueuedRuns)},

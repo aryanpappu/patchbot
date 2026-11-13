@@ -64,6 +64,8 @@ type Server struct {
 	shutdownOnce    sync.Once
 	ingressMu       sync.Mutex
 	ingressWake     chan struct{}
+	// maxPending overrides maxPendingDeliveries in tests when positive.
+	maxPending int
 }
 
 // ValidateAddress refuses public or wildcard binds without a UI credential.
@@ -175,25 +177,43 @@ func (s *Server) maintain(ctx context.Context) {
 	defer close(s.maintenanceDone)
 	ticker := time.NewTicker(s.opts.SyncInterval)
 	defer ticker.Stop()
+	var labelTick <-chan time.Time
 	if s.cfg.Webhook.Enabled {
-		_ = s.reconcileDeliveries(ctx)
-		_ = s.runner.SyncLabels(ctx)
+		interval := s.cfg.Webhook.LabelPollInterval
+		if interval <= 0 {
+			interval = 5 * time.Minute
+		}
+		labels := time.NewTicker(interval)
+		defer labels.Stop()
+		labelTick = labels.C
+		s.logMaintenance("webhook deliveries", s.reconcileDeliveries(ctx))
+		s.syncLabels(ctx, interval)
 	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-s.ingressWake:
-			_ = s.reconcileDeliveries(ctx)
+			s.logMaintenance("webhook deliveries", s.reconcileDeliveries(ctx))
+		case <-labelTick:
+			s.syncLabels(ctx, s.cfg.Webhook.LabelPollInterval)
 		case <-ticker.C:
-			_ = s.runner.RecoverStale(ctx)
-			_ = s.runner.SyncWaiting(ctx)
+			s.logMaintenance("recover stale runs", s.runner.RecoverStale(ctx))
+			s.logMaintenance("sync waiting runs", s.runner.SyncWaiting(ctx))
 			if s.cfg.Webhook.Enabled {
-				_ = s.reconcileDeliveries(ctx)
-				_ = s.runner.SyncLabels(ctx)
+				s.logMaintenance("webhook deliveries", s.reconcileDeliveries(ctx))
+				s.logMaintenance("prune webhook deliveries", s.pruneDeliveries(ctx))
 			}
 		}
 	}
+}
+
+// syncLabels runs one label sweep, bounded so it cannot outlast its interval
+// by much and stall comment sync or delivery reconciliation.
+func (s *Server) syncLabels(ctx context.Context, interval time.Duration) {
+	ctx, cancel := context.WithTimeout(ctx, max(interval, time.Minute))
+	defer cancel()
+	s.logMaintenance("label poll", s.runner.SyncLabels(ctx))
 }
 
 // Serve runs HTTP until the caller cancels ctx or Shutdown is called. The

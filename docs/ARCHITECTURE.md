@@ -286,3 +286,13 @@ reordered hints idempotent even after a run finishes. Multiple matching labels
 use lexical order. Removing and reapplying a label rearms it when the intervening
 state is observed. The existing active-run index and admission manager remain
 in force. Polling of waiting-run comments remains independent of this option.
+
+Pending receipts are coalesced per (repo, issue): one current-state reconcile
+covers any number of deliveries, and the receiver answers 503 without recording
+once 1000 receipts are unprocessed. A group that keeps failing is abandoned after
+10 attempts; 404/410 means the issue is gone and the receipt is done. Processed
+receipts are pruned after 14 days. Label sweeps run on their own
+`webhook.label_poll_interval`, read the repository once and use labels from the
+issue listing; an issue is touched only when its trigger label is new, unhandled
+or removed. A repository's first sweep records existing labels as a handled
+baseline (`webhook_repos`), so enabling webhooks never mass-starts runs.

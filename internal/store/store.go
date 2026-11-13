@@ -274,10 +274,17 @@ type Action struct {
 // and revision limits) belongs to the runner; this layer enforces CAS and the
 // latest-spec approval binding. Missing reads return ErrNotFound.
 type Store interface {
-	RecordDelivery(context.Context, Delivery) error
-	ObserveTriggerLabel(context.Context, string, int64, string) (int64, error)
+	RecordDelivery(ctx context.Context, d Delivery, maxPending int) error
 	PendingDeliveries(context.Context) ([]Delivery, error)
 	CompleteDelivery(context.Context, string) error
+	CompleteDeliveries(context.Context, []string) error
+	FailDeliveries(ctx context.Context, ids []string, maxAttempts int) (int64, error)
+	PruneDeliveries(ctx context.Context, before time.Time) (int64, error)
+	ObserveTriggerLabel(ctx context.Context, repo string, issue int64, label string) (TriggerState, error)
+	MarkTriggerHandled(ctx context.Context, repo string, issue, generation int64) error
+	TriggerLabels(ctx context.Context, repo string) (map[int64]TriggerState, error)
+	RepoBaselined(ctx context.Context, repo string) (bool, error)
+	MarkRepoBaselined(ctx context.Context, repo string) error
 	CreateRun(context.Context, Run) (Run, error)
 	GetRun(context.Context, int64) (Run, error)
 	ListRuns(context.Context, RunFilter) (RunPage, error)

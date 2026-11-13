@@ -316,7 +316,10 @@ still pass all existing approval/revision checks. Polling recovers missed hints;
 delivery receipts survive restart. Repeated hints and persistent labels do not
 restart completed work. An observed removal/change rearms a trigger; otherwise
 use an explicit retry. Multiple matching labels use lexical order. Requests
-larger than 1 MiB are refused.
+larger than 1 MiB are refused. Enabling webhooks does not start runs for issues
+that already carry a trigger label: the first label sweep of each repository is
+a baseline, and only labels added afterwards start work. Label sweeps run every
+`webhook.label_poll_interval` (default 5m).
 
 ## FAQ
 

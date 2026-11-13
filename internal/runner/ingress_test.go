@@ -1,6 +1,7 @@
 package runner_test
 
 import (
+	"net/http"
 	"sync"
 	"testing"
 
@@ -13,6 +14,10 @@ func TestLabelPollingRaceAndReorderedHints(t *testing.T) {
 	f := newFixture(t, "true", specStep(), specStep())
 	f.cfg.Webhook.Enabled = true
 	f.cfg.Webhook.Secret = secret.New("fixture-webhook-secret")
+	// The first sweep is a baseline; only labels applied afterwards start runs.
+	if err := f.r.SyncLabels(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	f.mu.Lock()
 	f.issue.Labels = []github.Label{{Name: "ai-refine"}}
 	f.mu.Unlock()
@@ -135,5 +140,105 @@ func TestCommentHintsReuseRevisionAndApprovalGate(t *testing.T) {
 	}
 	if f.get(run.ID).Status != store.StatusSucceeded {
 		t.Fatal("current eligible comment not reconciled")
+	}
+}
+
+func TestFirstLabelSweepIsBaseline(t *testing.T) {
+	f := newFixture(t, "true", specStep(), specStep())
+	f.cfg.Webhook.Enabled = true
+	f.mu.Lock()
+	f.issue.Labels = []github.Label{{Name: "ai-fix"}}
+	f.mu.Unlock()
+	// Enabling webhooks must not mass-start runs for already-labelled issues.
+	for range 2 {
+		if err := f.r.SyncLabels(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.r.ReconcileIngress(t.Context(), "owner/repo", 12, true); err != nil {
+		t.Fatal(err)
+	}
+	page, err := f.db.ListRuns(t.Context(), store.RunFilter{})
+	if err != nil || len(page.Runs) != 0 {
+		t.Fatalf("baseline started runs: %+v %v", page, err)
+	}
+	// A later change is an observed label addition and starts exactly once.
+	f.mu.Lock()
+	f.issue.Labels = []github.Label{{Name: "ai-refine"}}
+	f.mu.Unlock()
+	for range 2 {
+		if err := f.r.SyncLabels(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err = f.db.ListRuns(t.Context(), store.RunFilter{})
+	if err != nil || len(page.Runs) != 1 || page.Runs[0].Mode != "refine" {
+		t.Fatalf("later label did not start once: %+v %v", page, err)
+	}
+}
+
+func TestFirstSweepWithoutLabelsStillBaselines(t *testing.T) {
+	f := newFixture(t, "true", specStep())
+	f.cfg.Webhook.Enabled = true
+	if err := f.r.SyncLabels(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.issue.Labels = []github.Label{{Name: "ai-refine"}}
+	f.mu.Unlock()
+	if err := f.r.SyncLabels(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	page, err := f.db.ListRuns(t.Context(), store.RunFilter{})
+	if err != nil || len(page.Runs) != 1 {
+		t.Fatalf("label after empty baseline ignored: %+v %v", page, err)
+	}
+}
+
+func TestLabelPollUsesListingAndSkipsHandledIssues(t *testing.T) {
+	f := newFixture(t, "true", specStep())
+	f.cfg.Webhook.Enabled = true
+	if err := f.r.SyncLabels(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.issue.Labels = []github.Label{{Name: "ai-refine"}}
+	f.mu.Unlock()
+	if err := f.r.SyncLabels(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	page, err := f.db.ListRuns(t.Context(), store.RunFilter{})
+	if err != nil || len(page.Runs) != 1 {
+		t.Fatalf("label did not start: %+v %v", page, err)
+	}
+	// Steady state: the handled label costs one repo read and one listing per
+	// sweep, with no per-issue reads and no start attempts.
+	f.mu.Lock()
+	f.hits = nil
+	f.mu.Unlock()
+	for range 3 {
+		if err := f.r.SyncLabels(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	want := map[string]int{"GET /repos/owner/repo": 3, "GET /repos/owner/repo/issues": 3}
+	if len(f.hits) != len(want) || f.hits["GET /repos/owner/repo"] != 3 || f.hits["GET /repos/owner/repo/issues"] != 3 {
+		t.Fatalf("steady-state label poll requests %v, want %v", f.hits, want)
+	}
+}
+
+func TestGoneIssueIsDone(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusGone} {
+		f := newFixture(t, "true")
+		f.mu.Lock()
+		f.issueStatus = status
+		f.mu.Unlock()
+		for _, labels := range []bool{false, true} {
+			if err := f.r.ReconcileIngress(t.Context(), "owner/repo", 12, labels); err != nil {
+				t.Fatalf("status %d: %v", status, err)
+			}
+		}
 	}
 }

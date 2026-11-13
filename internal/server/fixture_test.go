@@ -35,12 +35,21 @@ type fakeGitHub struct {
 	comments []github.Comment
 	prs      []github.PullRequest
 	polls    int
+	// issueReads counts GetIssue calls; issueErr, when set, fails them.
+	issueReads int
+	issueErr   error
 }
 
 func (*fakeGitHub) GetRepo(context.Context, github.RepoRef) (github.Repo, error) {
 	return github.Repo{FullName: "owner/repo", DefaultBranch: "main", Permissions: github.Permissions{Push: true}}, nil
 }
-func (*fakeGitHub) GetIssue(_ context.Context, _ github.RepoRef, n int) (github.Issue, error) {
+func (g *fakeGitHub) GetIssue(_ context.Context, _ github.RepoRef, n int) (github.Issue, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.issueReads++
+	if g.issueErr != nil {
+		return github.Issue{}, g.issueErr
+	}
 	return github.Issue{Number: n, Title: "Create result", Body: "Add result.txt", State: "open"}, nil
 }
 func (g *fakeGitHub) GetBranch(_ context.Context, _ github.RepoRef, name string) (github.Branch, bool, error) {
