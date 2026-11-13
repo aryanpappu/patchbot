@@ -87,3 +87,4 @@ enabled = false
 secret_env = "PATCHBOT_WEBHOOK_SECRET"
 path = "/hooks/github"
 trigger_labels = { "ai-refine" = "refine", "ai-fix" = "fix", "ai-investigate" = "investigate" }
+label_poll_interval = "5m"

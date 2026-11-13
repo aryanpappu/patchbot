@@ -144,3 +144,7 @@ enabled = false
 secret_env = "PATCHBOT_WEBHOOK_SECRET"
 path = "/hooks/github"
 trigger_labels = { "ai-refine" = "refine", "ai-fix" = "fix", "ai-investigate" = "investigate" }
+# How often open issues are swept for trigger labels a missed delivery did not
+# report. The first sweep of a repository records existing labels as a baseline
+# and starts nothing; only labels added later start runs.
+label_poll_interval = "5m"

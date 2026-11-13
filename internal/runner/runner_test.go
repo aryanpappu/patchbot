@@ -45,6 +45,10 @@ type fixture struct {
 	offset                               time.Duration
 	// onBranch runs while publication reads the default branch, after review.
 	onBranch func()
+	// hits counts GitHub requests by "METHOD path".
+	hits map[string]int
+	// issueStatus, when set, is returned for GET of issue 12.
+	issueStatus int
 }
 
 func git(t *testing.T, dir string, args ...string) string {
@@ -148,7 +152,13 @@ func (f *fixture) serveHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	path := strings.TrimPrefix(req.URL.Path, "/repos/owner/repo")
+	if f.hits == nil {
+		f.hits = make(map[string]int)
+	}
+	f.hits[req.Method+" "+req.URL.Path]++
 	switch {
+	case path == "/issues/12" && req.Method == http.MethodGet && f.issueStatus != 0:
+		reply(f.issueStatus, map[string]string{"message": "gone"})
 	case req.URL.Path == "/user":
 		reply(200, map[string]string{"login": "patchbot"})
 	case path == "":

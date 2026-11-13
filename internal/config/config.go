@@ -158,7 +158,10 @@ type Webhook struct {
 	SecretEnv     string            `toml:"secret_env"`
 	Path          string            `toml:"path"`
 	TriggerLabels map[string]string `toml:"trigger_labels"`
-	Secret        secret.Secret     `toml:"-"`
+	// LabelPollInterval is how often open issues are swept for trigger labels
+	// that a missed delivery did not report.
+	LabelPollInterval time.Duration `toml:"label_poll_interval"`
+	Secret            secret.Secret `toml:"-"`
 }
 
 // Data says where the database and workspaces live.

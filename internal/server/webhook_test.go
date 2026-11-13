@@ -5,12 +5,15 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/github"
 	"github.com/aryanpappu/patchbot/internal/secret"
 	"github.com/aryanpappu/patchbot/internal/store"
 )
@@ -85,7 +88,7 @@ func TestWebhookStartupReprocessesReceipt(t *testing.T) {
 	if err := f.server.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.db.RecordDelivery(t.Context(), store.Delivery{ID: "crash-before-dispatch", Event: "issues", Repo: "owner/repo", Issue: 12}); err != nil {
+	if err := f.db.RecordDelivery(t.Context(), store.Delivery{ID: "crash-before-dispatch", Event: "issues", Repo: "owner/repo", Issue: 12}, 10); err != nil {
 		t.Fatal(err)
 	}
 	f.cfg.Webhook.Enabled = true
@@ -115,5 +118,94 @@ func requireHookStatus(t *testing.T, w *httptest.ResponseRecorder, want int) {
 	t.Helper()
 	if w.Code != want {
 		t.Fatalf("webhook status %d, want %d", w.Code, want)
+	}
+}
+
+func TestWebhookPendingBacklogIsBounded(t *testing.T) {
+	f := newFixture(t, nil, nil)
+	cfg := config.Default()
+	cfg.Webhook.Enabled = true
+	cfg.Webhook.Secret = secret.New(hookSecret)
+	cfg.Repos = f.cfg.Repos
+	s := &Server{cfg: cfg, db: f.db, authenticated: true, ingressWake: make(chan struct{}, 1), maxPending: 2}
+	body := `{"action":"created","repository":{"full_name":"owner/repo"},"issue":{"number":12}}`
+	for _, id := range []string{"a", "b"} {
+		requireHookStatus(t, hookRequest(s, body, id, "issue_comment", hookSignature(body)), 202)
+	}
+	// Fresh delivery IDs on a replayed body cannot grow the backlog.
+	requireHookStatus(t, hookRequest(s, body, "c", "issue_comment", hookSignature(body)), 503)
+	requireHookStatus(t, hookRequest(s, body, "a", "issue_comment", hookSignature(body)), 202)
+	pending, err := f.db.PendingDeliveries(t.Context())
+	if err != nil || len(pending) != 2 {
+		t.Fatalf("backlog recorded overflow: %+v %v", pending, err)
+	}
+}
+
+func TestWebhookDeliveriesCoalescePerIssue(t *testing.T) {
+	f := newFixture(t, nil, nil)
+	for i := range 20 {
+		event := "issue_comment"
+		if i%2 == 0 {
+			event = "issues"
+		}
+		if err := f.db.RecordDelivery(t.Context(), store.Delivery{ID: fmt.Sprint("burst-", i), Event: event, Repo: "owner/repo", Issue: 12}, 100); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.db.RecordDelivery(t.Context(), store.Delivery{ID: "other", Event: "issues", Repo: "owner/repo", Issue: 13}, 100); err != nil {
+		t.Fatal(err)
+	}
+	f.gh.mu.Lock()
+	before := f.gh.issueReads
+	f.gh.mu.Unlock()
+	if err := f.server.reconcileDeliveries(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	f.gh.mu.Lock()
+	reads := f.gh.issueReads - before
+	f.gh.mu.Unlock()
+	if reads != 2 {
+		t.Fatalf("21 deliveries for 2 issues cost %d issue reads", reads)
+	}
+	pending, err := f.db.PendingDeliveries(t.Context())
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("coalesced deliveries left pending: %+v %v", pending, err)
+	}
+}
+
+func TestWebhookDeliveryGivesUpAndGoneIsDone(t *testing.T) {
+	f := newFixture(t, nil, nil)
+	record := func(id string) {
+		t.Helper()
+		if err := f.db.RecordDelivery(t.Context(), store.Delivery{ID: id, Event: "issues", Repo: "owner/repo", Issue: 12}, 100); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.gh.mu.Lock()
+	f.gh.issueErr = &github.ErrNotFound{APIError: github.APIError{StatusCode: 404, Message: "Not Found"}}
+	f.gh.mu.Unlock()
+	record("deleted")
+	if err := f.server.reconcileDeliveries(t.Context()); err != nil {
+		t.Fatalf("deleted issue retried: %v", err)
+	}
+	f.gh.mu.Lock()
+	f.gh.issueErr = errors.New("transient")
+	f.gh.mu.Unlock()
+	record("failing")
+	for attempt := 1; attempt <= maxDeliveryAttempts; attempt++ {
+		if err := f.server.reconcileDeliveries(t.Context()); err == nil {
+			t.Fatal("failure not reported")
+		}
+		pending, err := f.db.PendingDeliveries(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := 1; attempt == maxDeliveryAttempts {
+			if len(pending) != 0 {
+				t.Fatalf("not abandoned after %d attempts", attempt)
+			}
+		} else if len(pending) != want {
+			t.Fatalf("attempt %d pending %d", attempt, len(pending))
+		}
 	}
 }
