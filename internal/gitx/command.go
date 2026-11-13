@@ -14,11 +14,21 @@ import (
 
 const trustedPath = execx.TrustedPath
 
+// remoteCommands are the only git subcommands that talk to the remote. Each of
+// them must use the authenticated path (a private repository refuses anonymous
+// reads), and no other subcommand ever receives the credential.
+var remoteCommands = map[string]bool{"clone": true, "fetch": true, "ls-remote": true, "push": true}
+
 // command builds the entire environment explicitly. Credentials are deliberately
-// absent from argv, including -c arguments, and from all non-publication calls.
+// absent from argv, including -c arguments, and from all local calls. They reach
+// git only as an ephemeral, host-scoped http.extraheader via GIT_CONFIG_*.
 func (r *Repo) command(_ context.Context, authenticated bool, args ...string) (*exec.Cmd, error) {
-	if authenticated && (len(args) == 0 || (args[0] != "clone" && args[0] != "push")) {
-		return nil, errors.New("credentials are restricted to clone and push")
+	remote := len(args) > 0 && remoteCommands[args[0]]
+	if authenticated && !remote {
+		return nil, errors.New("credentials are restricted to remote operations")
+	}
+	if remote && !authenticated {
+		return nil, errors.New("remote operations must use the authenticated path")
 	}
 	for _, arg := range args {
 		if strings.ContainsRune(arg, 0) || (r.token != "" && strings.Contains(arg, r.token)) {
@@ -57,6 +67,10 @@ func (r *Repo) command(_ context.Context, authenticated bool, args ...string) (*
 		"GIT_TERMINAL_PROMPT=0", "GIT_ATTR_NOSYSTEM=1", "GIT_NO_REPLACE_OBJECTS=1",
 		"GIT_AUTHOR_NAME=" + r.author.Name, "GIT_AUTHOR_EMAIL=" + r.author.Email,
 		"GIT_COMMITTER_NAME=" + r.author.Name, "GIT_COMMITTER_EMAIL=" + r.author.Email,
+	}
+	if r.testInsecureTLS {
+		// Test-only: the fake HTTPS remote uses a self-signed certificate.
+		cmd.Env = append(cmd.Env, "GIT_SSL_NO_VERIFY=1")
 	}
 	if authenticated && r.token != "" {
 		encoded := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + r.token))

@@ -119,6 +119,7 @@ Times are UTC milliseconds; money is integer micro-USD. NULL means unknown.
 | `reviews` | Reviewer rounds: verdict, findings, criteria, spec hash, diff hash, tree, model |
 | `run_artifacts` | Redacted spec/report/diff/test/PR previews and private accounting artifacts |
 | `actions` | Local and GitHub lifecycle decisions |
+| `posted_comments` | IDs of GitHub comments patchbot posted (shared-identity approval guard) |
 | `memory_entries` | Per-repo typed observations and prose lessons, status, provenance and content hash |
 | `memory_actions` | Memory create/approve/reject/forget audit with actor, channel and time |
 | `schema_migrations` | Applied version, filename, checksum and time |
@@ -134,6 +135,11 @@ spec version/hash against the approval and current issue hash. It checks expiry,
 mode and lifecycle state too. Revisions and UI edits invalidate old approval.
 GitHub comments count only from configured collaborator approvers and must be
 unedited. The bot's spec comment is checked for tampering, never imported.
+Comments by the token's own login (`/user`) are ignored unless that login is a
+configured approver (a single-user PAT, "shared identity"). Then a comment
+counts only if it has no `<!-- patchbot` marker and its ID is absent from
+`posted_comments`. Every comment patchbot posts goes through one helper that
+appends the marker and records the ID right after a successful post.
 
 `agent.Check` returns a private approval-token type whose fields callers cannot
 construct. The code stage and code-tool registry require that token. They repeat

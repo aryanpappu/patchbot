@@ -14,7 +14,9 @@ The approval gate binds code access to the current spec version and hash, issue
 content and expiry. Repo/command allowlists, an `os.Root` file jail, protected
 paths, explicit child environments, output caps, process groups and guarded git
 publication limit what model tools can do. Tokens are absent from test envs and
-are passed to git only for clone/push. Redaction runs at persistence and output
+are passed to git only for remote operations (clone, fetch, ls-remote, push) as an
+ephemeral host-scoped `http.extraheader` in `GIT_CONFIG_*`, never in argv, the
+URL or `.git/config`; local git commands never receive them. Redaction runs at persistence and output
 boundaries. Every CLI/server runner receives provider, GitHub and configured UI
 credentials. Registered values shorter than eight characters cannot be substring
 masked; `config check` and `doctor` warn without printing their values. Harness
@@ -40,6 +42,15 @@ The web server defaults to loopback. Other binds require `PATCHBOT_UI_TOKEN`.
 Bearer auth protects data routes when enabled. Host validation, Go cross-origin
 mutation checks, CSP, SRI and plain-text rendering protect the browser. Local
 CLI/UI decisions use a configured actor name; there is no user login.
+
+GitHub approval identity: comments by the token owner (`/user`) are patchbot's
+own and normally never count. With a single-user PAT the owner may also be an
+approver ("shared identity"). Such a comment counts only if the login is a
+configured approver and live collaborator, the comment is unedited, inside the
+current waiting window, carries no `<!-- patchbot` marker, and its ID is not in
+patchbot's `posted_comments` record. Every comment patchbot posts carries that
+marker and its ID is recorded right after posting, so either check alone keeps
+patchbot's own text (even a spec starting with `/approve`) from approving.
 
 In scope: file-tool jail escapes, command-policy bypass, leaks through logs,
 SSE, artifacts, errors or PR text, unsafe git publication, browser protection

@@ -43,10 +43,14 @@ and `/reject` must occupy that line alone. `/revise` and `/answer` require notes
 which can start on the following line. Notes preserve subsequent line structure,
 with CRLF normalized to LF. Quoted and fenced commands are ignored.
 
-`EligibleCommand(comment, approvers, isCollaborator, botLogin)` takes the bot
-login explicitly: the three inputs in the task's sketch cannot establish the
-bot's identity. Missing bot identity, missing timestamps or callback, an edited
-comment, an unlisted author, or a self-authored comment fail closed. The callback
+`EligibleCommand(comment, approvers, isCollaborator, botLogin, postedByPatchbot)`
+takes the bot login explicitly: the three inputs in the task's sketch cannot
+establish the bot's identity. Missing bot identity, missing timestamps or
+callback, an edited comment or an unlisted author fail closed. A comment by
+`botLogin` (shared identity: a single-user PAT whose owner approves) counts only
+when `botLogin` is an approver, the comment has a positive ID, no
+`<!-- patchbot` marker (`HasPatchbotMarker`), and `postedByPatchbot(id)` is false;
+that callback must return true on lookup errors. The callback
 must return false on lookup errors. It can capture the context and repository
 when adapting `Client.IsCollaborator`. This uses a live collaborator check,
 as required by `PLAN.md`, rather than trusting `author_association`. The runner

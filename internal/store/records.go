@@ -302,3 +302,28 @@ func (s *SQLite) ListSteps(ctx context.Context, runID int64) ([]Step, error) {
 	}
 	return steps, rows.Err()
 }
+
+// RecordPostedComment stores the ID of a comment patchbot published. A repeat
+// of the same ID is a no-op so a retried record never fails a run.
+func (s *SQLite) RecordPostedComment(ctx context.Context, c PostedComment) error {
+	if c.CommentID <= 0 || c.RunID <= 0 || c.Repo == "" || c.IssueNumber <= 0 || c.Kind == "" {
+		return errors.New("invalid posted comment")
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO posted_comments(comment_id,run_id,repo,issue_number,kind,created_at)
+		VALUES(?,?,?,?,?,?) ON CONFLICT(comment_id) DO NOTHING`,
+		c.CommentID, c.RunID, c.Repo, c.IssueNumber, c.Kind, timestamp(c.CreatedAt).UnixMilli())
+	return mapError(err)
+}
+
+// IsPostedComment reports whether a comment ID is one patchbot published.
+func (s *SQLite) IsPostedComment(ctx context.Context, commentID int64) (bool, error) {
+	var found int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM posted_comments WHERE comment_id=?`, commentID).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, mapError(err)
+	}
+	return true, nil
+}

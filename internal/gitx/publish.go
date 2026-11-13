@@ -47,8 +47,8 @@ func (r *Repo) CommitAll(ctx context.Context, msg string, author Author) (string
 
 // Push verifies metadata and branch guards before pushing an explicit refspec to
 // the original, constructed URL. It never consults remote.pushurl or push defaults.
-// The live remote HEAD check is intentionally unauthenticated: only clone and
-// push receive the token. An inaccessible remote fails closed.
+// The live remote HEAD check and the push both use the header-only credential,
+// so private repositories work. An inaccessible remote fails closed.
 func (r *Repo) Push(ctx context.Context, branch string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -68,7 +68,7 @@ func (r *Repo) Push(ctx context.Context, branch string) error {
 	if _, err := changedPaths(changes); err != nil {
 		return err
 	}
-	head, err := r.complete(ctx, false, "ls-remote", "--symref", "--", r.remote, "HEAD")
+	head, err := r.complete(ctx, true, "ls-remote", "--symref", "--", r.remote, "HEAD")
 	if err != nil {
 		return err
 	}
@@ -87,7 +87,7 @@ func (r *Repo) Push(ctx context.Context, branch string) error {
 	return err
 }
 
-// RemoteBranchExists queries exactly one branch without inheriting credentials.
+// RemoteBranchExists queries exactly one branch with the header-only credential.
 func (r *Repo) RemoteBranchExists(ctx context.Context, branch string) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -97,7 +97,7 @@ func (r *Repo) RemoteBranchExists(ctx context.Context, branch string) (bool, err
 	if err := r.verify(); err != nil {
 		return false, err
 	}
-	out, err := r.complete(ctx, false, "ls-remote", "--heads", "--", r.remote, "refs/heads/"+branch)
+	out, err := r.complete(ctx, true, "ls-remote", "--heads", "--", r.remote, "refs/heads/"+branch)
 	if err != nil {
 		return false, err
 	}

@@ -187,7 +187,7 @@ func (r *Runner) refine(ctx context.Context, run *store.Run, prior *store.Spec, 
 			return err
 		}
 		if !run.DryRun {
-			if _, err := r.comment(ctx, *run, report.ReportMD); err != nil {
+			if _, err := r.comment(ctx, *run, "report", report.ReportMD); err != nil {
 				return err
 			}
 		}
@@ -225,7 +225,7 @@ func (r *Runner) postSpec(ctx context.Context, run store.Run, spec *store.Spec, 
 		return err
 	}
 	if !run.DryRun {
-		comment, err := r.comment(ctx, run, r.specComment(run, *spec))
+		comment, err := r.comment(ctx, run, "spec", r.specComment(run, *spec))
 		if err != nil {
 			return err
 		}
@@ -486,7 +486,7 @@ func (r *Runner) code(ctx context.Context, run *store.Run) (err error) {
 			explanation = result.Submission.Summary
 		}
 		if !run.DryRun {
-			if _, err := r.comment(ctx, *run, explanation); err != nil {
+			if _, err := r.comment(ctx, *run, "no_changes", explanation); err != nil {
 				return err
 			}
 		}
