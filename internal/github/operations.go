@@ -200,3 +200,19 @@ func (c *HTTPClient) RemoveLabel(ctx context.Context, repo RepoRef, number int, 
 	_, err := c.call(ctx, repo, []string{"issues", strconv.Itoa(number), "labels", label}, http.MethodDelete, nil, nil, http.StatusOK)
 	return operationError("RemoveLabel", err)
 }
+
+// ListOpenIssues returns one page of current open issues for label polling.
+func (c *HTTPClient) ListOpenIssues(ctx context.Context, repo RepoRef, page int) ([]Issue, error) {
+	u, err := c.endpoint(repo, "issues")
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("state", "open")
+	q.Set("per_page", "100")
+	q.Set("page", strconv.Itoa(page))
+	u.RawQuery = q.Encode()
+	var issues []Issue
+	_, err = c.request(ctx, http.MethodGet, u, nil, &issues, http.StatusOK)
+	return issues, operationError("ListOpenIssues", err)
+}

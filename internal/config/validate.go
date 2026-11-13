@@ -6,6 +6,7 @@ import (
 	"math"
 	"net"
 	"net/url"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -40,6 +41,14 @@ func (c *Config) Validate() error {
 	c.validateDefaults(&v)
 	c.validateLimits(&v)
 	c.validateFixed(&v)
+	w := c.Webhook
+	v.check(envNameRE.MatchString(w.SecretEnv), "webhook.secret_env: must name an environment variable")
+	v.check(strings.HasPrefix(w.Path, "/") && w.Path != "/" && path.Clean(w.Path) == w.Path && !strings.ContainsAny(w.Path, "{} ?#\\"), "webhook.path: must be a clean literal path starting with /")
+	v.check(!w.Enabled || w.Secret.IsSet(), "webhook.secret_env: enabled webhooks require a secret")
+	for label, mode := range w.TriggerLabels {
+		v.check(strings.TrimSpace(label) != "" && len(label) <= 100, "webhook.trigger_labels: invalid label")
+		v.check(slices.Contains([]string{ModeFix, ModeRefine, ModeInvestigate}, mode), "webhook.trigger_labels: invalid mode")
+	}
 	for _, name := range sortedKeys(c.Providers) {
 		c.validateProvider(&v, name, c.Providers[name])
 	}

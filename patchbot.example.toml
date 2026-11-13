@@ -90,3 +90,9 @@ price_free = true                    # explicit zero cost; no prices table
 commands = { test = ["go", "test", "./..."], lint = ["go", "vet", "./..."] }
 protected = ["migrations/"]          # extra paths denied for reads and writes
 test_command = "test"              # harness command ID; inferred if named test
+
+[webhook]
+enabled = false
+secret_env = "PATCHBOT_WEBHOOK_SECRET"
+path = "/hooks/github"
+trigger_labels = { "ai-refine" = "refine", "ai-fix" = "fix", "ai-investigate" = "investigate" }

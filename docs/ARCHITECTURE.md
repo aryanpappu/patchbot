@@ -191,3 +191,22 @@ Provider adapters preserve opaque thinking/signature parts in live conversations
 while omitting them from transcripts. Tools implement one schema/execute
 interface. Storage and executor interfaces keep tests offline and leave room
 for other implementations without weakening the approval boundary.
+
+## Optional GitHub ingress
+
+`[webhook] enabled = false` keeps the receiver and label scanner off. When
+explicitly enabled, its configured POST path uses HMAC-SHA256 over a bounded raw
+body instead of UI token authentication. It does not use browser origin checks.
+Delivery IDs and normalized repo/issue hints are committed before HTTP 202;
+commands and raw payloads are not stored. Startup and periodic maintenance replay
+pending receipts; only successful reconciliation marks them processed.
+
+The runner fetches current GitHub state and validates repository/issue scope.
+Comment hints reuse the polling approval/revision path. Label hints call Start
+with a durable unique ingress key and cannot approve. Periodic open-issue scans
+recover missed label deliveries. A persisted selected-label generation changes
+only when a different trigger or no trigger is observed; it makes concurrent and
+reordered hints idempotent even after a run finishes. Multiple matching labels
+use lexical order. Removing and reapplying a label rearms it when the intervening
+state is observed. The existing active-run index and admission manager remain
+in force. Polling of waiting-run comments remains independent of this option.

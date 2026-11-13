@@ -151,6 +151,8 @@ func (f *fixture) serveHTTP(w http.ResponseWriter, req *http.Request) {
 		reply(200, map[string]string{"login": "patchbot"})
 	case path == "":
 		reply(200, f.meta)
+	case path == "/issues" && req.Method == http.MethodGet:
+		reply(200, []github.Issue{f.issue})
 	case path == "/issues/12" && req.Method == http.MethodGet:
 		reply(200, f.issue)
 	case strings.HasPrefix(path, "/collaborators/"):

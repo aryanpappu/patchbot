@@ -82,7 +82,7 @@ func TestDoctorOfflineOnlineAndFailures(t *testing.T) {
 		return code, text
 	}
 	code, text := invoke()
-	if code != 0 || !strings.Contains(text, "PASS") || !strings.Contains(text, "2 migrations") || requests != 0 || constructions != 0 {
+	if code != 0 || !strings.Contains(text, "PASS") || !strings.Contains(text, "5 migrations") || requests != 0 || constructions != 0 {
 		t.Fatalf("offline: %d %s, requests %d constructors %d", code, text, requests, constructions)
 	}
 	code, text = invoke("--online")

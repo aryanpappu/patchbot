@@ -37,6 +37,7 @@ type Config struct {
 	Limits    Limits               `toml:"limits"`
 	Approval  Approval             `toml:"approval"`
 	Log       Log                  `toml:"log"`
+	Webhook   Webhook              `toml:"webhook"`
 	Server    Server               `toml:"server"`
 	Data      Data                 `toml:"data"`
 	Providers map[string]*Provider `toml:"providers"`
@@ -112,6 +113,15 @@ type Server struct {
 	MaxConcurrentRuns int    `toml:"max_concurrent_runs"`
 	MaxQueuedRuns     int    `toml:"max_queued_runs"`
 	VueSrc            string `toml:"vue_src"` // cdn or local
+}
+
+// Webhook configures authenticated GitHub wake-up hints.
+type Webhook struct {
+	Enabled       bool              `toml:"enabled"`
+	SecretEnv     string            `toml:"secret_env"`
+	Path          string            `toml:"path"`
+	TriggerLabels map[string]string `toml:"trigger_labels"`
+	Secret        secret.Secret     `toml:"-"`
 }
 
 // Data says where the database and workspaces live.
@@ -261,6 +271,9 @@ func (c *Config) Redactor() *secret.Redactor {
 // secret.Redactor.
 func (c *Config) Secrets() []secret.Secret {
 	var out []secret.Secret
+	if c.Webhook.Secret.IsSet() {
+		out = append(out, c.Webhook.Secret)
+	}
 	for _, name := range sortedKeys(c.Providers) {
 		if key := c.Providers[name].APIKey; key.IsSet() {
 			out = append(out, key)

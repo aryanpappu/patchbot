@@ -102,6 +102,9 @@ func mapError(err error) error {
 		return ErrNotFound
 	}
 	var sqliteErr *sqlite.Error
+	if errors.As(err, &sqliteErr) && sqliteErr.Code() == 2067 && strings.Contains(sqliteErr.Error(), "runs.ingress_key") {
+		return fmt.Errorf("%w: %w", ErrConflict, err)
+	}
 	// SQLITE_CONSTRAINT_UNIQUE (2067) identifies a unique-index collision.
 	// Check the columns too: unrelated primary/unique constraints must not be
 	// mislabeled as an active-run collision.
@@ -219,7 +222,12 @@ func (s *SQLite) CreateRun(ctx context.Context, r Run) (Run, error) {
 		r.CacheReadTokens, r.CacheWriteTokens, r.CostMicros, jsonText(r.LimitsJSON),
 		r.ErrorKind, r.ErrorMessage, r.CreatedAt.UnixMilli(), r.UpdatedAt.UnixMilli(),
 		optionalMillis(r.StartedAt), optionalMillis(r.FinishedAt), optionalMillis(r.HeartbeatAt), optionalMillis(r.WaitingSince), int64(0)}
-	query := "INSERT INTO runs(" + strings.TrimPrefix(runColumns, "id,") + ") VALUES(" + placeholders(len(args)) + ") RETURNING " + runColumns
+	var ingress any
+	if r.IngressKey != "" {
+		ingress = r.IngressKey
+	}
+	args = append(args, ingress)
+	query := "INSERT INTO runs(" + strings.TrimPrefix(runColumns, "id,") + ",ingress_key" + ") VALUES(" + placeholders(len(args)) + ") RETURNING " + runColumns
 	return scanRun(s.db.QueryRowContext(ctx, query, args...))
 }
 

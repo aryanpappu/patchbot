@@ -46,3 +46,21 @@ engineering questions together and record them here.
   credentials are masked even below the generic redactor's eight-byte threshold.
 - This task does not create a release commit, tag or push. An offline cached
   scanner without a vulnerability database is not evidence of a clean scan.
+
+## 2026-11-13: M22 webhook hints and label ingress
+
+- Webhooks are off by default. HMAC-SHA256 over at most 1 MiB of raw body replaces
+  UI bearer authentication only at the configured webhook path. Authentication
+  precedes JSON parsing. Missing secrets prevent enabled-server startup.
+- Persist normalized wake-up hints, deduplicate delivery IDs permanently, and
+  acknowledge before reconciliation. Startup and periodic maintenance replay
+  pending receipts; no raw webhook content authorizes approval.
+- Reuse the runner's comment sync and Start gate. Keep comment polling; add
+  paginated open-issue label polling only when webhook ingress is enabled.
+- Persist the selected trigger label and generation. An atomic unique run key
+  prevents duplicate automatic starts even if a competing run already finished.
+  Use lexical label priority. An observed label removal/change rearms the trigger;
+  unobserved remove/reapply cycles need explicit operator retry.
+- Reserve migrations 0003/0004 with single comments in this branch as requested;
+  webhook state belongs to 0005. Reconcile those placeholders before using M20/M21
+  migrations against an existing database, since migration checksums are immutable.
