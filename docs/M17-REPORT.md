@@ -118,3 +118,8 @@ Codex reviewed the branch and found five issues. All are fixed in `fix: harden c
 5. **MEDIUM, nothing limited workspace disk use.** New setting `[executor] workspace_max_bytes`, default 2 GiB. After each command the workspace is walked without following symlinks, with a cap of 1,000,000 entries. Going over the limit, or hitting an unreadable entry, fails with `ErrWorkspaceLimit`. `tools.ExecuteCommand` reports this error and `ErrContainerNotRemoved` as named errors, without any runtime output. Unit and integration tests cover it.
 
 New integration tests, still gated by `PATCHBOT_CONTAINER_TEST=1` and not yet run: `TestIntegrationContainerGitDirIsReadOnly`, `TestIntegrationContainerWorkspaceLimit` and `TestIntegrationSweepRemovesLabelledContainers`. They need a run on Mumbai, and so does the switch from `run --rm` to `create`/`start --attach`, which the earlier Mumbai evidence predates.
+
+## Server evidence after security fixes (Mumbai, 2026-11-13)
+create + start --attach flow, same busybox digest: all nine `Integration` tests PASS, including
+GitDirIsReadOnly, WorkspaceLimit and SweepRemovesLabelledContainers. `podman start --attach`
+propagates the exit code (IdentityAndWorkspace exit-7 case). Zero labelled containers remained.
