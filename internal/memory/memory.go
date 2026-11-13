@@ -70,7 +70,10 @@ type Selection struct {
 	MaxBytes     int        `json:"max_bytes"`
 	Bytes        int        `json:"bytes"`
 	Entries      []Selected `json:"entries"`
-	Text         string     `json:"-"`
+	// TextSHA256 is the hash of the exact (redacted) text delivered to the
+	// model; the runner sets it after redaction.
+	TextSHA256 string `json:"text_sha256"`
+	Text       string `json:"-"`
 }
 
 // Select returns the bounded, deterministic memory for one stage. Disabled
@@ -152,7 +155,7 @@ func RenderLesson(e store.MemoryEntry) string {
 	if e.DecidedBy != nil {
 		by = *e.DecidedBy
 	}
-	return fmt.Sprintf("lesson #%d (%s, approved by %s): %s", e.ID, e.Source, by, e.Text)
+	return fmt.Sprintf("lesson #%d (%s, approved by %s): %s", e.ID, e.Source, by, tools.Visible(e.Text))
 }
 
 // Evidence returns the JSON recorded for a frozen selection.
@@ -215,4 +218,52 @@ func AddObservation(ctx context.Context, db store.MemoryStore, in ObservationInp
 	return db.AddMemory(ctx, store.MemoryEntry{Repo: in.Repo, Kind: store.MemoryObservation, Source: store.MemorySourceHarness, RunID: run,
 		CommandID: in.CommandID, ExitCode: &exit, TimedOut: &timedOut, BaseSHA: in.BaseSHA, HeadSHA: in.HeadSHA,
 		PolicyDigest: in.PolicyDigest, EvidenceRef: in.Evidence, ObservedAt: &at, CreatedBy: "harness"}, "harness")
+}
+
+// Decision errors. ErrHashMismatch and ErrNotAllowlisted never quote input.
+var (
+	ErrHashRequired   = errors.New("content hash prefix of at least 8 hex characters is required")
+	ErrHashMismatch   = fmt.Errorf("%w: content hash does not match the entry", store.ErrConflict)
+	ErrNotAllowlisted = errors.New("memory entry's repository is not in the configuration allowlist")
+)
+
+// DecideInput is an operator decision. HashPrefix is what the operator was
+// shown; approval requires it, and when given it must match for any action.
+type DecideInput struct {
+	ID             int64
+	Action         string
+	Actor, Channel string
+	HashPrefix     string
+	Allowed        func(repo string) bool
+}
+
+// ValidHashPrefix reports a lowercase hex prefix of 8 to 64 characters.
+func ValidHashPrefix(prefix string) bool {
+	if len(prefix) < 8 || len(prefix) > 64 {
+		return false
+	}
+	return !strings.ContainsFunc(prefix, func(r rune) bool { return (r < '0' || r > '9') && (r < 'a' || r > 'f') })
+}
+
+// Decide checks the repository allowlist and the displayed content hash, then
+// applies the decision bound to the entry's repository and full content hash.
+func Decide(ctx context.Context, db store.MemoryStore, in DecideInput) (store.MemoryEntry, error) {
+	prefix := strings.ToLower(strings.TrimSpace(in.HashPrefix))
+	if prefix != "" && !ValidHashPrefix(prefix) {
+		return store.MemoryEntry{}, ErrHashRequired
+	}
+	if in.Action == store.MemoryApprove && prefix == "" {
+		return store.MemoryEntry{}, ErrHashRequired
+	}
+	entry, err := db.GetMemory(ctx, in.ID)
+	if err != nil {
+		return store.MemoryEntry{}, err
+	}
+	if in.Allowed == nil || !in.Allowed(entry.Repo) {
+		return store.MemoryEntry{}, ErrNotAllowlisted
+	}
+	if prefix != "" && !strings.HasPrefix(entry.ContentHash, prefix) {
+		return store.MemoryEntry{}, ErrHashMismatch
+	}
+	return db.DecideMemory(ctx, store.MemoryDecision{ID: in.ID, Action: in.Action, Actor: in.Actor, Channel: in.Channel, Repo: entry.Repo, ContentHash: entry.ContentHash})
 }

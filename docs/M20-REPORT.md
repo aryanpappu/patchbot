@@ -61,6 +61,26 @@ that already received the entry, and any existing SQLite backup or WAL file.
 - Store tests and the doctor test no longer hard-code the migration count, so
   0004/0005 can be added without editing them.
 
+## Review fixes
+
+1. Lesson text allows only printable runes plus space, newline and tab; format
+   (zero-width, bidi, tag), private-use, surrogate and separator runes are
+   refused (`tools.TestCleanLessonRejectsHiddenText`). API, CLI `show` and the
+   UI escape any non-printable rune visibly for legacy rows.
+2. `memory show ID` prints full text and content hash; `approve` requires
+   `--hash` (>= 8 hex); UI/API approve send the displayed `content_hash`.
+3. `DecideMemory` compares repo and content hash in its WHERE clause; CLI/API
+   refuse non-allowlisted entries and list only allowlisted repos.
+4. Observation and lesson write failures record a warning event and never
+   abort the run or replace the code-stage error
+   (`runner.TestMemoryWriteFailuresNeverAbortOrMaskTheRun`).
+5. Selections record `text_sha256` of the delivered (redacted) text.
+6. `publish.go` nil-guards the repo config before `TestCommandID`.
+7. Partial unique index on `(repo, content_hash)` for non-revoked entries;
+   `memory.max_pending` (default 20) caps pending model lessons per repo, with
+   a `memory.lessons_dropped` event (`runner.TestMemoryPendingCapAndDuplicates`).
+8. CHANGELOG notes memory is on by default and adds `propose_lesson`.
+
 ## Open issues
 
 - The cap is entries plus bytes; there is no separate token allowance. 4096

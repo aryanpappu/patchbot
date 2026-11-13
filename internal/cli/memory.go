@@ -13,32 +13,38 @@ import (
 	"strings"
 	"syscall"
 	"text/tabwriter"
+	"time"
 	"unicode/utf8"
 
 	"github.com/aryanpappu/patchbot/internal/config"
 	"github.com/aryanpappu/patchbot/internal/memory"
 	"github.com/aryanpappu/patchbot/internal/secret"
 	"github.com/aryanpappu/patchbot/internal/store"
+	"github.com/aryanpappu/patchbot/internal/tools"
 )
 
 const memoryUsage = `Usage:
   patchbot memory list [--repo owner/name] [--status S] [--kind K] [--config FILE]
-  patchbot memory approve <id> [--config FILE]
-  patchbot memory reject <id> [--config FILE]
-  patchbot memory forget <id> [--config FILE]
+  patchbot memory show <id> [--config FILE]
+  patchbot memory approve <id> --hash PREFIX [--config FILE]
+  patchbot memory reject <id> [--hash PREFIX] [--config FILE]
+  patchbot memory forget <id> [--hash PREFIX] [--config FILE]
   patchbot memory add --repo owner/name --text "..." [--config FILE]
 
 Statuses: active, pending, approved, rejected, revoked. Kinds: observation, lesson.
 Only approved lessons and fresh active observations are given to the model, as
-unverified context in the user turn. approve/reject act on pending lessons.
+unverified context in the user turn. list shows allowlisted repositories only
+and truncates text; show prints the full text and content hash. approve
+requires --hash with at least 8 hex characters of the content hash you
+reviewed. approve/reject act on pending lessons.
 forget revokes any entry and erases lesson text; audit actions, content hashes,
 run transcripts that already used the entry and backups are not rewritten.
 add stores an operator lesson that is approved immediately.
 `
 
 type memoryCommand struct {
-	action, repo, status, kind, text string
-	id                               int64
+	action, repo, status, kind, text, hash string
+	id                                     int64
 }
 
 func parseMemoryCommand(args []string) (memoryCommand, config.Options, error) {
@@ -62,7 +68,10 @@ func parseMemoryCommand(args []string) (memoryCommand, config.Options, error) {
 	case "add":
 		flags.StringVar(&cmd.repo, "repo", "", "allowed repository")
 		flags.StringVar(&cmd.text, "text", "", "lesson text")
-	case store.MemoryApprove, store.MemoryReject, store.MemoryForget:
+	case "show", store.MemoryApprove, store.MemoryReject, store.MemoryForget:
+		if cmd.action != "show" {
+			flags.StringVar(&cmd.hash, "hash", "", "content hash prefix you reviewed")
+		}
 		if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 			if slices.Contains(args, "-h") || slices.Contains(args, "--help") {
 				return cmd, opts, flag.ErrHelp
@@ -94,6 +103,10 @@ func parseMemoryCommand(args []string) (memoryCommand, config.Options, error) {
 	}
 	if cmd.action == "add" && (strings.TrimSpace(cmd.repo) == "" || strings.TrimSpace(cmd.text) == "") {
 		return cmd, opts, errors.New("--repo and --text are required")
+	}
+	cmd.hash = strings.ToLower(strings.TrimSpace(cmd.hash))
+	if (cmd.action == store.MemoryApprove || cmd.hash != "") && !memory.ValidHashPrefix(cmd.hash) {
+		return cmd, opts, errors.New("--hash must be at least 8 hex characters of the content hash shown by memory show")
 	}
 	return cmd, opts, nil
 }
@@ -138,6 +151,10 @@ func (a *App) runMemory(args []string) int {
 	redactor.Extend(a.outputRedactor)
 	if err := a.executeMemory(ctx, cfg, db, redactor, cmd); err != nil {
 		switch {
+		case errors.Is(err, memory.ErrHashMismatch):
+			err = errors.New("content hash does not match; run memory show again and review the entry")
+		case errors.Is(err, store.ErrDuplicateMemory):
+			err = errors.New("this lesson already exists for the repository")
 		case errors.Is(err, store.ErrNotFound):
 			err = errors.New("memory entry not found")
 		case errors.Is(err, store.ErrConflict):
@@ -150,9 +167,18 @@ func (a *App) runMemory(args []string) int {
 }
 
 func (a *App) executeMemory(ctx context.Context, cfg *config.Config, db store.Store, redactor *secret.Redactor, cmd memoryCommand) error {
+	allowed := func(repo string) bool { return cfg.Repos[repo] != nil }
 	switch cmd.action {
 	case "list":
-		filter := store.MemoryFilter{Repo: cmd.repo, Kind: cmd.kind, Limit: 1000}
+		repos := make([]string, 0, len(cfg.Repos))
+		for name := range cfg.Repos {
+			repos = append(repos, name)
+		}
+		repo := strings.ToLower(strings.TrimSpace(cmd.repo))
+		if repo != "" && !allowed(repo) {
+			return errors.New("repository is not in configuration allowlist")
+		}
+		filter := store.MemoryFilter{Repo: repo, Repos: repos, Kind: cmd.kind, Limit: 1000}
 		if cmd.status != "" {
 			filter.Statuses = []string{cmd.status}
 		}
@@ -184,8 +210,10 @@ func (a *App) executeMemory(ctx context.Context, cfg *config.Config, db store.St
 		}
 		_, _ = fmt.Fprintf(a.Stdout, "Memory %d: %s lesson for %s\n", entry.ID, entry.Status, redactor.Redact(entry.Repo))
 		return nil
+	case "show":
+		return a.showMemory(ctx, db, redactor, cmd.id, allowed)
 	default:
-		entry, err := db.DecideMemory(ctx, cmd.id, cmd.action, cfg.Approval.LocalActor, "cli")
+		entry, err := memory.Decide(ctx, db, memory.DecideInput{ID: cmd.id, Action: cmd.action, Actor: cfg.Approval.LocalActor, Channel: "cli", HashPrefix: cmd.hash, Allowed: allowed})
 		if err != nil {
 			return err
 		}
@@ -194,9 +222,47 @@ func (a *App) executeMemory(ctx context.Context, cfg *config.Config, db store.St
 	}
 }
 
+func (a *App) showMemory(ctx context.Context, db store.Store, redactor *secret.Redactor, id int64, allowed func(string) bool) error {
+	e, err := db.GetMemory(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !allowed(e.Repo) {
+		return memory.ErrNotAllowlisted
+	}
+	actions, err := db.ListMemoryActions(ctx, id)
+	if err != nil {
+		return err
+	}
+	run := "-"
+	if e.RunID != nil {
+		run = strconv.FormatInt(*e.RunID, 10)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Memory %d\nRepository:   %s\nKind:         %s\nStatus:       %s\nSource:       %s\nRun:          %s\nCreated:      %s by %s\nContent hash: %s\n",
+		e.ID, e.Repo, e.Kind, e.Status, e.Source, run, e.CreatedAt.Format(time.RFC3339), e.CreatedBy, e.ContentHash)
+	for _, action := range actions {
+		fmt.Fprintf(&b, "Action:       %s by %s via %s at %s\n", action.Action, action.Actor, action.Channel, action.CreatedAt.Format(time.RFC3339))
+	}
+	switch {
+	case e.Kind == store.MemoryObservation:
+		fmt.Fprintf(&b, "\n%s\n", memory.RenderObservation(e))
+	case e.Text == "":
+		b.WriteString("\n(forgotten: text erased)\n")
+	default:
+		// Full text, with any non-printable rune escaped visibly.
+		fmt.Fprintf(&b, "\n%s\n", tools.Visible(e.Text))
+	}
+	if e.Kind == store.MemoryLesson && e.Status == store.MemoryPending {
+		fmt.Fprintf(&b, "\nApprove with: patchbot memory approve %d --hash %s\n", e.ID, e.ContentHash[:12])
+	}
+	_, err = fmt.Fprint(a.Stdout, redactor.Redact(b.String()))
+	return err
+}
+
 // summary is a single-line view; full lesson text is shown up to 120 bytes.
 func summary(e store.MemoryEntry) string {
-	text := e.Text
+	text := tools.Visible(e.Text)
 	if e.Kind == store.MemoryObservation {
 		text = memory.RenderObservation(e)
 	} else if text == "" {

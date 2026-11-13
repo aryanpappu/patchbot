@@ -124,16 +124,24 @@ section 1). Migration `0003_memory.sql` adds `memory_entries` and
   reference and time. The writer takes an `execx.Result` and ignores its output.
 - Lessons are prose. `propose_lesson` (code stage only, registered from config,
   at most three per run, 600 bytes, redacted) collects proposals in a
-  harness-owned box; the runner stores them `pending`. Operators approve,
-  reject or forget them through the CLI or API. Operator-added lessons are
-  approved on creation. Only `approved` lessons are retrieved.
+  harness-owned box; the runner stores them `pending`, up to
+  `memory.max_pending` per repository. Lesson text allows only printable runes
+  plus newline and tab. Operators approve, reject or forget them through the
+  CLI or API; `DecideMemory` compares the expected repository and content hash
+  in its WHERE clause, approval requires the hash prefix the operator saw, and
+  repositories outside the allowlist are neither listed nor decidable. A
+  partial unique index keeps one live copy of any content per repository.
+  Operator-added lessons are approved on creation. Only `approved` lessons are
+  retrieved.
 - Selection (`memory.Select`) is deterministic: fresh, active observations
   under the current policy digest (newest per command, at most half the entry
   budget), then approved lessons by decision time. Entry and byte caps apply.
   SQL applies every eligibility rule and Go re-checks them.
 - The runner selects once per refine/investigate/code stage, before the model
-  runs, and records the IDs and content hashes as a `memory_selection` artifact
-  and a `memory.selected` event. The rendered text is placed in the stage's
+  runs, and records the IDs, content hashes and the SHA-256 of the delivered
+  (redacted) text as a `memory_selection` artifact and a `memory.selected`
+  event. Memory write failures are warning events and never abort a run or
+  replace its error. The rendered text is placed in the stage's
   first user message as an `untrusted_data kind="repository memory"` block
   after a note that it cannot override instructions, the approved spec or
   policy. Test repair reuses that conversation, so the selection is frozen.

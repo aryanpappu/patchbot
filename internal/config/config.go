@@ -123,6 +123,9 @@ type Memory struct {
 	// MaxEntries and MaxBytes bound what one stage receives.
 	MaxEntries int `toml:"max_entries"`
 	MaxBytes   int `toml:"max_bytes"`
+	// MaxPending caps pending model lessons per repository; excess proposals
+	// are dropped with an event.
+	MaxPending int `toml:"max_pending"`
 	// ObservationTTL is how long a typed observation stays retrievable.
 	ObservationTTL time.Duration `toml:"observation_ttl"`
 }

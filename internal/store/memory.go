@@ -7,8 +7,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
+
+	"modernc.org/sqlite"
 )
 
 // Memory entry kinds, statuses, sources and operator decisions.
@@ -68,10 +71,16 @@ type MemoryAction struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ErrDuplicateMemory reports live content already stored for the repository.
+// It also matches ErrConflict.
+var ErrDuplicateMemory = fmt.Errorf("%w: memory content already exists for this repository", ErrConflict)
+
 // MemoryFilter selects entries in descending ID order. Limit defaults to 200
-// and is capped at 1000.
+// and is capped at 1000. A non-nil Repos restricts results to that set (an
+// empty set returns nothing); Repo further narrows to one repository.
 type MemoryFilter struct {
 	Repo     string
+	Repos    []string
 	Kind     string
 	Statuses []string
 	Limit    int
@@ -94,11 +103,23 @@ type MemoryStore interface {
 	ListMemory(ctx context.Context, filter MemoryFilter) ([]MemoryEntry, error)
 	ListMemoryActions(ctx context.Context, id int64) ([]MemoryAction, error)
 	// DecideMemory applies approve/reject (pending lessons only) or forget
-	// (any entry not already revoked) with the actor and time recorded.
-	DecideMemory(ctx context.Context, id int64, action, actor, channel string) (MemoryEntry, error)
+	// (any entry not already revoked) with the actor and time recorded. The
+	// entry must still belong to repo and have contentHash: an operator can
+	// only decide content they were shown.
+	DecideMemory(ctx context.Context, d MemoryDecision) (MemoryEntry, error)
+	// CountMemory counts entries for one repository, kind and status.
+	CountMemory(ctx context.Context, repo, kind, status string) (int, error)
 	// RetrievalCandidates returns eligible observations (newest first) and
 	// approved lessons (most recently decided first) for one repository.
 	RetrievalCandidates(ctx context.Context, q RetrievalQuery) (observations, lessons []MemoryEntry, err error)
+}
+
+// MemoryDecision is an operator decision bound to the exact content shown.
+type MemoryDecision struct {
+	ID                int64
+	Action, Actor     string
+	Channel           string
+	Repo, ContentHash string
 }
 
 // MemoryContentHash binds an entry's retrievable content. Observations hash
@@ -196,10 +217,19 @@ func (s *SQLite) AddMemory(ctx context.Context, e MemoryEntry, channel string) (
 			saved.ID, "create", e.CreatedBy, channel, e.CreatedAt.UnixMilli())
 		return err
 	})
+	if isMemoryDuplicate(err) {
+		return MemoryEntry{}, ErrDuplicateMemory
+	}
 	if err != nil {
 		return MemoryEntry{}, err
 	}
 	return saved, nil
+}
+
+func isMemoryDuplicate(err error) bool {
+	var sqliteErr *sqlite.Error
+	// SQLITE_CONSTRAINT_UNIQUE (2067) on the partial content index.
+	return errors.As(err, &sqliteErr) && sqliteErr.Code() == 2067 && strings.Contains(sqliteErr.Error(), "memory_entries.repo, memory_entries.content_hash")
 }
 
 func derefTime(t *time.Time) time.Time {
@@ -228,6 +258,15 @@ func (s *SQLite) ListMemory(ctx context.Context, f MemoryFilter) ([]MemoryEntry,
 	if f.Repo != "" {
 		query += ` AND repo=?`
 		args = append(args, strings.ToLower(strings.TrimSpace(f.Repo)))
+	}
+	if f.Repos != nil {
+		if len(f.Repos) == 0 {
+			return []MemoryEntry{}, nil
+		}
+		query += ` AND repo IN (` + placeholders(len(f.Repos)) + `)`
+		for _, repo := range f.Repos {
+			args = append(args, strings.ToLower(strings.TrimSpace(repo)))
+		}
 	}
 	if f.Kind != "" {
 		query += ` AND kind=?`
@@ -285,26 +324,39 @@ func (s *SQLite) ListMemoryActions(ctx context.Context, id int64) ([]MemoryActio
 	return out, rows.Err()
 }
 
+// CountMemory counts entries for one repository, kind and status.
+func (s *SQLite) CountMemory(ctx context.Context, repo, kind, status string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM memory_entries WHERE repo=? AND kind=? AND status=?`,
+		strings.ToLower(strings.TrimSpace(repo)), kind, status).Scan(&n)
+	return n, err
+}
+
 // DecideMemory compares and sets the entry status in one transaction with its
-// audit action. Forget erases lesson text so it can never be retrieved again.
-func (s *SQLite) DecideMemory(ctx context.Context, id int64, action, actor, channel string) (MemoryEntry, error) {
-	if strings.TrimSpace(actor) == "" || !validMemoryChannel(channel) || channel == "harness" {
+// audit action. The expected repository and content hash are part of the
+// compare, so a decision never applies to content the operator did not see.
+// Forget erases lesson text so it can never be retrieved again.
+func (s *SQLite) DecideMemory(ctx context.Context, d MemoryDecision) (MemoryEntry, error) {
+	if strings.TrimSpace(d.Actor) == "" || !validMemoryChannel(d.Channel) || d.Channel == "harness" {
 		return MemoryEntry{}, errors.New("memory decisions require an operator actor and channel")
 	}
+	if d.Repo == "" || len(d.ContentHash) != 64 {
+		return MemoryEntry{}, errors.New("memory decisions require the expected repository and content hash")
+	}
 	var update string
-	switch action {
+	switch d.Action {
 	case MemoryApprove:
-		update = `UPDATE memory_entries SET status='approved',decided_by=?,decided_at=? WHERE id=? AND kind='lesson' AND status='pending'`
+		update = `UPDATE memory_entries SET status='approved',decided_by=?,decided_at=? WHERE id=? AND repo=? AND content_hash=? AND kind='lesson' AND status='pending'`
 	case MemoryReject:
-		update = `UPDATE memory_entries SET status='rejected',decided_by=?,decided_at=? WHERE id=? AND kind='lesson' AND status='pending'`
+		update = `UPDATE memory_entries SET status='rejected',decided_by=?,decided_at=? WHERE id=? AND repo=? AND content_hash=? AND kind='lesson' AND status='pending'`
 	case MemoryForget:
-		update = `UPDATE memory_entries SET status='revoked',text='',decided_by=?,decided_at=? WHERE id=? AND status!='revoked'`
+		update = `UPDATE memory_entries SET status='revoked',text='',decided_by=?,decided_at=? WHERE id=? AND repo=? AND content_hash=? AND status!='revoked'`
 	default:
 		return MemoryEntry{}, errors.New("unknown memory action")
 	}
 	now := time.Now().UTC().UnixMilli()
 	err := s.withTx(ctx, func(tx *eventTx) error {
-		result, err := tx.ExecContext(ctx, update, actor, now, id)
+		result, err := tx.ExecContext(ctx, update, d.Actor, now, d.ID, strings.ToLower(strings.TrimSpace(d.Repo)), d.ContentHash)
 		if err != nil {
 			return err
 		}
@@ -314,18 +366,18 @@ func (s *SQLite) DecideMemory(ctx context.Context, id int64, action, actor, chan
 		}
 		if n == 0 {
 			var exists int
-			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM memory_entries WHERE id=?`, id).Scan(&exists); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM memory_entries WHERE id=?`, d.ID).Scan(&exists); err != nil {
 				return err
 			}
 			return ErrConflict
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO memory_actions(entry_id,action,actor,channel,created_at) VALUES(?,?,?,?,?)`, id, action, actor, channel, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO memory_actions(entry_id,action,actor,channel,created_at) VALUES(?,?,?,?,?)`, d.ID, d.Action, d.Actor, d.Channel, now)
 		return err
 	})
 	if err != nil {
 		return MemoryEntry{}, err
 	}
-	return s.GetMemory(ctx, id)
+	return s.GetMemory(ctx, d.ID)
 }
 
 // RetrievalCandidates applies every eligibility rule in SQL: repository,

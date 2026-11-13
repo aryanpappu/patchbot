@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"unicode"
@@ -25,14 +26,40 @@ var ErrInvalidLesson = errors.New("lesson must be 1 to 600 bytes of printable te
 // CleanLesson trims, redacts and bounds lesson text. Redaction happens before
 // the length check so the stored text is exactly what was validated.
 func CleanLesson(text string, redactor *secret.Redactor) (string, error) {
-	text = strings.TrimSpace(redactor.Redact(strings.ToValidUTF8(text, "�")))
+	text = strings.TrimSpace(redactor.Redact(strings.ToValidUTF8(text, "\uFFFD")))
 	if text == "" || len(text) > MaxLessonBytes || !utf8.ValidString(text) {
 		return "", ErrInvalidLesson
 	}
-	if strings.ContainsFunc(text, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' }) {
+	if strings.ContainsFunc(text, func(r rune) bool { return !lessonRune(r) }) {
 		return "", ErrInvalidLesson
 	}
 	return text, nil
+}
+
+// lessonRune allows printable runes (letters, marks, numbers, punctuation,
+// symbols and ASCII space) plus newline and tab. Everything else is refused,
+// including format characters (zero-width, bidi overrides U+202A-202E and
+// U+2066-2069, tag characters U+E0000-E007F), private use, surrogates and
+// line/paragraph separators, which can hide text from a reviewer.
+func lessonRune(r rune) bool {
+	return r == '\n' || r == '\t' || unicode.IsPrint(r)
+}
+
+// Visible escapes every rune a lesson could not contain, so legacy or
+// operator rows can never hide text from a reviewer. Newline and tab remain.
+func Visible(text string) string {
+	if !strings.ContainsFunc(text, func(r rune) bool { return !lessonRune(r) }) {
+		return text
+	}
+	var b strings.Builder
+	for _, r := range text {
+		if lessonRune(r) {
+			b.WriteRune(r)
+		} else {
+			fmt.Fprintf(&b, "\\u{%X}", r)
+		}
+	}
+	return b.String()
 }
 
 // LessonBox collects a stage's lesson proposals. It is created by the harness,

@@ -5,6 +5,14 @@
 - Add repository memory: typed harness observations, operator-approved lessons,
   bounded deterministic retrieval as untrusted user-turn data, frozen per-stage
   selection records, `patchbot memory` commands, API endpoints and a UI panel.
+- Memory is **enabled by default** (`[memory] enabled = true`). This adds the
+  `propose_lesson` tool to the code stage and writes typed observations after
+  baseline and verification tests. Set `enabled = false` to turn both off.
+- Memory approval is bound to the reviewed content: `memory show` prints the
+  full text and content hash, `memory approve ID --hash PREFIX` (and the UI/API
+  `content_hash`) must match, and entries outside the repo allowlist are hidden
+  and cannot be decided. Lesson text must be printable (no format, bidi, tag,
+  private-use or separator characters). Memory write failures only warn.
 
 ## v0.1.0 — 2026-11-11
 

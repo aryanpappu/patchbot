@@ -387,9 +387,7 @@ func (r *Runner) code(ctx context.Context, run *store.Run) (err error) {
 			return err
 		}
 		// Only the typed result is remembered; baseline output never is.
-		if err := r.observe(ctx, *run, command, test, run.BaseSHA, fmt.Sprintf("run %d artifact baseline", run.ID)); err != nil {
-			return err
-		}
+		r.observe(ctx, *run, command, test, run.BaseSHA, fmt.Sprintf("run %d artifact baseline", run.ID))
 		baseline = "failed"
 		baselineInfo = fmt.Sprintf("exit_code: %d; timed_out: %t\n%s", test.ExitCode, test.TimedOut, tools.CapOutput(test.Output, 8<<10))
 		if test.ExitCode == 0 && !test.TimedOut {
@@ -445,9 +443,8 @@ func (r *Runner) code(ctx context.Context, run *store.Run) (err error) {
 		}
 		return r.transition(c, run, store.StatusRunning, phase, store.RunPatch{})
 	}})
-	if err := r.saveLessons(ctx, *run, result.Lessons); err != nil {
-		return err
-	}
+	// Auxiliary: never aborts the run or hides codeErr.
+	r.saveLessons(ctx, *run, result.Lessons)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

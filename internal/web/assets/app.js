@@ -11,6 +11,11 @@
   const money = value => value == null ? "unknown" : `$${(value / 1000000).toFixed(4)}`;
   const human = value => String(value || "pending").replaceAll("_", " ");
   const block = value => h("pre", { class: "output", tabindex: 0 }, text(value));
+  // Escape every rune a lesson may not contain (format, bidi, tag, private-use,
+  // separators, controls other than newline/tab) so nothing hides from review.
+  const printable = /[\p{L}\p{M}\p{N}\p{P}\p{S} \n\t]/u;
+  const visible = value => Array.from(String(value ?? ""), c => printable.test(c) ? c
+    : String.fromCharCode(92) + "u{" + c.codePointAt(0).toString(16).toUpperCase() + "}").join("");
   const link = (url, label) => {
     try {
       const parsed = new URL(url);
@@ -171,7 +176,8 @@
       function memoryAction(entry, name) {
         if (s.busy) return;
         void work(async () => {
-          try { await send(`/api/memory/${entry.id}/${name}`, {}); }
+          // Bind the decision to the exact content hash shown to the operator.
+          try { await send(`/api/memory/${entry.id}/${name}`, { content_hash: entry.content_hash }); }
           finally { if (!s.locked) await loadMemory(); }
           s.notice = `Memory ${entry.id}: ${name} accepted.`;
         });
@@ -414,7 +420,8 @@
           ]),
           (m.entries || []).length ? h("ul", { class: "runs" }, m.entries.map(e => h("li", { key: e.id }, [
             h("strong", `#${e.id} · ${e.repo} · ${e.kind} · ${e.status} · ${e.source}${e.run_id ? " · run " + e.run_id : ""}`),
-            block(e.summary || (e.status === "revoked" ? "(forgotten; content hash " + e.content_hash + ")" : "")),
+            block(visible(e.kind === "lesson" ? (e.text || "(forgotten: text erased)") : e.summary)),
+            h("p", h("small", `Content hash ${e.content_hash}`)),
             h("div", { class: "actions" }, [
               e.kind === "lesson" && e.status === "pending" ? button("Approve", () => memoryAction(e, "approve"), s.busy) : null,
               e.kind === "lesson" && e.status === "pending" ? button("Reject", () => memoryAction(e, "reject"), s.busy) : null,

@@ -53,7 +53,11 @@ func lesson(t *testing.T, db store.MemoryStore, repo, text, source string) store
 
 func decide(t *testing.T, db store.MemoryStore, id int64, action string) {
 	t.Helper()
-	if _, err := db.DecideMemory(t.Context(), id, action, "local", "cli"); err != nil {
+	e, err := db.GetMemory(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DecideMemory(t.Context(), store.MemoryDecision{ID: id, Action: action, Actor: "local", Channel: "cli", Repo: e.Repo, ContentHash: e.ContentHash}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -280,5 +284,40 @@ func TestPolicyDigestChangesWithPolicy(t *testing.T) {
 		if got := memory.PolicyDigest(tc.repo, tc.path); (got == want) != tc.same {
 			t.Errorf("%s: same=%t", tc.name, got == want)
 		}
+	}
+}
+
+func TestDecideRequiresAllowlistAndShownHash(t *testing.T) {
+	t.Parallel()
+	db := open(t)
+	mine := lesson(t, db, "owner/repo", "mine", store.MemorySourceModel)
+	theirs := lesson(t, db, "other/repo", "theirs", store.MemorySourceModel)
+	allowed := func(repo string) bool { return repo == "owner/repo" }
+	tests := []struct {
+		name   string
+		in     memory.DecideInput
+		err    error
+		status string
+	}{
+		{"approve without hash", memory.DecideInput{ID: mine.ID, Action: store.MemoryApprove}, memory.ErrHashRequired, ""},
+		{"approve with 7 chars", memory.DecideInput{ID: mine.ID, Action: store.MemoryApprove, HashPrefix: mine.ContentHash[:7]}, memory.ErrHashRequired, ""},
+		{"approve with non-hex", memory.DecideInput{ID: mine.ID, Action: store.MemoryApprove, HashPrefix: "zzzzzzzz"}, memory.ErrHashRequired, ""},
+		{"approve with wrong hash", memory.DecideInput{ID: mine.ID, Action: store.MemoryApprove, HashPrefix: theirs.ContentHash[:12]}, memory.ErrHashMismatch, ""},
+		{"not allowlisted", memory.DecideInput{ID: theirs.ID, Action: store.MemoryReject}, memory.ErrNotAllowlisted, ""},
+		{"no allowlist function", memory.DecideInput{ID: mine.ID, Action: store.MemoryReject}, memory.ErrNotAllowlisted, ""},
+		{"approve with uppercase prefix", memory.DecideInput{ID: mine.ID, Action: store.MemoryApprove, HashPrefix: strings.ToUpper(mine.ContentHash[:8])}, nil, store.MemoryApproved},
+	}
+	for _, tc := range tests {
+		tc.in.Actor, tc.in.Channel = "local", "cli"
+		if tc.name != "no allowlist function" {
+			tc.in.Allowed = allowed
+		}
+		got, err := memory.Decide(t.Context(), db, tc.in)
+		if !errors.Is(err, tc.err) || (err == nil && got.Status != tc.status) {
+			t.Fatalf("%s: %+v %v", tc.name, got, err)
+		}
+	}
+	if got, _ := db.GetMemory(t.Context(), theirs.ID); got.Status != store.MemoryPending {
+		t.Fatal("non-allowlisted entry changed")
 	}
 }

@@ -1,13 +1,18 @@
 package runner_test
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/aryanpappu/patchbot/internal/config"
 	"github.com/aryanpappu/patchbot/internal/llm"
+	"github.com/aryanpappu/patchbot/internal/llm/fake"
 	"github.com/aryanpappu/patchbot/internal/memory"
 	"github.com/aryanpappu/patchbot/internal/runner"
 	"github.com/aryanpappu/patchbot/internal/store"
@@ -126,6 +131,15 @@ func TestMemoryTypedObservationsLessonsAndFrozenSelection(t *testing.T) {
 		}
 	}
 	codeReq := requests[1]
+	// The recorded hash covers exactly the delivered (redacted) memory text.
+	_, encoded, _ := strings.Cut(memoryBlock(codeReq), ">\n")
+	var delivered string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(encoded)), &delivered); err != nil {
+		t.Fatal(err)
+	}
+	if sum := sha256.Sum256([]byte(delivered)); sels[1].TextSHA256 != hex.EncodeToString(sum[:]) {
+		t.Fatalf("text hash %s does not match delivered memory", sels[1].TextSHA256)
+	}
 	if !strings.Contains(memoryBlock(codeReq), "exited 0") || !slices.ContainsFunc(codeReq.Tools, func(s llm.ToolSpec) bool { return s.Name == "propose_lesson" }) {
 		t.Fatal("code stage did not receive the typed observation and lesson tool")
 	}
@@ -136,7 +150,7 @@ func TestMemoryTypedObservationsLessonsAndFrozenSelection(t *testing.T) {
 		t.Fatal("pending lesson was retrieved")
 	}
 	frozen := f.memorySelections(second.ID)
-	if _, err := f.db.DecideMemory(t.Context(), lessons[0].ID, store.MemoryApprove, "local-owner", "cli"); err != nil {
+	if _, err := f.db.DecideMemory(t.Context(), store.MemoryDecision{ID: lessons[0].ID, Action: store.MemoryApprove, Actor: "local-owner", Channel: "cli", Repo: lessons[0].Repo, ContentHash: lessons[0].ContentHash}); err != nil {
 		t.Fatal(err)
 	}
 	// Approval after selection does not rewrite the frozen record.
@@ -221,5 +235,99 @@ func TestMemoryCannotAlterPolicyOrApproval(t *testing.T) {
 	}
 	if denied != 2 {
 		t.Fatalf("policy was widened by memory: %d denials", denied)
+	}
+}
+
+// failingMemory makes every memory write fail, as with a full disk.
+type failingMemory struct{ *store.SQLite }
+
+func (failingMemory) AddMemory(context.Context, store.MemoryEntry, string) (store.MemoryEntry, error) {
+	return store.MemoryEntry{}, errors.New("memory write failed")
+}
+
+func (f *fixture) logMessages(id int64, typ string) []string {
+	f.t.Helper()
+	events, err := f.db.EventsAfter(f.t.Context(), id, 0, 500)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	var out []string
+	for _, e := range events {
+		if e.Type == typ {
+			out = append(out, string(e.PayloadJSON))
+		}
+	}
+	return out
+}
+
+func TestMemoryWriteFailuresNeverAbortOrMaskTheRun(t *testing.T) {
+	t.Run("success continues with warnings", func(t *testing.T) {
+		f := newFixture(t, "test", specStep(), toolStep("propose_lesson", map[string]string{"lesson": "A lesson."}), writeStep(), submitStep())
+		r, err := runner.New(t.Context(), f.cfg, failingMemory{f.db}, f.opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.r = r
+		run := f.start("fix", true)
+		f.approve(run.ID)
+		if err := f.r.Execute(t.Context(), run.ID); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.get(run.ID); got.Status != store.StatusSucceeded || got.Outcome != "dry_run" {
+			t.Fatalf("run: %+v", got)
+		}
+		logs := strings.Join(f.logMessages(run.ID, "log"), "\n")
+		if strings.Count(logs, "Memory observation could not be recorded") != 2 || !strings.Contains(logs, "lesson proposal could not be recorded") {
+			t.Fatalf("warnings: %s", logs)
+		}
+	})
+	t.Run("code error is preserved", func(t *testing.T) {
+		f := newFixture(t, "test", specStep(), toolStep("propose_lesson", map[string]string{"lesson": "A lesson."}), fake.Step{Err: &llm.Error{Kind: llm.ErrAuth}})
+		r, err := runner.New(t.Context(), f.cfg, failingMemory{f.db}, f.opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.r = r
+		run := f.start("fix", true)
+		f.approve(run.ID)
+		_ = f.r.Execute(t.Context(), run.ID)
+		if got := f.get(run.ID); got.Status != store.StatusFailed || got.ErrorKind != "provider_auth" {
+			t.Fatalf("code error masked: %+v", got)
+		}
+	})
+}
+
+func TestMemoryPendingCapAndDuplicates(t *testing.T) {
+	tests := []struct {
+		name       string
+		maxPending int
+		proposals  []string
+		stored     int
+		dropped    string
+	}{
+		{"duplicates dropped", 20, []string{"Same lesson.", "Same lesson.", "Other lesson."}, 2, `"duplicate":1`},
+		{"pending cap", 1, []string{"First lesson.", "Second lesson."}, 1, `"pending_cap":1`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			steps := []fake.Step{specStep()}
+			for _, text := range tc.proposals {
+				steps = append(steps, toolStep("propose_lesson", map[string]string{"lesson": text}))
+			}
+			f := newFixture(t, "test", append(steps, writeStep(), submitStep())...)
+			f.rebuild(func(c *config.Config) { c.Memory.MaxPending = tc.maxPending })
+			run := f.start("fix", true)
+			f.approve(run.ID)
+			if err := f.r.Execute(t.Context(), run.ID); err != nil {
+				t.Fatal(err)
+			}
+			n, err := f.db.CountMemory(t.Context(), "owner/repo", store.MemoryLesson, store.MemoryPending)
+			if err != nil || n != tc.stored {
+				t.Fatalf("pending %d %v", n, err)
+			}
+			if dropped := strings.Join(f.logMessages(run.ID, "memory.lessons_dropped"), ""); !strings.Contains(dropped, tc.dropped) {
+				t.Fatalf("dropped event: %q", dropped)
+			}
+		})
 	}
 }

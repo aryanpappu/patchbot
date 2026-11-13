@@ -148,11 +148,9 @@ func (r *Runner) publish(ctx context.Context, run *store.Run, env *toolEnvironme
 	if err := r.transition(ctx, run, store.StatusRunning, store.PhasePublish, store.RunPatch{HeadSHA: &head}); err != nil {
 		return err
 	}
-	if result.LastTest != nil {
-		command, _ := r.cfg.Repos[run.Repo].TestCommandID()
-		if err := r.observe(ctx, *run, command, *result.LastTest, head, fmt.Sprintf("run %d verify test attempt %d", run.ID, result.TestAttempts)); err != nil {
-			return err
-		}
+	if repo := r.cfg.Repos[run.Repo]; result.LastTest != nil && repo != nil {
+		command, _ := repo.TestCommandID()
+		r.observe(ctx, *run, command, *result.LastTest, head, fmt.Sprintf("run %d verify test attempt %d", run.ID, result.TestAttempts))
 	}
 	if run.DryRun {
 		outcome := "dry_run"

@@ -148,6 +148,7 @@ func (c *Config) validateFixed(v *validator) {
 	m := c.Memory
 	v.check(m.MaxEntries >= 1 && m.MaxEntries <= 100, "memory.max_entries: must be between 1 and 100")
 	v.check(m.MaxBytes >= 256 && m.MaxBytes <= 65536, "memory.max_bytes: must be between 256 and 65536")
+	v.check(m.MaxPending >= 1 && m.MaxPending <= 1000, "memory.max_pending: must be between 1 and 1000")
 	v.check(m.ObservationTTL > 0, "memory.observation_ttl: must be greater than 0")
 }
 

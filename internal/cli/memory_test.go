@@ -49,9 +49,20 @@ commands = { test = ["go", "test", "./..."] }
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := memory.AddLesson(t.Context(), db, nil, memory.LessonInput{Repo: "owner/repo", Text: "Model proposal\nwith two lines.", Source: store.MemorySourceModel, Actor: "model:m", Channel: "harness"}); err != nil {
+	long := "Model proposal\nwith two lines. " + strings.Repeat("Hidden tail beyond the list summary. ", 5) + "FINAL CLAUSE."
+	seeded, err := memory.AddLesson(t.Context(), db, nil, memory.LessonInput{Repo: "owner/repo", Text: long, Source: store.MemorySourceModel, Actor: "model:m", Channel: "harness"})
+	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := memory.AddLesson(t.Context(), db, nil, memory.LessonInput{Repo: "other/repo", Text: "Not allowlisted.", Source: store.MemorySourceModel, Actor: "model:m", Channel: "harness"}); err != nil {
+		t.Fatal(err)
+	}
+	// A legacy row with hidden characters is escaped visibly by show.
+	hidden := "Visible." + string(rune(0x202E)) + "neddih"
+	if _, err := db.AddMemory(t.Context(), store.MemoryEntry{Repo: "owner/repo", Kind: store.MemoryLesson, Source: store.MemorySourceModel, Text: hidden, CreatedBy: "legacy"}, "harness"); err != nil {
+		t.Fatal(err)
+	}
+	hash := seeded.ContentHash
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -60,13 +71,25 @@ commands = { test = ["go", "test", "./..."] }
 		code       int
 		out, notIn string
 	}{
-		{[]string{"memory", "list", "--status", "pending"}, 0, "Model proposal with two lines.", ""},
-		{[]string{"memory", "approve", "1"}, 0, "Memory 1: approved", ""},
-		{[]string{"memory", "approve", "1"}, 1, "", ""},
-		{[]string{"memory", "add", "--repo", "Owner/Repo", "--text", "Operator rule."}, 0, "Memory 2: approved lesson for owner/repo", ""},
+		{[]string{"memory", "list", "--status", "pending"}, 0, "Model proposal with two lines.", "FINAL CLAUSE"},
+		{[]string{"memory", "list"}, 0, "owner/repo", "other/repo"},
+		{[]string{"memory", "list", "--repo", "other/repo"}, 1, "", ""},
+		{[]string{"memory", "show", "1"}, 0, "FINAL CLAUSE.", ""},
+		{[]string{"memory", "show", "1"}, 0, "Content hash: " + hash, ""},
+		{[]string{"memory", "show", "2"}, 1, "", ""},
+		{[]string{"memory", "show", "3"}, 0, `Visible.\u{202E}neddih`, ""},
+		{[]string{"memory", "approve", "1"}, 2, "", ""},
+		{[]string{"memory", "approve", "1", "--hash", hash[:7]}, 2, "", ""},
+		{[]string{"memory", "approve", "1", "--hash", "deadbeefdeadbeef"}, 1, "", ""},
+		{[]string{"memory", "approve", "2", "--hash", "deadbeef"}, 1, "", ""},
+		{[]string{"memory", "approve", "1", "--hash", hash[:8]}, 0, "Memory 1: approved", ""},
+		{[]string{"memory", "approve", "1", "--hash", hash[:8]}, 1, "", ""},
+		{[]string{"memory", "add", "--repo", "Owner/Repo", "--text", "Operator rule."}, 0, "Memory 4: approved lesson for owner/repo", ""},
+		{[]string{"memory", "add", "--repo", "owner/repo", "--text", "Operator rule."}, 1, "", ""},
 		{[]string{"memory", "add", "--repo", "other/repo", "--text", "x"}, 1, "", ""},
 		{[]string{"memory", "forget", "1"}, 0, "Memory 1: revoked", ""},
 		{[]string{"memory", "list", "--repo", "owner/repo"}, 0, "forgotten; content hash", "Model proposal"},
+		{[]string{"memory", "reject", "3", "--hash", "deadbeef"}, 1, "", ""},
 		{[]string{"memory", "reject", "99"}, 1, "", ""},
 		{[]string{"memory", "list", "--status", "everything"}, 2, "", ""},
 		{[]string{"memory", "approve"}, 2, "", ""},

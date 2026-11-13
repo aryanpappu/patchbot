@@ -132,8 +132,10 @@ variable > file > embedded default. `config show` includes sources and masks key
 | `config check` / `config show` | Validate / print effective TOML and sources |
 | `doctor [--online]` | Pass/warn/fail setup table; any fail exits 1 |
 | `serve [--addr 127.0.0.1:8080]` | Serve the UI, JSON API and SSE |
-| `memory list [--repo R] [--status S] [--kind K]` | List repository memory |
-| `memory approve ID` / `memory reject ID` / `memory forget ID` | Decide a pending lesson / revoke any entry and erase its text |
+| `memory list [--repo R] [--status S] [--kind K]` | List memory for allowlisted repositories (text truncated) |
+| `memory show ID` | Print an entry's full text, content hash and audit history |
+| `memory approve ID --hash PREFIX` | Approve a pending lesson; PREFIX is at least 8 hex characters of the hash shown by `show` |
+| `memory reject ID` / `memory forget ID` `[--hash PREFIX]` | Reject a pending lesson / revoke any entry and erase its text |
 | `memory add --repo R --text "..."` | Add an operator lesson (approved immediately) |
 | `version` / `help` | Build details / usage |
 
@@ -183,10 +185,18 @@ patchbot remembers two kinds of per-repository entries, keyed by the canonical
   never stored. A changed command policy or an age above
   `memory.observation_ttl` makes an observation stale, and stale observations
   are not retrieved.
-- **Lessons** are short prose (at most 600 bytes, redacted). The code stage can
-  propose up to three with `propose_lesson`; they stay `pending` until you run
-  `patchbot memory approve ID` or use the UI. `memory add` stores your own
-  lesson as approved. Only approved lessons are retrieved.
+- **Lessons** are short prose (at most 600 bytes, redacted, printable
+  characters plus newline and tab only; zero-width, bidi, tag, private-use and
+  separator characters are refused). The code stage can propose up to three
+  with `propose_lesson`; they stay `pending` until you review them with
+  `patchbot memory show ID` and run `patchbot memory approve ID --hash PREFIX`,
+  or approve in the UI, which sends the content hash it displayed. A decision
+  applies only if the entry still has that repository and content hash. At most
+  `memory.max_pending` (default 20) model lessons wait per repository; extra
+  proposals and duplicates are dropped with a `memory.lessons_dropped` event.
+  `memory add` stores your own lesson as approved. Only approved lessons are
+  retrieved. Entries for repositories outside the allowlist are not listed and
+  cannot be decided.
 
 Each refine, investigate and code stage receives at most `max_entries` entries
 and `max_bytes` bytes, chosen deterministically (no search, no use-count
@@ -194,9 +204,10 @@ ranking). Memory goes into the user turn as an `untrusted_data` block with a
 note that it cannot override instructions, the approved spec or policy. It is
 never in the system prompt, and it never changes allowed commands, protected
 paths, repository scope or the approval gate. The selected IDs and content
-hashes are frozen per stage and recorded as a `memory_selection` artifact and a
-`memory.selected` event, so later approvals or forgets do not change a running
-stage.
+hashes, plus the SHA-256 of the exact delivered text, are frozen per stage and
+recorded as a `memory_selection` artifact and a `memory.selected` event, so
+later approvals or forgets do not change a running stage. Failing to write an
+observation or lesson never stops a run; it records a warning event.
 
 `memory forget ID` revokes an entry and erases lesson text so it can never be
 retrieved again. The content hash, audit actions (`memory_actions`), selection

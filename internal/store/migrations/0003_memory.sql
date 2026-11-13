@@ -30,6 +30,8 @@ CREATE TABLE memory_entries (
             AND (length(text) > 0 OR status = 'revoked')))
 ) STRICT;
 CREATE INDEX memory_retrieval ON memory_entries(repo, kind, status, id DESC);
+-- One live copy of any content per repository; forgotten entries do not block re-adding.
+CREATE UNIQUE INDEX memory_unique_content ON memory_entries(repo, content_hash) WHERE status != 'revoked';
 
 CREATE TABLE memory_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id > 0),
