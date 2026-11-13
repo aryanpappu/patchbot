@@ -1,6 +1,7 @@
 package github
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -56,13 +57,35 @@ func ParseCommand(comment Comment) (Command, bool) {
 	return Command{Kind: kind, Notes: notes}, true
 }
 
+// markerPattern matches any patchbot HTML-comment marker, tolerating case and
+// whitespace variations, so a near-miss spelling still fails closed.
+var markerPattern = regexp.MustCompile(`(?i)<!--\s*patchbot`)
+
+// HasPatchbotMarker reports whether a body carries a hidden patchbot marker.
+// Every comment patchbot posts carries one (see Marker).
+func HasPatchbotMarker(body string) bool { return markerPattern.MatchString(body) }
+
+// Marker is the hidden marker appended to a patchbot comment of the given kind.
+func Marker(kind string) string { return "<!-- patchbot:" + kind + " -->" }
+
 // EligibleCommand checks identity, edit status and live collaborator membership.
 // The runner supplies its own login explicitly; an unknown bot identity fails
 // closed. The callback can adapt Client.IsCollaborator and must return false on
 // error. Run status, spec integrity and comment ordering belong to the runner.
-func EligibleCommand(comment Comment, approvers []string, isCollaborator func(string) bool, botLogin string) bool {
-	if botLogin == "" || comment.Author == "" || strings.EqualFold(comment.Author, botLogin) ||
-		comment.CreatedAt.IsZero() || !comment.UpdatedAt.Equal(comment.CreatedAt) || isCollaborator == nil {
+//
+// Shared identity: when the token owner is also a configured approver (a
+// single-user PAT), a comment authored by botLogin is eligible only if it is
+// not one patchbot posted. postedByPatchbot must report recorded patchbot
+// comment IDs and return true on error. Such a comment must also carry no
+// patchbot marker, be unedited and pass the approver and collaborator checks.
+// Every other combination fails closed. Other authors keep the plain rules.
+func EligibleCommand(comment Comment, approvers []string, isCollaborator func(string) bool, botLogin string, postedByPatchbot func(int64) bool) bool {
+	if botLogin == "" || comment.Author == "" || comment.CreatedAt.IsZero() ||
+		!comment.UpdatedAt.Equal(comment.CreatedAt) || isCollaborator == nil {
+		return false
+	}
+	if strings.EqualFold(comment.Author, botLogin) &&
+		(comment.ID <= 0 || HasPatchbotMarker(comment.Body) || postedByPatchbot == nil || postedByPatchbot(comment.ID)) {
 		return false
 	}
 	for _, approver := range approvers {

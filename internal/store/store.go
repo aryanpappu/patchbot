@@ -214,6 +214,17 @@ type Question struct {
 	AnsweredAt                        *time.Time
 }
 
+// PostedComment records one GitHub comment patchbot itself published. Comment
+// sync never treats a recorded comment as an operator command.
+type PostedComment struct {
+	CommentID   int64
+	RunID       int64
+	Repo        string
+	IssueNumber int64
+	Kind        string
+	CreatedAt   time.Time
+}
+
 // Step is a structured execution record, separate from the SSE event log.
 // Seq is allocated per run when zero; a nonzero value updates that step.
 // A completed llm step's usage is included in the run totals atomically.
@@ -320,6 +331,10 @@ type Store interface {
 	ListReviews(ctx context.Context, runID int64) ([]Review, error)
 	SaveQuestion(context.Context, Question) (Question, error)
 	ListQuestions(ctx context.Context, runID int64) ([]Question, error)
+	// RecordPostedComment is idempotent for the same comment ID.
+	RecordPostedComment(context.Context, PostedComment) error
+	// IsPostedComment reports whether patchbot recorded posting this comment.
+	IsPostedComment(ctx context.Context, commentID int64) (bool, error)
 
 	RecordAction(context.Context, Action) (Action, error)
 	ListActions(ctx context.Context, runID int64) ([]Action, error)

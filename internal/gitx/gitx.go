@@ -63,6 +63,9 @@ type CloneOptions struct {
 	// TestOnlyLocalRemote explicitly enables file transport. Only tests should
 	// set it, to an absolute local bare repository path. No local hard links.
 	TestOnlyLocalRemote string
+	// testHTTPSRemote is an in-package test seam: a full https URL of a fake
+	// smart-HTTP remote with a self-signed certificate. Never set in production.
+	testHTTPSRemote string
 }
 
 // Author is operator-controlled identity, used for both author and committer.
@@ -82,6 +85,7 @@ type Repo struct {
 	timeout                                               time.Duration
 	outputCap                                             int
 	closed                                                bool
+	testInsecureTLS                                       bool
 	path                                                  string
 	// observeCommand is a per-repository test seam, called under mu.
 	observeCommand func([]string)
@@ -124,12 +128,19 @@ func Clone(ctx context.Context, opts CloneOptions) (_ *Repo, cloneErr error) {
 	if r.outputCap < 64 {
 		return nil, errors.New("output cap must be at least 64 bytes")
 	}
-	if r.localRemote != "" {
+	switch {
+	case opts.testHTTPSRemote != "":
+		u, err := url.Parse(opts.testHTTPSRemote)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || r.localRemote != "" {
+			return nil, errors.New("invalid test remote")
+		}
+		r.remote, r.host, r.testInsecureTLS = u.String(), u.Host, true
+	case r.localRemote != "":
 		if !filepath.IsAbs(r.localRemote) || strings.ContainsRune(r.localRemote, 0) {
 			return nil, errors.New("test remote must be an absolute local path")
 		}
 		r.remote = (&url.URL{Scheme: "file", Path: r.localRemote}).String()
-	} else {
+	default:
 		if !hostname.MatchString(opts.Host) || strings.Contains(opts.Host, "..") ||
 			!coordinate.MatchString(opts.Owner) || !coordinate.MatchString(opts.Name) ||
 			opts.Owner == "." || opts.Owner == ".." || opts.Name == "." || opts.Name == ".." {
@@ -261,8 +272,8 @@ func (r *Repo) HeadSHA(ctx context.Context) (string, error) {
 
 // CheckoutSHA detaches at a full commit ID and updates the base for future diffs.
 // Fetches by ID when shallow history does not contain the approved spec's base.
-// As required, fetch gets no token; a private host must permit this fetch without
-// credentials, or the caller must initially use a full clone.
+// The fetch uses the same header-only credential as clone, so private
+// repositories work; the token never enters argv, the URL or .git/config.
 func (r *Repo) CheckoutSHA(ctx context.Context, sha string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -273,7 +284,7 @@ func (r *Repo) CheckoutSHA(ctx context.Context, sha string) error {
 		return err
 	}
 	if _, err := r.complete(ctx, false, "cat-file", "-e", sha+"^{commit}"); err != nil {
-		if _, err := r.complete(ctx, false, "fetch", "--no-tags", "--recurse-submodules=no", "--depth=1", "--", r.remote, sha); err != nil {
+		if _, err := r.complete(ctx, true, "fetch", "--no-tags", "--recurse-submodules=no", "--depth=1", "--", r.remote, sha); err != nil {
 			return err
 		}
 	}

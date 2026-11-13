@@ -19,9 +19,18 @@
   re-clone would fail with an auth error. Offline smoke used a local fake remote, so tests never caught it.
   Fix: use the same header-only auth (GIT_CONFIG_*) for these network calls, with tests against an
   auth-requiring fake remote.
+  **Status: fixed (branch auth-fixes).** clone, fetch (CheckoutSHA), both ls-remote calls and push all
+  use the header-only extraheader; `gitx.command` now refuses a remote subcommand without it and refuses
+  credentials for local ones. Tested against an HTTPS `git http-backend` remote that requires the header
+  (succeeds with the token, fails without; token absent from argv, .git/config and errors).
 - With a PAT owned by `aryanpappu`, GitHub comments by `aryanpappu` are the bot's own identity, so
   `/approve` and `/revise` comments are ignored (sync.go → EligibleCommand). **Approve from the dashboard**
   for the pilot. The App (decision 2) fixes this properly.
+  **Status: fixed for the PAT pilot (branch auth-fixes), "shared identity" rule.** A comment by the token
+  owner counts only if that login is a configured approver and live collaborator, the comment is unedited
+  and in the current waiting window, has no `<!-- patchbot` marker, and its ID is not in `posted_comments`
+  (migration 0007). Every comment patchbot posts now carries a marker and its ID is recorded right after
+  posting. Other authors keep the old rules. The App remains the target identity separation.
 - The token is loaded once per run and reused for push; fine for a PAT, must be refreshed per network call
   with an App (1-hour expiry).
 

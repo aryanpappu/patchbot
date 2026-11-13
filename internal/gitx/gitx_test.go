@@ -424,8 +424,9 @@ func TestCredentialEnvironmentAndArgv(t *testing.T) {
 	}{
 		{true, []string{"clone", "--", "https://github.com/owner/repo.git", "/private/tmp/destination"}},
 		{true, []string{"push", "--", "https://github.com/owner/repo.git", "HEAD:refs/heads/patchbot/example"}},
+		{true, []string{"fetch", "--", "https://github.com/owner/repo.git", f.first}},
+		{true, []string{"ls-remote", "--heads", "--", "https://github.com/owner/repo.git"}},
 		{false, []string{"status", "--porcelain=v1", "-z"}},
-		{false, []string{"fetch", "--", "https://github.com/owner/repo.git", f.first}},
 	} {
 		cmd, err := r.command(context.Background(), operation.auth, operation.args...)
 		if err != nil {
@@ -454,8 +455,15 @@ func TestCredentialEnvironmentAndArgv(t *testing.T) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("git HOME not empty: %v, %v", entries, err)
 	}
-	if _, err := r.command(context.Background(), true, "fetch", f.first); err == nil {
-		t.Fatal("credentials permitted for fetch")
+	for _, local := range []string{"status", "commit", "checkout", "--version"} {
+		if _, err := r.command(context.Background(), true, local); err == nil {
+			t.Fatalf("credentials permitted for local %s", local)
+		}
+	}
+	for _, remote := range []string{"clone", "fetch", "ls-remote", "push"} {
+		if _, err := r.command(context.Background(), false, remote); err == nil {
+			t.Fatalf("remote %s permitted without the authenticated path", remote)
+		}
 	}
 	// Production uses HTTPS only, and credentials use exactly the host-scoped
 	// ephemeral configuration key, rather than URL or persistent config.

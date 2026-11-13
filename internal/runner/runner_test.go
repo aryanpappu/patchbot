@@ -49,6 +49,11 @@ type fixture struct {
 	hits map[string]int
 	// issueStatus, when set, is returned for GET of issue 12.
 	issueStatus int
+	// botAuthor authors posted comments (default "patchbot"); postPrefix is
+	// prepended to every posted comment body.
+	botAuthor, postPrefix string
+	// postSkew shifts posted comments' GitHub timestamps (host clock skew).
+	postSkew time.Duration
 }
 
 func git(t *testing.T, dir string, args ...string) string {
@@ -195,8 +200,12 @@ func (f *fixture) serveHTTP(w http.ResponseWriter, req *http.Request) {
 			reply(400, nil)
 			return
 		}
-		now := time.Now().UTC()
-		c := github.Comment{ID: int64(len(f.comments) + 1), Author: "patchbot", Body: input.Body, CreatedAt: now, UpdatedAt: now}
+		now := time.Now().UTC().Add(f.postSkew)
+		author := f.botAuthor
+		if author == "" {
+			author = "patchbot"
+		}
+		c := github.Comment{ID: int64(len(f.comments) + 1), Author: author, Body: f.postPrefix + input.Body, CreatedAt: now, UpdatedAt: now}
 		f.comments = append(f.comments, c)
 		f.posts++
 		reply(201, commentJSON(c))

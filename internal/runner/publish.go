@@ -207,7 +207,7 @@ func (r *Runner) publish(ctx context.Context, run *store.Run, env *toolEnvironme
 	if review != nil && review.last != nil {
 		note += fmt.Sprintf("\nIndependent review: %s (round %d).", review.last.Verdict, review.last.Round)
 	}
-	if _, err := r.comment(ctx, *run, note); err != nil {
+	if _, err := r.comment(ctx, *run, "pr_note", note); err != nil {
 		if err := r.artifact(ctx, run.ID, "publish_comment_warning", "PR opened, but the issue comment could not be posted."); err != nil {
 			return err
 		}

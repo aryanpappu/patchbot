@@ -19,6 +19,9 @@ decision and execution claim. `Revise` reruns refinement immediately;
 unedited command newer than the current spec/wait window, an allowlisted actor,
 live collaborator membership, and an authenticated bot identity. The production
 GitHub client resolves the identity from `/user`; tests can supply `BotLogin`.
+Every comment patchbot posts goes through `postComment`, which appends a
+`<!-- patchbot:<kind> run=N -->` marker when missing and records the comment ID
+in `posted_comments`; sync refuses both for a shared token-owner identity.
 The exact version/hash from that poll remains bound to the atomic decision;
 an edit during command handling requires a new command for the new spec.
 

@@ -81,14 +81,20 @@ func (r *Runner) syncRun(ctx context.Context, run store.Run) error {
 		if !ok || (command.Kind != github.CommandApprove && command.Kind != github.CommandRevise) {
 			continue
 		}
-		var collaboratorErr error
+		var collaboratorErr, recordErr error
 		if !github.EligibleCommand(comment, r.cfg.Defaults.Approvers, func(login string) bool {
 			member, err := r.gh.IsCollaborator(ctx, ref(run.Repo), login)
 			collaboratorErr = err
 			return err == nil && member
-		}, bot) {
-			if collaboratorErr != nil {
-				return collaboratorErr
+		}, bot, func(id int64) bool {
+			// Shared identity: patchbot's own comments never count. A lookup
+			// error reports "posted", so the comment fails closed.
+			posted, err := r.db.IsPostedComment(ctx, id)
+			recordErr = err
+			return err != nil || posted
+		}) {
+			if err := errors.Join(collaboratorErr, recordErr); err != nil {
+				return err
 			}
 			continue
 		}
@@ -126,7 +132,7 @@ func (r *Runner) commentEditAdvice(ctx context.Context, run store.Run, spec stor
 		return err
 	}
 	message := "The specification comment was edited on GitHub. Those edits are not imported. Use `/revise <notes>` or edit the specification in patchbot before approving a new version."
-	if _, err := r.comment(ctx, run, message); err != nil {
+	if _, err := r.comment(ctx, run, "spec_edit_warning", message); err != nil {
 		return err
 	}
 	return r.artifact(ctx, run.ID, kind, message)

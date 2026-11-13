@@ -169,6 +169,8 @@ requires refinement again. There is no pre-approve flag.
 CLI and UI approvals use `approval.local_actor`; there is no login system.
 GitHub `/approve` must be a new, unedited comment from a configured approver who
 is also a repository collaborator. Bot comments and other authors are ignored.
+If the token's owner is also a configured approver (a single-user PAT), that
+owner's own `/approve` counts; comments patchbot posted never do.
 `/revise notes` requests a new spec. Hand edits to the bot's spec comment are not
 imported. Use revise or the UI editor. `serve` checks waiting runs every 60 seconds
 by default; `runs --sync` checks once. Waiting runs expire after 14 days and allow

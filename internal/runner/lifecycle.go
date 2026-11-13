@@ -398,7 +398,7 @@ func (r *Runner) fail(ctx context.Context, run store.Run, cause error) error {
 	message := tools.CapOutput(r.redactor.Redact(cause.Error()), 2000)
 	err = r.transition(cleanup, &run, status, run.Phase, store.RunPatch{Outcome: &outcome, ErrorKind: &kind, ErrorMessage: &message})
 	if err == nil && status == store.StatusFailed && !run.DryRun && kind != "provider_auth" && r.cfg.Defaults.CommentOnFailure && !r.opts.DisableFailureComments {
-		_, commentErr := r.gh.CreateIssueComment(cleanup, ref(run.Repo), int(run.IssueNumber), fmt.Sprintf("patchbot run %d stopped during %s (%s). Review the run locally before retrying.", run.ID, run.Phase, kind))
+		_, commentErr := r.postComment(cleanup, run, "failure", fmt.Sprintf("patchbot run %d stopped during %s (%s). Review the run locally before retrying.", run.ID, run.Phase, kind))
 		if commentErr != nil {
 			err = r.artifact(cleanup, run.ID, "failure_comment_warning", "Could not post failure comment.")
 		}
