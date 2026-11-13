@@ -27,6 +27,9 @@ func TestMain(m *testing.M) {
 	if os.Getenv("GO_WANT_HELPER") == "1" {
 		os.Exit(helperMain())
 	}
+	if os.Getenv("GO_WANT_FAKE_RUNTIME") == "1" {
+		os.Exit(fakeRuntimeMain())
+	}
 	os.Exit(m.Run())
 }
 

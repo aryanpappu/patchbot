@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
@@ -38,11 +39,14 @@ type Options struct {
 	// Redactor adds CLI/server credentials to model and persistence boundaries.
 	Redactor *secret.Redactor
 
-	GitHub            github.Client
-	Tokens            github.TokenSource
-	Constructors      llm.Constructors
-	Clone             func(context.Context, gitx.CloneOptions) (*gitx.Repo, error)
-	Executor          func(string) (execx.Executor, error)
+	GitHub       github.Client
+	Tokens       github.TokenSource
+	Constructors llm.Constructors
+	Clone        func(context.Context, gitx.CloneOptions) (*gitx.Repo, error)
+	Executor     func(string) (execx.Executor, error)
+	// ContainerSweep removes containers left by a previous process. Nil uses
+	// execx.SweepContainers when [executor] kind is container.
+	ContainerSweep    func(context.Context) (int, error)
 	Clock             func() time.Time
 	BotLogin          string
 	HeartbeatInterval time.Duration
@@ -107,7 +111,7 @@ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) 
 		opts.Clone = gitx.Clone
 	}
 	if opts.Executor == nil {
-		opts.Executor = func(dir string) (execx.Executor, error) { return execx.NewLocalExecutor(dir) }
+		opts.Executor = defaultExecutor(cfg)
 	}
 	if opts.Constructors == nil {
 		opts.Constructors = providers.Constructors(providers.Options{})
@@ -137,6 +141,7 @@ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) 
 	if err := r.RecoverStale(ctx); err != nil {
 		return nil, err
 	}
+	r.sweepContainers(ctx)
 	manager, err := workspace.NewManager(cfg.DataDir())
 	if err != nil {
 		return nil, err
@@ -406,4 +411,57 @@ func (r *Runner) action(ctx context.Context, id int64, kind, actor, channel stri
 
 func (r *Runner) artifact(ctx context.Context, id int64, kind, content string) error {
 	return r.db.SaveArtifact(ctx, store.Artifact{RunID: id, Kind: kind, Content: tools.CapOutput(r.redactor.Redact(content), 256<<10)})
+}
+
+// defaultExecutor selects host or container execution from [executor]. The
+// runtime binary is resolved per run so the workspace is excluded as well.
+func defaultExecutor(cfg *config.Config) func(string) (execx.Executor, error) {
+	if !cfg.Executor.Container() {
+		return func(dir string) (execx.Executor, error) { return execx.NewLocalExecutor(dir) }
+	}
+	return func(dir string) (execx.Executor, error) {
+		containerCfg, err := cfg.ContainerConfig(os.LookupEnv, dir)
+		if err != nil {
+			return nil, err
+		}
+		return execx.NewContainerExecutor(dir, containerCfg)
+	}
+}
+
+// sweepContainers removes patchbot-labelled containers left by a crashed
+// process. It runs only when no run is queued or running in the shared store,
+// so it cannot remove a live run's container from another patchbot process.
+// Failure is logged, not fatal: each command still reconciles its own container.
+func (r *Runner) sweepContainers(ctx context.Context) {
+	sweep := r.opts.ContainerSweep
+	if sweep == nil && r.cfg.Executor.Container() {
+		sweep = func(ctx context.Context) (int, error) {
+			containerCfg, err := r.cfg.ContainerConfig(os.LookupEnv)
+			if err != nil {
+				return 0, err
+			}
+			if containerCfg.Flavor == execx.RuntimeDocker {
+				if err := execx.PrepareDockerConfig(r.cfg.DockerConfigDir()); err != nil {
+					return 0, err
+				}
+			}
+			return execx.SweepContainers(ctx, containerCfg)
+		}
+	}
+	if sweep == nil {
+		return
+	}
+	page, err := r.db.ListRuns(ctx, store.RunFilter{Statuses: []store.Status{store.StatusQueued, store.StatusRunning}, Limit: 1})
+	if err != nil || len(page.Runs) > 0 {
+		slog.Info("container sweep skipped", "active_runs", len(page.Runs) > 0, "store_error", err != nil)
+		return
+	}
+	removed, err := sweep(ctx)
+	if err != nil {
+		slog.Warn("container sweep failed", "error", r.redactor.Redact(err.Error()))
+		return
+	}
+	if removed > 0 {
+		slog.Warn("removed containers left by a previous patchbot process", "count", removed)
+	}
 }

@@ -87,7 +87,7 @@ func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha
 			_ = ws.Close(false)
 		}
 	}()
-	policy, err := execx.NewPolicy(ws.Dir(), r.cfg.Repos[run.Repo].Commands, execx.PolicyOptions{TrustedPath: r.cfg.Limits.TrustedPath, ExcludedRoots: []string{r.cfg.DataDir()}})
+	policy, err := execx.NewPolicy(ws.Dir(), r.cfg.Repos[run.Repo].Commands, r.cfg.CommandPolicyOptions())
 	if err != nil {
 		return nil, err
 	}

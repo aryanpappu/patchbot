@@ -1,1 +1,4196 @@
 Reading additional input from stdin...
+OpenAI Codex v0.166.0
+--------
+workdir: /Users/pappumishra/Documents/selfproject/patchbot
+model: gpt-6.1-sol
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: none
+session id: 01a1d577-d7fb-7fc2-bb47-c0c4b5f793fe
+--------
+user
+Read docs/planning/step2/codex-round1.md (your previous round) and docs/planning/step2/claude-round2.md. Check claims C-G against the real code (internal/execx, internal/gitx, internal/workspace, internal/runner/phases.go). Do not write code. Write docs/planning/step2/codex-round2.md: accept/amend/reject the merged milestone order and each of C-G, list remaining disagreements, and the final acceptance criteria you insist on for M17 (container executor) and M18 (deploy). Under 120 lines.
+codex
+I’ll read both planning rounds, check C–G against the code, and write the review in `codex-round2.md` without changing code.
+exec
+/bin/zsh -lc "pwd; rg --files -g 'AGENTS.md' -g '*round*.md' -g '*.go' internal docs/planning/step2" in /Users/pappumishra/Documents/selfproject/patchbot
+ succeeded in 0ms:
+/Users/pappumishra/Documents/selfproject/patchbot
+docs/planning/step2/claude-round2.md
+docs/planning/step2/codex-round1.md
+internal/server/broadcast.go
+internal/server/api_test.go
+internal/server/lifecycle_test.go
+internal/server/json.go
+internal/server/sse_test.go
+internal/server/manager.go
+internal/server/findings_m13_test.go
+internal/server/api.go
+internal/server/web_test.go
+internal/server/fixture_test.go
+internal/server/schema_m15_test.go
+internal/server/sse.go
+internal/server/capabilities_test.go
+internal/server/server.go
+internal/server/web.go
+internal/server/security_test.go
+internal/store/records_test.go
+internal/store/migrate.go
+internal/store/sqlite_test.go
+internal/store/views.go
+internal/store/inspect.go
+internal/store/events.go
+internal/store/decisions.go
+internal/store/records.go
+internal/store/inspect_test.go
+internal/store/sqlite.go
+internal/store/events_test.go
+internal/store/decisions_test.go
+internal/store/store.go
+internal/logging/logging_test.go
+internal/logging/logging.go
+internal/workspace/workspace.go
+internal/workspace/jail_test.go
+internal/workspace/manager.go
+internal/secret/redactor_test.go
+internal/secret/secret_test.go
+internal/secret/secret.go
+internal/secret/writer.go
+internal/secret/redactor.go
+internal/secret/writer_test.go
+internal/secret/fuzz_test.go
+internal/workspace/wstest/wstest.go
+internal/workspace/acquisition_unix_test.go
+internal/workspace/local.go
+internal/workspace/jail.go
+internal/workspace/manager_test.go
+internal/workspace/local_unix_test.go
+internal/workspace/local_test.go
+internal/workspace/acquisition_test.go
+internal/workspace/normalization_test.go
+internal/version/version.go
+internal/runner/cli_test.go
+internal/runner/publish.go
+internal/runner/hardening_test.go
+internal/runner/runner_test.go
+internal/runner/recovery_test.go
+internal/runner/phases.go
+internal/runner/findings_test.go
+internal/runner/capabilities.go
+internal/runner/cli_redaction_m15_test.go
+internal/runner/heartbeat_test.go
+internal/runner/lifecycle.go
+internal/runner/records.go
+internal/runner/sync.go
+internal/runner/smoke_test.go
+internal/runner/runner.go
+internal/runner/accounting.go
+internal/runner/reapproval_test.go
+internal/web/web_test.go
+internal/web/web.go
+internal/testhttp/server.go
+internal/github/errors.go
+internal/github/mentions.go
+internal/github/mentions_test.go
+internal/github/commands.go
+internal/github/identity.go
+internal/github/operations.go
+internal/github/http.go
+internal/github/types.go
+internal/github/commands_test.go
+internal/github/http_test.go
+internal/web/cmd/vendor-vue/main_test.go
+internal/web/cmd/vendor-vue/main.go
+internal/config/load.go
+internal/config/show_test.go
+internal/config/llm_test.go
+internal/config/validate.go
+internal/config/load_test.go
+internal/config/validate_test.go
+internal/config/llm.go
+internal/config/show.go
+internal/config/config.go
+internal/config/release_test.go
+internal/testpath/testpath.go
+internal/execx/exit_other_unix.go
+internal/execx/exit_linux.go
+internal/execx/capwriter_test.go
+internal/execx/path.go
+internal/execx/execx.go
+internal/execx/exit_darwin.go
+internal/execx/local_unix.go
+internal/execx/findings_m15_test.go
+internal/gitx/integrity.go
+internal/execx/path_unix.go
+internal/gitx/publish.go
+internal/execx/policy.go
+internal/gitx/gitx_test.go
+internal/execx/process_unix.go
+internal/gitx/diff_numstat.go
+internal/execx/exit_bsd.go
+internal/gitx/diff_limits.go
+internal/execx/local_other.go
+internal/gitx/gitx.go
+internal/execx/path_test.go
+internal/gitx/changes.go
+internal/execx/env_test.go
+internal/gitx/command.go
+internal/execx/capwriter.go
+internal/gitx/security_test.go
+internal/execx/local_unix_test.go
+internal/gitx/version.go
+internal/execx/policy_test.go
+internal/execx/path_other.go
+internal/execx/env.go
+internal/gitx/resolution_m15_test.go
+internal/cli/doctor_process_m15_test.go
+internal/cli/runs.go
+internal/cli/cli_test.go
+internal/cli/doctor.go
+internal/cli/config_test.go
+internal/cli/doctor_test.go
+internal/cli/cli.go
+internal/cli/serve_test.go
+internal/cli/runs_test.go
+internal/cli/serve.go
+internal/cli/models_test.go
+internal/cli/config.go
+internal/cli/models.go
+internal/agent/types.go
+internal/agent/prompts.go
+internal/agent/api_test.go
+internal/agent/stages.go
+internal/tools/read_file.go
+internal/tools/jail_test.go
+internal/tools/write_file.go
+internal/tools/tool.go
+internal/tools/tools_test.go
+internal/tools/run_cmd.go
+internal/tools/registry_test.go
+internal/tools/search.go
+internal/tools/registry.go
+internal/tools/identifiers.go
+internal/tools/edit_file.go
+internal/tools/list_dir.go
+internal/tools/submit.go
+internal/tools/terminal_test.go
+internal/tools/security_test.go
+internal/agent/stages_test.go
+internal/agent/recorder_test.go
+internal/agent/gate_test.go
+internal/agent/recorder.go
+internal/agent/loop_test.go
+internal/agent/loop.go
+internal/agent/gate.go
+internal/agent/security_regression_test.go
+internal/agent/testdata/registry_injection/invalid.go
+internal/agent/testdata/without_token/invalid.go
+internal/llm/testclock_test.go
+internal/llm/provider.go
+internal/llm/errors.go
+internal/llm/openai/findings_test.go
+internal/llm/openai/wire.go
+internal/llm/openai/openai.go
+internal/llm/openai/openai_test.go
+internal/llm/openai/edge_test.go
+internal/llm/openai/models_test.go
+internal/llm/openai/models.go
+internal/llm/fake/fake_test.go
+internal/llm/fake/fake.go
+internal/llm/schema.go
+internal/llm/anthropic/anthropic_test.go
+internal/llm/anthropic/hardening_test.go
+internal/llm/anthropic/anthropic.go
+internal/llm/anthropic/timeout_m15_test.go
+internal/llm/retry.go
+internal/llm/registry_test.go
+internal/llm/pricing_test.go
+internal/llm/pricing.go
+internal/llm/registry.go
+internal/llm/providers/providers.go
+internal/llm/providers/providers_test.go
+internal/llm/types.go
+internal/llm/types_test.go
+internal/llm/retry_test.go
+internal/llm/gemini/errors.go
+internal/llm/gemini/gemini_test.go
+internal/llm/gemini/regression_test.go
+internal/llm/gemini/edge_test.go
+internal/llm/gemini/timeout_m15_test.go
+internal/llm/gemini/request.go
+internal/llm/gemini/response.go
+internal/llm/gemini/gemini.go
+internal/llm/models_test.go
+internal/llm/errors_test.go
+internal/llm/schema_test.go
+internal/llm/models.go
+
+exec
+/bin/zsh -lc 'ls -a; cat docs/planning/step2/codex-round1.md docs/planning/step2/claude-round2.md; find .. -name AGENTS.md -print' in /Users/pappumishra/Documents/selfproject/patchbot
+exec
+/bin/zsh -lc 'cat internal/execx/execx.go internal/execx/local_unix.go internal/execx/policy.go internal/gitx/command.go internal/gitx/gitx.go internal/gitx/version.go internal/workspace/local.go internal/workspace/jail.go internal/workspace/manager.go internal/runner/phases.go' in /Users/pappumishra/Documents/selfproject/patchbot
+ succeeded in 115ms:
+// Package execx runs operator-configured commands without a shell.
+//
+// Local execution is not a sandbox: approved commands run repository code with
+// the host user's privileges, filesystem access, and network access. Process
+// groups cover ordinary descendants, not children that deliberately use setsid
+// or change groups. Directory checks reject existing symlink escapes but cannot
+// prevent another host process from renaming directories between check and exec.
+package execx
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/secret"
+)
+
+const (
+	// DefaultTimeout is the per-command limit from the merged plan.
+	DefaultTimeout = 2 * time.Minute
+	// DefaultOutputCap bounds stored combined output, including its cut marker.
+	DefaultOutputCap = 256 << 10
+	// DefaultGracePeriod allows a process group to handle SIGTERM before SIGKILL.
+	DefaultGracePeriod = 3 * time.Second
+	// DefaultWaitDelay bounds pipe draining after process exit.
+	DefaultWaitDelay = time.Second
+	// MinOutputCap leaves enough room for a complete omission marker.
+	MinOutputCap = 64
+)
+
+// ErrUnsupported indicates that local process groups are unavailable.
+var ErrUnsupported = errors.New("local execution is unsupported on this OS")
+
+// Executor is the boundary between command policy and process execution.
+type Executor interface {
+	Run(context.Context, Spec) (Result, error)
+}
+
+// Spec describes a literal invocation. Callers should obtain Argv from Policy.
+// Env is explicit; nil means empty, never the parent's environment. Secret-like
+// names are also removed here as defense in depth. Stdin is always the null device.
+// Zero Timeout and OutputCap select defaults; negative values are invalid.
+type Spec struct {
+	Argv      []string
+	Dir       string
+	Env       []string
+	Timeout   time.Duration
+	OutputCap int
+	// Redactor, when set, masks the stream before the output cap can split a
+	// secret. Nil preserves the raw executor API for non-agent callers.
+	Redactor *secret.Redactor
+}
+
+// Result describes an attempted execution. ExitCode is -1 if no process exited
+// normally (including cancellation before start). Nonzero exits are not errors.
+// Output combines stdout and stderr in pipe order. TotalBytes counts all bytes
+// drained, including omitted bytes, and excludes the generated cut marker.
+type Result struct {
+	ExitCode   int
+	Output     string
+	Truncated  bool
+	TotalBytes int64
+	Duration   time.Duration
+	TimedOut   bool
+	Cancelled  bool
+}
+
+// LocalExecutor runs in a fixed workspace. Configure durations before sharing
+// it across goroutines; zero selects defaults. A group is cleaned up even when
+// its leader exits successfully while descendants are still running.
+type LocalExecutor struct {
+	root        string
+	GracePeriod time.Duration
+	WaitDelay   time.Duration
+}
+
+var _ Executor = (*LocalExecutor)(nil)
+
+// NewLocalExecutor validates and fixes the absolute workspace root.
+func NewLocalExecutor(root string) (*LocalExecutor, error) {
+	resolved, err := canonicalRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	return &LocalExecutor{root: resolved}, nil
+}
+
+func canonicalRoot(root string) (string, error) {
+	if !filepath.IsAbs(root) || strings.ContainsRune(root, 0) {
+		return "", errors.New("workspace root must be absolute")
+	}
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace: %w", err)
+	}
+	info, err := os.Stat(resolved) // #nosec G703 -- root is an operator-supplied path; containment is checked separately for command directories.
+	if err != nil {
+		return "", fmt.Errorf("stat workspace: %w", err)
+	}
+	if !info.IsDir() {
+		return "", errors.New("workspace root must be a directory")
+	}
+	return resolved, nil
+}
+
+func inside(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && filepath.IsLocal(rel)
+}
+//go:build unix
+
+package execx
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/secret"
+)
+
+// Run starts one process group. Timeout/cancel signals TERM, then KILL after the
+// grace period, even if the leader has already exited. The leader is not reaped
+// until all group signaling finishes: its zombie pins the PGID against reuse.
+// Descendant parents (or the OS reaper) reap their own children.
+func (e *LocalExecutor) Run(ctx context.Context, spec Spec) (result Result, runErr error) {
+	started := time.Now()
+	result.ExitCode = -1
+	defer func() { result.Duration = time.Since(started) }()
+	if err := e.validate(&spec); err != nil {
+		return result, err
+	}
+	env, err := scrubEnv(spec.Env)
+	if err != nil {
+		return result, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, spec.Timeout)
+	defer cancel()
+	if ctx.Err() != nil {
+		setCancellation(ctx, &result)
+		return result, nil
+	}
+	output := newCapWriter(spec.OutputCap)
+	var sink io.Writer = output
+	var filtered *redactedOutput
+	if spec.Redactor != nil {
+		filtered = &redactedOutput{writer: secret.NewWriter(output, spec.Redactor)}
+		sink = filtered
+	}
+	// Equal Writer values make os/exec use a single shared pipe. This preserves
+	// write order across stdout/stderr rather than merging two reader goroutines.
+	cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...) // #nosec G204 -- argv is operator-owned, never a shell string.
+	cmd.Dir, cmd.Env = spec.Dir, env
+	cmd.Stdout, cmd.Stderr = sink, sink
+	cmd.WaitDelay = e.WaitDelay
+	if cmd.WaitDelay == 0 {
+		cmd.WaitDelay = DefaultWaitDelay
+	}
+	interrupted, waitErr, processErr := runProcessGroup(ctx, cmd, e.GracePeriod)
+	runErr = processErr
+	if interrupted {
+		setCancellation(ctx, &result)
+	}
+	if cmd.ProcessState == nil {
+		return result, runErr
+	}
+	result.ExitCode = cmd.ProcessState.ExitCode()
+	if filtered != nil {
+		runErr = errors.Join(runErr, filtered.writer.Flush())
+	}
+	result.Output, result.TotalBytes, result.Truncated = output.snapshot()
+	if filtered != nil {
+		result.TotalBytes = filtered.total
+	}
+	var exitErr *exec.ExitError
+	if waitErr != nil && !errors.As(waitErr, &exitErr) {
+		if !errors.Is(waitErr, exec.ErrWaitDelay) || (!result.Cancelled && !result.TimedOut) {
+			runErr = errors.Join(runErr, fmt.Errorf("wait for command: %w", waitErr))
+		}
+	}
+	return result, runErr
+}
+
+// os/exec uses one copy goroutine for the shared stdout/stderr writer.
+type redactedOutput struct {
+	writer *secret.Writer
+	total  int64
+}
+
+func (w *redactedOutput) Write(p []byte) (int, error) {
+	w.total += int64(len(p))
+	return w.writer.Write(p)
+}
+
+func (e *LocalExecutor) validate(spec *Spec) error {
+	if e.root == "" {
+		return errors.New("use NewLocalExecutor to set a workspace root")
+	}
+	if e.GracePeriod < 0 || e.WaitDelay < 0 || spec.Timeout < 0 || spec.OutputCap < 0 {
+		return errors.New("execution limits must not be negative")
+	}
+	if spec.Timeout == 0 {
+		spec.Timeout = DefaultTimeout
+	}
+	if spec.OutputCap == 0 {
+		spec.OutputCap = DefaultOutputCap
+	}
+	if spec.OutputCap < MinOutputCap {
+		return fmt.Errorf("output cap must be at least %d bytes", MinOutputCap)
+	}
+	if len(spec.Argv) == 0 || !filepath.IsAbs(spec.Argv[0]) {
+		return errors.New("an absolute executable is required")
+	}
+	for _, arg := range spec.Argv {
+		if strings.ContainsRune(arg, 0) {
+			return errors.New("argv must not contain NUL")
+		}
+	}
+	if !filepath.IsAbs(spec.Dir) || strings.ContainsRune(spec.Dir, 0) {
+		return errors.New("working directory must be absolute and inside the workspace")
+	}
+	resolved, err := canonicalRoot(spec.Dir)
+	if err != nil {
+		return err
+	}
+	if !inside(e.root, resolved) {
+		return errors.New("working directory symlink escapes workspace")
+	}
+	// OpenRoot checks containment using the same primitive as workspace tools.
+	root, err := os.OpenRoot(e.root)
+	if err != nil {
+		return fmt.Errorf("open workspace: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	rel, err := filepath.Rel(e.root, resolved)
+	if err != nil {
+		return err
+	}
+	dir, err := root.OpenRoot(rel)
+	if err != nil {
+		return fmt.Errorf("open working directory: %w", err)
+	}
+	if err := dir.Close(); err != nil {
+		return fmt.Errorf("close working directory: %w", err)
+	}
+	spec.Dir = resolved
+	return nil
+}
+
+func setCancellation(ctx context.Context, result *Result) {
+	result.TimedOut = errors.Is(ctx.Err(), context.DeadlineExceeded)
+	result.Cancelled = errors.Is(ctx.Err(), context.Canceled)
+}
+package execx
+
+import (
+	"errors"
+	"fmt"
+	"os/exec"
+	"path/filepath"
+	"strings"
+)
+
+const (
+	defaultMaxExtraArgs  = 64
+	defaultMaxArgLength  = 8 << 10
+	defaultMaxExtraBytes = 8 << 10
+)
+
+// PolicyOptions are operator-owned exceptions and limits, never model input.
+// AllowArgs and AllowLeadingDash are indexed by command ID. AllowShells is
+// indexed by executable basename, e.g. "bash", and must name an explicit opt-in.
+// Zero limits select defaults. Options are copied by NewPolicy.
+type PolicyOptions struct {
+	AllowArgs        map[string]bool
+	AllowLeadingDash map[string]bool
+	AllowShells      map[string]bool
+	MaxExtraArgs     int
+	MaxArgLength     int
+	MaxExtraBytes    int
+	// TrustedPath defaults to TrustedPath when nil; an empty list is invalid.
+	TrustedPath []string
+	// ExcludedRoots adds data/workspace roots to the checkout exclusion.
+	ExcludedRoots []string
+}
+
+type command struct {
+	argv      []string
+	allowArgs bool
+	allowDash bool
+}
+
+// Policy holds immutable, resolved command IDs. Construct it from trusted
+// per-repo commands = { name = [argv...] } configuration outside the checkout.
+type Policy struct {
+	commands map[string]command
+	maxArgs  int
+	maxLen   int
+	maxBytes int
+	path     []string
+}
+
+// NewPolicy resolves executables once using only the configured trusted path. An absolute
+// operator-supplied executable is also accepted, but must be outside root.
+// At most one options value may be supplied.
+func NewPolicy(root string, commands map[string][]string, options ...PolicyOptions) (*Policy, error) {
+	root, err := canonicalRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	if len(options) > 1 {
+		return nil, errors.New("at most one policy options value is allowed")
+	}
+	var opts PolicyOptions
+	if len(options) == 1 {
+		opts = options[0]
+	}
+	if opts.MaxExtraArgs < 0 || opts.MaxArgLength < 0 || opts.MaxExtraBytes < 0 {
+		return nil, errors.New("argument limits must not be negative")
+	}
+	dirs := opts.TrustedPath
+	if dirs == nil {
+		dirs = filepath.SplitList(TrustedPath)
+	}
+	roots := append([]string{root}, opts.ExcludedRoots...)
+	if err := ValidateTrustedPath(dirs, roots...); err != nil {
+		return nil, err
+	}
+	p := &Policy{path: append([]string(nil), dirs...), commands: make(map[string]command), maxArgs: opts.MaxExtraArgs,
+		maxLen: opts.MaxArgLength, maxBytes: opts.MaxExtraBytes}
+	if p.maxArgs == 0 {
+		p.maxArgs = defaultMaxExtraArgs
+	}
+	if p.maxLen == 0 {
+		p.maxLen = defaultMaxArgLength
+	}
+	if p.maxBytes == 0 {
+		p.maxBytes = defaultMaxExtraBytes
+	}
+	for name, argv := range commands {
+		if name == "" || strings.ContainsRune(name, 0) || len(argv) == 0 || argv[0] == "" {
+			return nil, errors.New("command ID and executable must not be empty or contain NUL")
+		}
+		for _, arg := range argv {
+			if strings.ContainsRune(arg, 0) {
+				return nil, fmt.Errorf("command %q contains NUL", name)
+			}
+		}
+		binary, resolveErr := resolveExecutable(roots, argv[0], opts.AllowShells, dirs)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("command %q: %w", name, resolveErr)
+		}
+		copyArgv := append([]string(nil), argv...)
+		copyArgv[0] = binary
+		p.commands[name] = command{copyArgv, opts.AllowArgs[name], opts.AllowLeadingDash[name]}
+	}
+	return p, nil
+}
+
+// MinimalEnv uses the same immutable PATH that resolved this policy.
+func (p *Policy) MinimalEnv(home, tmp string, extra map[string]string) []string {
+	return minimalEnv(home, tmp, extra, strings.Join(p.path, string(filepath.ListSeparator)))
+}
+
+// Resolve returns a fresh argv slice. Additional arguments require explicit
+// per-command opt-in; flags require another opt-in. Literal metacharacters have
+// no shell meaning. The approved program may still interpret their contents.
+func (p *Policy) Resolve(name string, extraArgs []string) ([]string, error) {
+	cmd, ok := p.commands[name]
+	if !ok {
+		return nil, fmt.Errorf("unknown command %q", name)
+	}
+	if len(extraArgs) > 0 && !cmd.allowArgs {
+		return nil, errors.New("extra arguments are not allowed")
+	}
+	if len(extraArgs) > p.maxArgs {
+		return nil, errors.New("too many extra arguments")
+	}
+	total := 0
+	for _, arg := range extraArgs {
+		if strings.ContainsRune(arg, 0) || (!cmd.allowDash && strings.HasPrefix(arg, "-")) {
+			return nil, errors.New("invalid extra argument")
+		}
+		if len(arg) > p.maxLen || len(arg) > p.maxBytes-total {
+			return nil, errors.New("extra arguments exceed length limit")
+		}
+		total += len(arg)
+	}
+	argv := make([]string, 0, len(cmd.argv)+len(extraArgs))
+	argv = append(argv, cmd.argv...)
+	return append(argv, extraArgs...), nil
+}
+
+func shellLike(name string) bool {
+	switch name {
+	case "sh", "bash", "zsh", "fish", "dash", "env", "xargs", "sudo":
+		return true
+	default:
+		return false
+	}
+}
+
+func resolveExecutable(roots []string, name string, allowShells map[string]bool, dirs []string) (string, error) {
+	base := filepath.Base(name)
+	explicitShell := shellLike(base) && allowShells[base]
+	if shellLike(base) && !explicitShell {
+		return "", errors.New("shell or command launcher is not allowed")
+	}
+	if !filepath.IsAbs(name) && base != name {
+		return "", errors.New("relative executable paths are not allowed")
+	}
+	var path string
+	err := errors.New("executable not found in trusted path")
+	if filepath.IsAbs(name) {
+		path, err = exec.LookPath(name)
+	} else {
+		// LookPath receives absolute candidates so it never reads ambient PATH.
+		for _, dir := range dirs {
+			candidate := filepath.Join(dir, name)
+			path, err = exec.LookPath(candidate)
+			if err == nil {
+				break
+			}
+		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve executable: %w", err)
+	}
+	if excludedExecutable(roots, path) {
+		return "", errors.New("executable is inside the workspace")
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve executable symlink: %w", err)
+	}
+	if !filepath.IsAbs(resolved) || excludedExecutable(roots, resolved) {
+		return "", errors.New("executable must be absolute and outside the workspace")
+	}
+	if target := filepath.Base(resolved); shellLike(target) && !explicitShell && !allowShells[target] {
+		return "", errors.New("executable resolves to a disallowed shell or launcher")
+	}
+	return resolved, nil
+}
+
+// ResolveExecutable uses the same trusted-path and exclusion rules as Policy.
+// It never consults the ambient PATH. A nil path selects the secure defaults.
+func ResolveExecutable(name string, dirs []string, excluded ...string) (string, error) {
+	if dirs == nil {
+		dirs = filepath.SplitList(TrustedPath)
+	}
+	if err := ValidateTrustedPath(dirs, excluded...); err != nil {
+		return "", err
+	}
+	return resolveExecutable(excluded, name, nil, dirs)
+}
+func excludedExecutable(roots []string, path string) bool {
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		resolved, err := resolveFuturePath(root)
+		if err != nil || inside(filepath.Clean(root), path) || inside(resolved, path) {
+			return true
+		}
+	}
+	return false
+}
+package gitx
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/execx"
+)
+
+const trustedPath = execx.TrustedPath
+
+// command builds the entire environment explicitly. Credentials are deliberately
+// absent from argv, including -c arguments, and from all non-publication calls.
+func (r *Repo) command(_ context.Context, authenticated bool, args ...string) (*exec.Cmd, error) {
+	if authenticated && (len(args) == 0 || (args[0] != "clone" && args[0] != "push")) {
+		return nil, errors.New("credentials are restricted to clone and push")
+	}
+	for _, arg := range args {
+		if strings.ContainsRune(arg, 0) || (r.token != "" && strings.Contains(arg, r.token)) {
+			return nil, errors.New("invalid git argument")
+		}
+	}
+	protocol := "never"
+	if r.localRemote != "" {
+		protocol = "always"
+	}
+	argv := []string{
+		"--literal-pathspecs",
+		"-c", "core.hooksPath=" + r.hooks,
+		"-c", "core.fsmonitor=false",
+		"-c", "protocol.allow=never",
+		"-c", "protocol.https.allow=always",
+		"-c", "protocol.file.allow=" + protocol,
+		"-c", "submodule.recurse=false",
+		"-c", "fetch.recurseSubmodules=false",
+		"-c", "credential.helper=",
+		"-c", "credential.interactive=false",
+		"-c", "http.followRedirects=false",
+		"-c", "core.attributesFile=/dev/null",
+		"-c", "core.quotePath=false",
+		"-c", "core.pager=cat",
+		"-c", "core.bigFileThreshold=1m",
+		"-c", "commit.gpgSign=false",
+		"-c", "tag.gpgSign=false",
+	}
+	argv = append(argv, args...)
+	cmd := exec.Command(r.git, argv...) // #nosec G204 -- executable is resolved from the configured trusted PATH; literal git subcommands, no shell.
+	cmd.Dir = r.dir
+	cmd.Env = []string{
+		"PATH=" + r.path, "HOME=" + r.home, "TMPDIR=" + r.temp,
+		"LANG=C", "LC_ALL=C", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_TERMINAL_PROMPT=0", "GIT_ATTR_NOSYSTEM=1", "GIT_NO_REPLACE_OBJECTS=1",
+		"GIT_AUTHOR_NAME=" + r.author.Name, "GIT_AUTHOR_EMAIL=" + r.author.Email,
+		"GIT_COMMITTER_NAME=" + r.author.Name, "GIT_COMMITTER_EMAIL=" + r.author.Email,
+	}
+	if authenticated && r.token != "" {
+		encoded := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + r.token))
+		cmd.Env = append(cmd.Env, "GIT_CONFIG_COUNT=1",
+			"GIT_CONFIG_KEY_0=http.https://"+r.host+"/.extraheader",
+			"GIT_CONFIG_VALUE_0=AUTHORIZATION: basic "+encoded)
+	}
+	cmd.WaitDelay = time.Second
+	return cmd, nil
+}
+
+// run never includes argv, environment, stderr, or OS error strings in errors.
+// Even a remote that echoes an encoded/fragmented secret cannot leak it there.
+func (r *Repo) run(ctx context.Context, authenticated bool, args ...string) (string, bool, error) {
+	return r.runIndex(ctx, authenticated, "", args...)
+}
+
+func (r *Repo) runIndex(ctx context.Context, authenticated bool, index string, args ...string) (string, bool, error) {
+	return r.runIndexLimit(ctx, authenticated, index, r.outputCap, args...)
+}
+
+func (r *Repo) runIndexLimit(ctx context.Context, authenticated bool, index string, limit int, args ...string) (string, bool, error) {
+	if r.observeCommand != nil {
+		r.observeCommand(args)
+	}
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+	cmd, err := r.command(ctx, authenticated, args...)
+	if err != nil {
+		return "", false, err
+	}
+	if index != "" {
+		cmd.Env = append(cmd.Env, "GIT_INDEX_FILE="+index)
+	}
+	out, diagnostic := &cappedBuffer{limit: limit}, &cappedBuffer{limit: r.outputCap}
+	cmd.Stdout, cmd.Stderr = out, diagnostic
+	err = execx.RunProcessGroup(ctx, cmd, execx.DefaultGracePeriod)
+	if ctx.Err() != nil {
+		return "", false, fmt.Errorf("git command: %w", ctx.Err())
+	}
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return "", false, fmt.Errorf("git command failed (exit %d)", exitErr.ExitCode())
+		}
+		return "", false, errors.New("git command could not complete")
+	}
+	return string(out.data), out.truncated, nil
+}
+
+func (r *Repo) complete(ctx context.Context, authenticated bool, args ...string) (string, error) {
+	out, truncated, err := r.run(ctx, authenticated, args...)
+	if err == nil && truncated {
+		err = ErrOutputLimit
+	}
+	return out, err
+}
+
+// os/exec serializes writes to each buffer. Continue draining after the cap.
+type cappedBuffer struct {
+	data      []byte
+	limit     int
+	truncated bool
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	keep := min(n, b.limit-len(b.data))
+	b.data = append(b.data, p[:keep]...)
+	b.truncated = b.truncated || keep != n
+	return n, nil
+}
+// Package gitx owns deterministic git operations for one disposable checkout.
+// Calls are serialized. Close removes private git HOME/hooks/temp directories;
+// the caller owns removal of the checkout. This is not a sandbox against hostile
+// processes running as the same user; callers must stop repository commands
+// before inspecting or publishing the checkout.
+package gitx
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/execx"
+)
+
+const (
+	// DefaultTimeout bounds every git invocation, including version checks.
+	DefaultTimeout = 2 * time.Minute
+	// DefaultOutputCap bounds stdout and stderr independently.
+	DefaultOutputCap = 256 << 10
+	// MinimumGitVersion includes fixes for CVE-2022-23521 and the 2025 clone
+	// vulnerabilities, including CVE-2025-48384. Older Git must not clone repos.
+	MinimumGitVersion = "2.50.1"
+)
+
+var (
+	// ErrTampered indicates changed git configuration or unexpected hooks.
+	ErrTampered = errors.New("git metadata was tampered with")
+	// ErrBranchGuard indicates an unsafe publication branch.
+	ErrBranchGuard = errors.New("git branch guard refused publication")
+	// ErrSubmodules indicates an unsupported submodule declaration.
+	ErrSubmodules = errors.New("repositories with .gitmodules are refused")
+	// ErrOutputLimit means structured output could not be read in full.
+	ErrOutputLimit = errors.New("git output exceeded its limit")
+)
+
+// CloneOptions describes validated repository coordinates, never an arbitrary
+// production URL. Branch is the branch to clone; DefaultBranch defaults to it
+// and should come from trusted repository metadata when cloning another branch.
+type CloneOptions struct {
+	Dir           string
+	Host          string
+	Owner         string
+	Name          string
+	Branch        string
+	DefaultBranch string
+	Depth         int
+	Token         string
+	Timeout       time.Duration
+	OutputCap     int
+	// TrustedPath is shared with command policies and doctor. Nil selects defaults.
+	TrustedPath []string
+	// ExcludedRoots includes the application data and workspace roots.
+	ExcludedRoots []string
+	// TestOnlyLocalRemote explicitly enables file transport. Only tests should
+	// set it, to an absolute local bare repository path. No local hard links.
+	TestOnlyLocalRemote string
+}
+
+// Author is operator-controlled identity, used for both author and committer.
+// The zero value selects patchbot <patchbot@users.noreply.github.com>.
+type Author struct {
+	Name  string
+	Email string
+}
+
+// Repo is one checkout. Its credentials and remote URL stay private.
+type Repo struct {
+	mu                                                    sync.Mutex
+	dir, git, home, hooks, temp, private                  string
+	host, remote, localRemote, token, base, defaultBranch string
+	configHash                                            string
+	author                                                Author
+	timeout                                               time.Duration
+	outputCap                                             int
+	closed                                                bool
+	path                                                  string
+	// observeCommand is a per-repository test seam, called under mu.
+	observeCommand func([]string)
+}
+
+var (
+	coordinate = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
+	hostname   = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$`)
+	objectID   = regexp.MustCompile(`^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$`)
+)
+
+// Clone checks MinimumGitVersion once and clones into a nonexistent Dir.
+// On failure it removes only directories it created, including a partial clone.
+func Clone(ctx context.Context, opts CloneOptions) (_ *Repo, cloneErr error) {
+	if runtime.GOOS == "windows" || runtime.GOOS == "plan9" {
+		return nil, errors.New("git process groups require a Unix host")
+	}
+	if !filepath.IsAbs(opts.Dir) || strings.ContainsRune(opts.Dir, 0) || opts.Depth < 0 ||
+		opts.Timeout < 0 || opts.OutputCap < 0 || !validBranch(opts.Branch) {
+		return nil, errors.New("invalid clone options")
+	}
+	if opts.DefaultBranch == "" {
+		opts.DefaultBranch = opts.Branch
+	}
+	if !validBranch(opts.DefaultBranch) || strings.ContainsRune(opts.Token, 0) {
+		return nil, errors.New("invalid clone options")
+	}
+	if _, err := os.Lstat(opts.Dir); !errors.Is(err, os.ErrNotExist) {
+		return nil, errors.New("clone destination must not exist")
+	}
+	r := &Repo{dir: opts.Dir, host: opts.Host, token: opts.Token, defaultBranch: opts.DefaultBranch,
+		timeout: opts.Timeout, outputCap: opts.OutputCap, localRemote: opts.TestOnlyLocalRemote,
+		author: Author{"patchbot", "patchbot@users.noreply.github.com"}}
+	if r.timeout == 0 {
+		r.timeout = DefaultTimeout
+	}
+	if r.outputCap == 0 {
+		r.outputCap = DefaultOutputCap
+	}
+	if r.outputCap < 64 {
+		return nil, errors.New("output cap must be at least 64 bytes")
+	}
+	if r.localRemote != "" {
+		if !filepath.IsAbs(r.localRemote) || strings.ContainsRune(r.localRemote, 0) {
+			return nil, errors.New("test remote must be an absolute local path")
+		}
+		r.remote = (&url.URL{Scheme: "file", Path: r.localRemote}).String()
+	} else {
+		if !hostname.MatchString(opts.Host) || strings.Contains(opts.Host, "..") ||
+			!coordinate.MatchString(opts.Owner) || !coordinate.MatchString(opts.Name) ||
+			opts.Owner == "." || opts.Owner == ".." || opts.Name == "." || opts.Name == ".." {
+			return nil, errors.New("invalid repository coordinates")
+		}
+		r.remote = "https://" + opts.Host + "/" + opts.Owner + "/" + opts.Name + ".git"
+	}
+	dirs := opts.TrustedPath
+	if dirs == nil {
+		dirs = filepath.SplitList(execx.TrustedPath)
+	}
+	r.path = strings.Join(dirs, string(filepath.ListSeparator))
+	var err error
+	r.git, err = ResolveGit(dirs, append([]string{opts.Dir}, opts.ExcludedRoots...)...)
+	if err != nil {
+		return nil, err
+	}
+	private, err := os.MkdirTemp("", "patchbot-git-")
+	if err != nil {
+		return nil, errors.New("create private git directories failed")
+	}
+	r.private = private
+	defer func() {
+		if cloneErr != nil {
+			_ = os.RemoveAll(private)
+		}
+	}()
+	r.home, r.hooks, r.temp = filepath.Join(private, "home"), filepath.Join(private, "hooks"), filepath.Join(private, "tmp")
+	for _, dir := range []string{r.home, r.hooks, r.temp} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			return nil, errors.New("create private git directory failed")
+		}
+	}
+	// Reserve the destination ourselves so a failed clone never removes a
+	// directory another actor created between validation and git clone.
+	if err := os.Mkdir(opts.Dir, 0700); err != nil {
+		return nil, errors.New("reserve clone destination failed")
+	}
+	defer func() {
+		if cloneErr != nil {
+			_ = os.RemoveAll(opts.Dir)
+		}
+	}()
+	r.dir = private
+	version, err := r.complete(ctx, false, "--version")
+	if err != nil {
+		return nil, err
+	}
+	if err := checkGitVersion(version); err != nil {
+		return nil, err
+	}
+	args := []string{"clone", "--no-local", "--single-branch", "--no-tags", "--no-recurse-submodules", "--template=" + r.hooks, "--branch", opts.Branch}
+	if opts.Depth > 0 {
+		args = append(args, "--depth", fmt.Sprint(opts.Depth))
+	}
+	args = append(args, "--", r.remote, opts.Dir)
+	if _, err := r.complete(ctx, true, args...); err != nil {
+		return nil, err
+	}
+	r.dir = opts.Dir
+	if err := r.noSubmodules(ctx); err != nil {
+		return nil, err
+	}
+	r.base, err = r.head(ctx)
+	if err != nil {
+		return nil, err
+	}
+	r.configHash, err = r.hashConfig()
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// Dir is the absolute checkout path; it remains valid after Close.
+func (r *Repo) Dir() string { return r.dir }
+
+// Close discards credentials and removes the private git execution directories.
+// The workspace owner is responsible for removing the checkout itself.
+func (r *Repo) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.closed, r.token = true, ""
+	if err := os.RemoveAll(r.private); err != nil {
+		return errors.New("remove private git directories failed")
+	}
+	return nil
+}
+
+func validBranch(name string) bool {
+	if name == "" || name == "@" || strings.HasPrefix(name, "-") || strings.HasSuffix(name, ".") ||
+		strings.ContainsAny(name, " ~^:?*[\\\x00\t\r\n") || strings.Contains(name, "..") || strings.Contains(name, "@{") {
+		return false
+	}
+	for _, part := range strings.Split(name, "/") {
+		if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return false
+		}
+		for _, ch := range part {
+			if ch < 32 || ch == 127 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (r *Repo) head(ctx context.Context) (string, error) {
+	out, err := r.complete(ctx, false, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return "", err
+	}
+	sha := strings.TrimSpace(out)
+	if !objectID.MatchString(sha) {
+		return "", errors.New("git returned an invalid commit ID")
+	}
+	return sha, nil
+}
+
+// HeadSHA returns the checked-out commit ID.
+func (r *Repo) HeadSHA(ctx context.Context) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.verify(); err != nil {
+		return "", err
+	}
+	return r.head(ctx)
+}
+
+// CheckoutSHA detaches at a full commit ID and updates the base for future diffs.
+// Fetches by ID when shallow history does not contain the approved spec's base.
+// As required, fetch gets no token; a private host must permit this fetch without
+// credentials, or the caller must initially use a full clone.
+func (r *Repo) CheckoutSHA(ctx context.Context, sha string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !objectID.MatchString(sha) {
+		return errors.New("checkout requires a full commit ID")
+	}
+	if err := r.verify(); err != nil {
+		return err
+	}
+	if _, err := r.complete(ctx, false, "cat-file", "-e", sha+"^{commit}"); err != nil {
+		if _, err := r.complete(ctx, false, "fetch", "--no-tags", "--recurse-submodules=no", "--depth=1", "--", r.remote, sha); err != nil {
+			return err
+		}
+	}
+	if _, err := r.complete(ctx, false, "checkout", "--detach", sha, "--"); err != nil {
+		return err
+	}
+	if err := r.noSubmodules(ctx); err != nil {
+		return err
+	}
+	var err error
+	r.base, err = r.head(ctx)
+	return err
+}
+
+// CreateBranch creates and switches to a new local branch.
+func (r *Repo) CreateBranch(ctx context.Context, name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !validBranch(name) {
+		return ErrBranchGuard
+	}
+	if err := r.verify(); err != nil {
+		return err
+	}
+	_, err := r.complete(ctx, false, "switch", "--no-guess", "-c", name, "--")
+	return err
+}
+
+func (r *Repo) noSubmodules(ctx context.Context) error {
+	// ls-tree also finds .gitmodules hidden by a sparse checkout or deletion.
+	out, err := r.complete(ctx, false, "ls-tree", "-r", "-z", "--name-only", "HEAD")
+	if err != nil {
+		return err
+	}
+	for _, path := range strings.Split(out, "\x00") {
+		for _, part := range strings.Split(path, "/") {
+			if strings.EqualFold(part, ".gitmodules") {
+				return ErrSubmodules
+			}
+		}
+	}
+	return nil
+}
+
+// ResolveGit is the single git lookup used by clone/push and doctor.
+func ResolveGit(dirs []string, excluded ...string) (string, error) {
+	return execx.ResolveExecutable("git", dirs, excluded...)
+}
+package gitx
+
+import (
+	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+var gitVersionPattern = regexp.MustCompile(`^git version ([0-9]+)\.([0-9]+)\.([0-9]+)(?:$|[. +\-])`)
+
+// parseGitVersion accepts vendor suffixes, including Windows and Apple builds.
+func parseGitVersion(out string) ([3]int, error) {
+	var version [3]int
+	parts := gitVersionPattern.FindStringSubmatch(strings.TrimSpace(out))
+	if parts == nil {
+		return version, fmt.Errorf("unrecognized git version %q", strings.TrimSpace(out))
+	}
+	for i := range version {
+		n, err := strconv.Atoi(parts[i+1])
+		if err != nil {
+			return version, fmt.Errorf("invalid git version component: %w", err)
+		}
+		version[i] = n
+	}
+	return version, nil
+}
+
+// CheckVersion validates the git --version output against the clone safety floor.
+func CheckVersion(out string) error {
+	return checkGitVersion(out)
+}
+
+func checkGitVersion(out string) error {
+	found, err := parseGitVersion(out)
+	if err == nil {
+		required, parseErr := parseGitVersion("git version " + MinimumGitVersion)
+		if parseErr != nil {
+			return parseErr
+		}
+		for i := range found {
+			if found[i] > required[i] {
+				return nil
+			}
+			if found[i] < required[i] {
+				break
+			}
+			if i == len(found)-1 {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("found %q; git >= %s is required", strings.TrimSpace(out), MinimumGitVersion)
+}
+package workspace
+
+import (
+	"cmp"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"syscall"
+)
+
+// maxSymlinkHops bounds how many symlinks one path may lead through. A loop
+// runs into it.
+const maxSymlinkHops = 32
+
+// New files and directories are private. Rewrites retain owner permissions,
+// including executable bits needed by repository scripts.
+const (
+	newFileMode fs.FileMode = 0o600
+	newDirMode  fs.FileMode = 0o700
+)
+
+// Local is a Workspace on a local directory. It is safe for concurrent use.
+//
+// Every operation works in three steps:
+//
+//  1. The path is validated as text and checked against the protected-path
+//     rules (Policy).
+//  2. The path is resolved by hand, one component at a time, inside the
+//     os.Root. A symlink is replaced by its target, and the rules are
+//     applied again to every path this produces, so an alias of a protected
+//     path is refused. A target that is absolute or climbs out of the
+//     checkout is refused. Each real file or directory on the way is also
+//     compared by identity with the protected paths that exist, which
+//     catches a name the file system folds onto a protected one in a way
+//     the rules did not predict.
+//  3. The operation runs on the resolved, symlink-free path. The directory
+//     that holds the file is opened level by level through os.Root, and
+//     each level is verified not to be a symlink, so a path swapped for a
+//     symlink between step 2 and step 3 is refused instead of followed.
+//
+// os.Root is the boundary for leaving the checkout: even if steps 1 and 2
+// had a bug, step 3 cannot open anything outside it.
+type Local struct {
+	dir    string // absolute path of the checkout
+	runDir string // per-run directory that holds dir, or "" when not made by a Manager
+	root   *os.Root
+	policy *Policy
+	opts   Options
+
+	closeOnce sync.Once
+	closeErr  error
+	onClose   func(keep bool) error
+	// testHook forces namespace changes at acquisition/use boundaries in tests.
+	// It is set before an operation starts and is nil in production.
+	testHook func(stage string)
+}
+
+var _ Workspace = (*Local)(nil)
+
+// Open returns a workspace on an existing directory.
+func Open(dir string, opts Options) (*Local, error) {
+	policy, err := NewPolicy(opts.Protected)
+	if err != nil {
+		return nil, fmt.Errorf("workspace: %w", err)
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("workspace: %w", err)
+	}
+	root, err := os.OpenRoot(abs + string(os.PathSeparator) + ".")
+	if err != nil {
+		return nil, fmt.Errorf("workspace: open checkout: %w", err)
+	}
+	return localFromRoot(abs, root, policy, opts), nil
+}
+
+// localFromRoot takes ownership of a handle acquired through the caller's
+// pinned root. In particular, Manager must never reopen dir by host pathname.
+func localFromRoot(dir string, root *os.Root, policy *Policy, opts Options) *Local {
+	return &Local{dir: dir, root: root, policy: policy, opts: opts.withDefaults()}
+}
+
+func (l *Local) hook(stage string) {
+	if l.testHook != nil {
+		l.testHook(stage)
+	}
+}
+
+// Dir returns the absolute host path of the checkout.
+func (l *Local) Dir() string { return l.dir }
+
+// MaxWriteBytes returns the allocation limit used by file editing tools.
+func (l *Local) MaxWriteBytes() int64 { return l.opts.MaxWriteBytes }
+
+// RunDir returns the per-run directory that holds the checkout, where the
+// harness may keep other per-run files next to it. It is empty for a
+// workspace that was not made by a Manager.
+func (l *Local) RunDir() string { return l.runDir }
+
+// Policy returns the path rules of the workspace.
+func (l *Local) Policy() *Policy { return l.policy }
+
+// Close releases the checkout. Unless keep is true, a checkout made by a
+// Manager is deleted. Later calls return the result of the first.
+func (l *Local) Close(keep bool) error {
+	l.closeOnce.Do(func() {
+		l.closeErr = l.root.Close()
+		if l.onClose != nil {
+			l.closeErr = errors.Join(l.closeErr, l.onClose(keep))
+		}
+	})
+	return l.closeErr
+}
+
+// ReadFile returns the content of a regular file.
+func (l *Local) ReadFile(name string) ([]byte, error) {
+	const op = "read"
+	r, err := l.resolve(name, false)
+	if err != nil {
+		return nil, l.fail(op, name, err)
+	}
+	if err := needRegular(r.info); err != nil {
+		return nil, l.fail(op, name, err)
+	}
+	limit := l.opts.MaxReadBytes
+	if r.info.Size() > limit {
+		return nil, l.fail(op, name, tooLarge(r.info.Size(), limit))
+	}
+	pinned, err := l.pinDir(r, path.Dir(r.path), false)
+	if err != nil {
+		return nil, l.fail(op, name, err)
+	}
+	defer pinned.close()
+	if err := pinned.validate(); err != nil {
+		return nil, l.fail(op, name, err)
+	}
+	f, err := openRegular(pinned.root(), path.Base(r.path))
+	if err != nil {
+		return nil, l.fail(op, name, err)
+	}
+	defer func() { _ = f.Close() }()
+	if err := pinned.checkFile(f); err != nil {
+		return nil, l.fail(op, name, err)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, l.fail(op, name, err)
+	}
+	if int64(len(data)) > limit {
+		return nil, l.fail(op, name, tooLarge(int64(len(data)), limit))
+	}
+	if err := pinned.checkFile(f); err != nil {
+		return nil, l.fail(op, name, err)
+	}
+	return data, nil
+}
+
+// WriteFile creates or replaces a regular file. The content goes to a
+// temporary file in the same directory, which is then renamed over the
+// destination, so a reader sees the old content or the new and never a
+// partial file. An existing file keeps its permission bits.
+//
+// The temporary file is not synced to disk: a checkout is rebuilt from the
+// remote after a crash, so surviving one is not needed.
+func (l *Local) WriteFile(name string, data []byte) error {
+	const op = "write"
+	if limit := l.opts.MaxWriteBytes; int64(len(data)) > limit {
+		return l.fail(op, name, tooLarge(int64(len(data)), limit))
+	}
+	r, err := l.resolve(name, true)
+	if err != nil {
+		return l.fail(op, name, err)
+	}
+	if r.path == "." {
+		return l.fail(op, name, &lexError{kind: ErrNotRegular, detail: "it is a directory"})
+	}
+	mode := newFileMode
+	if r.info != nil {
+		if err := needRegular(r.info); err != nil {
+			return l.fail(op, name, err)
+		}
+		mode = r.info.Mode().Perm() & 0o700
+	}
+	pinned, err := l.pinDir(r, path.Dir(r.path), true)
+	if err != nil {
+		return l.fail(op, name, err)
+	}
+	defer pinned.close()
+	if err := pinned.validate(); err != nil {
+		return l.fail(op, name, err)
+	}
+	validate := func() error { return pinned.validateTarget(path.Base(r.path)) }
+	if err := validate(); err != nil {
+		return l.fail(op, name, err)
+	}
+	if err := writeAtomic(pinned.root(), path.Base(r.path), data, mode, validate); err != nil {
+		return l.fail(op, name, err)
+	}
+	return nil
+}
+
+// writeAtomic writes data to a temporary file in dir and renames it to base.
+func writeAtomic(dir *os.Root, base string, data []byte, mode fs.FileMode, validate func() error) (err error) {
+	tmp := ".patchbot-" + rand.Text() + ".tmp"
+	f, err := dir.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = dir.Remove(tmp)
+		}
+	}()
+	if _, err = f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err = f.Chmod(mode); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	// The destination was a regular file or missing when the path was
+	// resolved. If it has become anything else, leave it alone. A rename
+	// replaces the directory entry and never writes through a link.
+	switch li, statErr := dir.Lstat(base); {
+	case statErr == nil && !li.Mode().IsRegular():
+		return &lexError{kind: ErrNotRegular, detail: "the destination changed during the write"}
+	case statErr != nil && !errors.Is(statErr, fs.ErrNotExist):
+		return statErr
+	}
+	if err := validate(); err != nil {
+		return err
+	}
+	return dir.Rename(tmp, base)
+}
+
+// Stat describes the file a path resolves to.
+func (l *Local) Stat(name string) (fs.FileInfo, error) {
+	r, err := l.resolve(name, false)
+	if err != nil {
+		return nil, l.fail("stat", name, err)
+	}
+	dir := path.Dir(r.path)
+	if r.info.IsDir() {
+		dir = r.path
+	}
+	pinned, err := l.pinDir(r, dir, false)
+	if err != nil {
+		return nil, l.fail("stat", name, err)
+	}
+	defer pinned.close()
+	if err := pinned.validate(); err != nil {
+		return nil, l.fail("stat", name, err)
+	}
+	return r.info, nil
+}
+
+// ReadDir lists a directory sorted by name, without its protected entries.
+func (l *Local) ReadDir(name string) ([]fs.DirEntry, error) {
+	const op = "list"
+	r, err := l.resolve(name, false)
+	if err != nil {
+		return nil, l.fail(op, name, err)
+	}
+	if !r.info.IsDir() {
+		return nil, l.fail(op, name, ErrNotDir)
+	}
+	pinned, err := l.pinDir(r, r.path, false)
+	if err != nil {
+		return nil, l.fail(op, name, err)
+	}
+	defer pinned.close()
+	if err := pinned.validate(); err != nil {
+		return nil, l.fail(op, name, err)
+	}
+	dir := pinned.root()
+	f, err := dir.Open(".")
+	if err != nil {
+		return nil, l.fail(op, name, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	limit := l.opts.MaxDirEntries
+	var names []string
+	for len(names) <= limit {
+		batch, err := f.Readdirnames(limit + 1 - len(names))
+		names = append(names, batch...)
+		if errors.Is(err, io.EOF) || (err == nil && len(batch) == 0) {
+			break
+		}
+		if err != nil {
+			return nil, l.fail(op, name, err)
+		}
+	}
+	truncated := len(names) > limit
+	if truncated {
+		names = names[:limit]
+	}
+	entries := make([]fs.DirEntry, 0, len(names))
+	for _, child := range names {
+		// A protected entry is left out. So is an entry whose name is not
+		// a valid path here, since no tool could address it.
+		if _, err := l.policy.Check(path.Join(r.path, child)); err != nil {
+			continue
+		}
+		// The info comes from the pinned directory, not from the lazy
+		// DirEntry.Info of package os, which looks the name up by host
+		// path again.
+		info, err := dir.Lstat(child)
+		if err != nil {
+			continue // removed since it was listed
+		}
+		entries = append(entries, fs.FileInfoToDirEntry(info))
+	}
+	if err := pinned.validate(); err != nil {
+		return nil, l.fail(op, name, err)
+	}
+	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return cmp.Compare(a.Name(), b.Name()) })
+	if truncated {
+		return entries, l.fail(op, name, &lexError{
+			kind:   ErrDirTruncated,
+			detail: fmt.Sprintf("only %d entries were read", limit),
+		})
+	}
+	return entries, nil
+}
+
+// resolved is the result of resolving a path inside the checkout.
+type resolved struct {
+	// path is clean, relative to the checkout and free of symlinks at the
+	// time it was resolved.
+	path string
+	// info describes path. It is nil when the path does not exist yet,
+	// which only happens when resolving for a write.
+	info fs.FileInfo
+	// dirs binds each existing directory to the dev+ino approved by resolve.
+	dirs  map[string]fs.FileInfo
+	guard protectedSet
+}
+
+// component is one name still to be resolved. fromLink marks a name that
+// came from a symlink's target rather than from the caller.
+type component struct {
+	name     string
+	fromLink bool
+}
+
+// resolve validates name and follows it through the checkout by hand. With
+// create set, the tail of the path may be missing.
+func (l *Local) resolve(name string, create bool) (resolved, error) {
+	clean, err := l.policy.Check(name)
+	if err != nil {
+		return resolved{}, err
+	}
+	var pending []component
+	if clean != "." {
+		for part := range strings.SplitSeq(clean, "/") {
+			pending = append(pending, component{name: part})
+		}
+	}
+	guard := l.protectedFiles()
+	rootInfo, err := l.root.Stat(".")
+	if err != nil {
+		return resolved{}, err
+	}
+	dirs := map[string]fs.FileInfo{".": rootInfo}
+
+	var (
+		stack   []string    // the resolved path so far
+		info    fs.FileInfo // describes stack, when known
+		hops    int
+		missing bool // the rest of the path does not exist
+	)
+	for len(pending) > 0 {
+		c := pending[0]
+		pending = pending[1:]
+		switch c.name {
+		case "", ".":
+			continue
+		case "..":
+			// Only a symlink target can hold "..". The stack is free of
+			// symlinks, so going up is a plain pop.
+			if len(stack) == 0 {
+				return resolved{}, escapes("a symlink on the path points outside the repository")
+			}
+			stack, info = stack[:len(stack)-1], nil
+			continue
+		}
+		candidate := c.name
+		if len(stack) > 0 {
+			candidate = strings.Join(stack, "/") + "/" + c.name
+		}
+		if rule, ok := l.policy.Protected(candidate); ok {
+			return resolved{}, &lexError{kind: ErrPathProtected, detail: rule}
+		}
+		if missing {
+			stack, info = append(stack, c.name), nil
+			continue
+		}
+		fi, err := l.root.Lstat(candidate)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			if c.fromLink {
+				return resolved{}, &lexError{kind: ErrSymlink, detail: "a symlink on the path points to a missing file"}
+			}
+			if !create {
+				return resolved{}, fs.ErrNotExist
+			}
+			missing = true
+			stack, info = append(stack, c.name), nil
+			continue
+		case err != nil:
+			return resolved{}, err
+		}
+		if fi.Mode()&fs.ModeSymlink != 0 {
+			hops++
+			if hops > maxSymlinkHops {
+				return resolved{}, &lexError{kind: ErrSymlink, detail: "too many symlinks on the path; it may be a loop"}
+			}
+			target, err := l.root.Readlink(candidate)
+			if err != nil {
+				return resolved{}, err
+			}
+			parts, err := linkTarget(target)
+			if err != nil {
+				return resolved{}, err
+			}
+			pending = append(parts, pending...)
+			continue
+		}
+		if rule, ok := guard.match(fi); ok {
+			return resolved{}, &lexError{kind: ErrPathProtected, detail: rule}
+		}
+		if fi.IsDir() {
+			dirs[candidate] = fi
+		}
+		stack, info = append(stack, c.name), fi
+	}
+
+	out := resolved{path: ".", dirs: dirs, guard: guard}
+	if len(stack) > 0 {
+		out.path = strings.Join(stack, "/")
+	}
+	if missing {
+		return out, nil
+	}
+	if info == nil {
+		if info, err = l.root.Lstat(out.path); err != nil {
+			return resolved{}, err
+		}
+	}
+	out.info = info
+	return out, nil
+}
+
+// linkTarget splits a symlink target into components to resolve.
+func linkTarget(target string) ([]component, error) {
+	slashed := filepath.ToSlash(target)
+	switch {
+	case target == "":
+		return nil, &lexError{kind: ErrSymlink, detail: "a symlink on the path has an empty target"}
+	case filepath.IsAbs(target) || strings.HasPrefix(slashed, "/") || filepath.VolumeName(target) != "":
+		return nil, escapes("a symlink on the path points outside the repository")
+	case len(target) > MaxPathBytes:
+		return nil, &lexError{kind: ErrSymlink, detail: "a symlink on the path has an over-long target"}
+	}
+	var parts []component
+	for part := range strings.SplitSeq(slashed, "/") {
+		if part != "" && part != "." && part != ".." {
+			if _, err := cleanPath(part); err != nil {
+				return nil, err
+			}
+		}
+		parts = append(parts, component{name: part, fromLink: true})
+	}
+	return parts, nil
+}
+
+// protectedSet holds the identity of each protected path that exists.
+type protectedSet struct {
+	infos []fs.FileInfo
+	rules []string
+}
+
+// protectedFiles looks up the protected paths that have a fixed location:
+// .git at the root and every prefix rule.
+func (l *Local) protectedFiles() protectedSet {
+	var set protectedSet
+	add := func(name, rule string) {
+		// Lstat describes the entry itself and Stat what it leads to. They
+		// differ when the protected path is a symlink.
+		if fi, err := l.root.Lstat(name); err == nil {
+			set.infos, set.rules = append(set.infos, fi), append(set.rules, rule)
+		}
+		if fi, err := l.root.Stat(name); err == nil {
+			set.infos, set.rules = append(set.infos, fi), append(set.rules, rule)
+		}
+	}
+	add(".git", ".git")
+	for _, r := range l.policy.rules {
+		add(r.display, r.display)
+	}
+	return set
+}
+
+func (s protectedSet) match(fi fs.FileInfo) (rule string, ok bool) {
+	for i, info := range s.infos {
+		if os.SameFile(fi, info) {
+			return s.rules[i], true
+		}
+	}
+	return "", false
+}
+
+// openDirectory checks the entry without opening special files. The trailing
+// "/." deliberately makes name an intermediate component of Root.OpenRoot:
+// Go's Unix root walker opens it with O_DIRECTORY (unlike a terminal component).
+// Thus even a swap to a FIFO after Lstat cannot block. The final "." refers to
+// that already opened directory, and all acquisition stays relative to parent.
+func openDirectory(parent *os.Root, name string, approved fs.FileInfo, beforeOpen func()) (*os.Root, error) {
+	entry, err := parent.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !entry.IsDir() {
+		return nil, ErrNotDir
+	}
+	if !os.SameFile(entry, approved) {
+		return nil, changedPath()
+	}
+	if beforeOpen != nil {
+		beforeOpen()
+	}
+	next, err := parent.OpenRoot(name + "/.")
+	if err != nil {
+		return nil, err
+	}
+	opened, err := next.Stat(".")
+	if err == nil && !os.SameFile(opened, approved) {
+		err = changedPath()
+	}
+	entry, statErr := parent.Lstat(name)
+	if err == nil {
+		err = statErr
+		if err == nil && (!entry.IsDir() || !os.SameFile(entry, approved)) {
+			err = changedPath()
+		}
+	}
+	if err != nil {
+		_ = next.Close()
+		return nil, err
+	}
+	return next, nil
+}
+
+func changedPath() error {
+	return &lexError{kind: ErrSymlink, detail: "the path changed during the operation"}
+}
+
+type pinnedLevel struct {
+	root *os.Root
+	path string
+	info fs.FileInfo
+}
+
+type pinnedDir struct {
+	local  *Local
+	levels []pinnedLevel // retain parents so namespace edges can be rechecked
+	guard  protectedSet
+}
+
+func (p *pinnedDir) root() *os.Root { return p.levels[len(p.levels)-1].root }
+
+func (p *pinnedDir) close() {
+	for i := len(p.levels) - 1; i > 0; i-- {
+		_ = p.levels[i].root.Close()
+	}
+}
+
+// validate rechecks both the approved directory identities and their namespace
+// edges, plus protected identities captured during resolution and at use time.
+// A retained descriptor must not become an alias of a protected directory.
+func (p *pinnedDir) validate() error {
+	current := p.local.protectedFiles()
+	for i, level := range p.levels {
+		opened, err := level.root.Stat(".")
+		if err != nil {
+			return err
+		}
+		if !os.SameFile(opened, level.info) {
+			return changedPath()
+		}
+		if i == 0 {
+			continue // the checkout root itself is the jail boundary
+		}
+		for _, guard := range []protectedSet{p.guard, current} {
+			if rule, ok := guard.match(opened); ok {
+				return &lexError{kind: ErrPathProtected, detail: rule}
+			}
+		}
+		entry, err := p.levels[i-1].root.Lstat(path.Base(level.path))
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() || !os.SameFile(entry, level.info) {
+			return changedPath()
+		}
+	}
+	return nil
+}
+
+func (p *pinnedDir) checkFile(f *os.File) error {
+	if err := p.validate(); err != nil {
+		return err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	for _, guard := range []protectedSet{p.guard, p.local.protectedFiles()} {
+		if rule, ok := guard.match(info); ok {
+			return &lexError{kind: ErrPathProtected, detail: rule}
+		}
+	}
+	return nil
+}
+
+// validateTarget also checks a destination that has appeared or changed since
+// resolution, including aliases of configured protected regular files.
+func (p *pinnedDir) validateTarget(base string) error {
+	if err := p.validate(); err != nil {
+		return err
+	}
+	info, err := p.root().Lstat(base)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, guard := range []protectedSet{p.guard, p.local.protectedFiles()} {
+		if rule, ok := guard.match(info); ok {
+			return &lexError{kind: ErrPathProtected, detail: rule}
+		}
+	}
+	return nil
+}
+
+// pinDir binds every acquired handle to the identities approved by resolve.
+// A missing directory is approved only after this operation creates it.
+func (l *Local) pinDir(r resolved, dir string, create bool) (_ *pinnedDir, err error) {
+	l.hook("resolved")
+	p := &pinnedDir{local: l, guard: r.guard, levels: []pinnedLevel{{root: l.root, path: ".", info: r.dirs["."]}}}
+	defer func() {
+		if err != nil {
+			p.close()
+		}
+	}()
+	if dir != "." {
+		full := ""
+		for name := range strings.SplitSeq(dir, "/") {
+			full = path.Join(full, name)
+			cur := p.root()
+			approved := r.dirs[full]
+			if approved == nil {
+				if !create {
+					return nil, changedPath()
+				}
+				// Do not adopt an entry planted since resolution. If another
+				// operation created it, the caller can retry from resolution.
+				if err := p.validate(); err != nil {
+					return nil, err
+				}
+				if err := cur.Mkdir(name, newDirMode); err != nil {
+					return nil, err
+				}
+				approved, err = cur.Lstat(name)
+				if err != nil {
+					return nil, err
+				}
+			}
+			next, err := openDirectory(cur, name, approved, func() { l.hook("before-open-dir") })
+			if err != nil {
+				return nil, err
+			}
+			p.levels = append(p.levels, pinnedLevel{root: next, path: full, info: approved})
+			if err := p.validate(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	l.hook("pinned")
+	return p, nil
+}
+
+// openAttempts is how often openRegular tries again when the file is
+// replaced between its check and its open, as an atomic write by another
+// goroutine or a test command does.
+const openAttempts = 16
+
+// openRegular opens a regular file in a pinned directory without following
+// a symlink. os.Root follows symlinks that stay inside the checkout and has
+// no way to turn that off, so the name is checked first to be a regular
+// file, and the opened file must be that same file. If the name was swapped
+// for a symlink in between, the identities differ and the file is dropped.
+func openRegular(dir *os.Root, base string) (*os.File, error) {
+	for range openAttempts {
+		entry, err := dir.Lstat(base)
+		if err != nil {
+			return nil, err
+		}
+		if err := needRegular(entry); err != nil {
+			if entry.Mode()&fs.ModeSymlink != 0 {
+				break
+			}
+			return nil, err
+		}
+		// O_NONBLOCK keeps the open from hanging if the file was swapped
+		// for a FIFO. It has no effect on a regular file.
+		f, err := dir.OpenFile(base, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return nil, err
+		}
+		opened, err := f.Stat()
+		if err == nil && os.SameFile(entry, opened) {
+			return f, nil
+		}
+		_ = f.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return nil, &lexError{kind: ErrSymlink, detail: "the path changed during the operation"}
+}
+
+func needRegular(info fs.FileInfo) error {
+	switch {
+	case info.IsDir():
+		return &lexError{kind: ErrNotRegular, detail: "it is a directory"}
+	case !info.Mode().IsRegular():
+		return &lexError{kind: ErrNotRegular, detail: "it is a device, FIFO, socket or other special file"}
+	}
+	return nil
+}
+
+func tooLarge(size, limit int64) error {
+	return &lexError{kind: ErrTooLarge, detail: fmt.Sprintf("%d bytes, the limit is %d", size, limit)}
+}
+
+// fail turns an internal error into the PathError a caller sees.
+func (l *Local) fail(op, name string, err error) error {
+	var le *lexError
+	if errors.As(err, &le) {
+		return pathErr(op, name, le.kind, le.detail)
+	}
+	return pathErr(op, name, err, "")
+}
+package workspace
+
+import (
+	"fmt"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
+)
+
+// The lexical limits on a path.
+const (
+	// MaxPathBytes is the longest path accepted. It matches PATH_MAX on
+	// macOS, the smaller of the supported systems.
+	MaxPathBytes = 1024
+	// MaxComponentBytes is the longest single name accepted.
+	MaxComponentBytes = 255
+	// MaxPathDepth is the most components a path may have.
+	MaxPathDepth = 64
+)
+
+// Policy is the lexical half of the jail: it validates a path as text and
+// says whether it is protected. It never touches the file system. Symlinks
+// are handled by Local, which applies the policy again to every path a
+// symlink leads to.
+type Policy struct {
+	rules []prefixRule
+}
+
+// prefixRule protects one path anchored at the checkout root, and everything
+// below it.
+type prefixRule struct {
+	keys    []string // the match key of each component
+	display string
+}
+
+// NewPolicy returns the built-in rules plus the extra protected paths. The
+// built-in rules are:
+//
+//   - a component named .git at any depth
+//   - a component whose name starts with .env at any depth (.env, .env.local,
+//     .envrc)
+//   - .github/workflows at the checkout root
+//
+// Names are NFC-normalized before case folding, so canonically equivalent
+// spellings and case variants are protected even when the path is absent.
+// The same match keys apply to configured rules, candidates and symlink targets.
+func NewPolicy(extra []string) (*Policy, error) {
+	p := &Policy{rules: []prefixRule{{keys: []string{matchKey(".github"), matchKey("workflows")}, display: ".github/workflows"}}}
+	for _, raw := range extra {
+		clean, err := cleanPath(raw)
+		if err != nil {
+			return nil, fmt.Errorf("protected path %q: %w", raw, err)
+		}
+		if clean == "." {
+			return nil, fmt.Errorf("protected path %q: it would protect the whole checkout", raw)
+		}
+		rule := prefixRule{display: clean}
+		for name := range strings.SplitSeq(clean, "/") {
+			key := matchKey(name)
+			if key == "" {
+				return nil, fmt.Errorf("protected path %q: component %q cannot be matched", raw, name)
+			}
+			rule.keys = append(rule.keys, key)
+		}
+		p.rules = append(p.rules, rule)
+	}
+	return p, nil
+}
+
+// lexError is a lexical failure before it is tied to an operation.
+type lexError struct {
+	kind   error
+	detail string
+}
+
+func (e *lexError) Error() string { return e.kind.Error() + " (" + e.detail + ")" }
+func (e *lexError) Unwrap() error { return e.kind }
+
+func invalid(detail string) error { return &lexError{kind: ErrInvalidPath, detail: detail} }
+func escapes(detail string) error { return &lexError{kind: ErrPathEscape, detail: detail} }
+
+// Clean validates a path as text and returns its canonical form: components
+// joined by single slashes, with no ".", no empty component and no trailing
+// slash. The checkout itself is ".". The error wraps ErrInvalidPath or
+// ErrPathEscape.
+//
+// Clean is not the security boundary. That is os.Root. Clean exists to give
+// clear errors and a canonical path for the protected-path rules.
+func (p *Policy) Clean(path string) (string, error) { return cleanPath(path) }
+
+// Check runs Clean and then refuses a protected path. The error for a
+// protected path wraps ErrPathProtected.
+func (p *Policy) Check(path string) (string, error) {
+	clean, err := cleanPath(path)
+	if err != nil {
+		return "", err
+	}
+	if rule, ok := p.Protected(clean); ok {
+		return "", &lexError{kind: ErrPathProtected, detail: rule}
+	}
+	return clean, nil
+}
+
+func cleanPath(path string) (string, error) {
+	switch {
+	case path == "":
+		return "", invalid("the path is empty")
+	case len(path) > MaxPathBytes:
+		return "", invalid(fmt.Sprintf("longer than %d bytes", MaxPathBytes))
+	case !utf8.ValidString(path):
+		return "", invalid("not valid UTF-8")
+	}
+	for _, r := range path {
+		switch {
+		case r == 0:
+			return "", invalid("holds a NUL byte")
+		case r < 0x20 || r == 0x7f:
+			return "", invalid("holds a control character")
+		case r == '\\':
+			// A backslash is a separator on Windows and the start of a UNC
+			// or device path. Paths here always use "/".
+			return "", invalid(`holds a backslash; use "/" between names`)
+		}
+	}
+	switch {
+	case path[0] == '/':
+		return "", escapes("absolute paths are not allowed; give a path relative to the repository root")
+	case len(path) >= 2 && path[1] == ':' && isASCIILetter(path[0]):
+		return "", escapes("volume paths are not allowed; give a path relative to the repository root")
+	}
+	parts := make([]string, 0, 8)
+	for name := range strings.SplitSeq(path, "/") {
+		switch {
+		case name == "" || name == ".":
+			continue
+		case name == "..":
+			return "", escapes(`".." is not allowed`)
+		case len(name) > MaxComponentBytes:
+			return "", invalid(fmt.Sprintf("a name is longer than %d bytes", MaxComponentBytes))
+		}
+		// Combining marks are safe now that all policy keys use NFC. Reject
+		// sequences for which norm inserts a stream-safety GraphemeJoiner:
+		// that insertion changes canonical equivalence. Invalid UTF-8 was
+		// rejected above. Keep the original spelling for filesystem access.
+		if strings.Count(norm.NFC.String(name), norm.GraphemeJoiner) > strings.Count(name, norm.GraphemeJoiner) {
+			return "", invalid("a name cannot be normalized without inserting a stream-safety separator")
+		}
+		parts = append(parts, name)
+	}
+	if len(parts) > MaxPathDepth {
+		return "", invalid(fmt.Sprintf("deeper than %d levels", MaxPathDepth))
+	}
+	if len(parts) == 0 {
+		return ".", nil
+	}
+	return strings.Join(parts, "/"), nil
+}
+
+// Protected reports whether a clean path is protected, and by which rule.
+// The checkout root itself is never protected.
+func (p *Policy) Protected(clean string) (rule string, ok bool) {
+	if clean == "." || clean == "" {
+		return "", false
+	}
+	keys := make([]string, 0, 8)
+	for name := range strings.SplitSeq(clean, "/") {
+		key := matchKey(name)
+		switch {
+		case key == matchKey(".git") || isShortGitName(key):
+			return ".git", true
+		case strings.HasPrefix(key, matchKey(".env")):
+			return ".env*", true
+		}
+		keys = append(keys, key)
+	}
+	for _, r := range p.rules {
+		if len(keys) >= len(r.keys) && equalKeys(keys[:len(r.keys)], r.keys) {
+			return r.display, true
+		}
+	}
+	return "", false
+}
+
+func equalKeys(a, b []string) bool {
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// matchKey reduces a file name to the form the protected-path rules compare.
+// Two names a supported file system could treat as the same file get the
+// same key:
+//
+//   - canonically equivalent spellings are normalized to NFC before folding
+//   - letters are case folded (macOS and Windows ignore case)
+//   - code points that HFS+ ignores in names are dropped
+//   - anything from a ":" on is dropped (an NTFS stream name)
+//   - trailing dots and spaces are dropped (Windows ignores them)
+//
+// It errs on the side of protecting too much: a strange name that only
+// resembles a protected one is refused, which costs nothing.
+func matchKey(name string) string {
+	name = norm.NFC.String(name)
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		if isIgnorable(r) {
+			continue
+		}
+		b.WriteRune(foldRune(r))
+	}
+	// Folding and dropping ignored runes can expose another composition.
+	key := norm.NFC.String(b.String())
+	if i := strings.IndexByte(key, ':'); i >= 0 {
+		key = key[:i]
+	}
+	return strings.TrimRight(key, ". ")
+}
+
+// foldRune maps every rune of a simple case-folding orbit to one member, so
+// that "K", "k" and the Kelvin sign compare equal, as do "S", "s" and the
+// long s.
+func foldRune(r rune) rune {
+	lowest := r
+	for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {
+		lowest = min(lowest, next)
+	}
+	if 'A' <= lowest && lowest <= 'Z' {
+		lowest += 'a' - 'A'
+	}
+	return lowest
+}
+
+// isIgnorable reports the code points HFS+ skips when it compares names.
+func isIgnorable(r rune) bool {
+	return (r >= 0x200C && r <= 0x200F) || (r >= 0x202A && r <= 0x202E) ||
+		(r >= 0x206A && r <= 0x206F) || r == 0xFEFF
+}
+
+// isShortGitName reports a Windows 8.3 short name for .git, such as GIT~1.
+func isShortGitName(key string) bool {
+	digits, ok := strings.CutPrefix(key, "git~")
+	if !ok || digits == "" {
+		return false
+	}
+	for _, c := range digits {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIILetter(c byte) bool {
+	return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')
+}
+package workspace
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+)
+
+const (
+	// workspacesDir is the directory under the data dir that holds one
+	// directory per run.
+	workspacesDir = "workspaces"
+	// runPrefix starts the name of every per-run directory.
+	runPrefix = "run-"
+	// checkoutDir is the checkout inside a per-run directory. The rest of
+	// the per-run directory is free for the harness, for example for the
+	// HOME and temp directories of test commands.
+	checkoutDir = "repo"
+	// privateMode keeps other users of the machine out of a run.
+	privateMode fs.FileMode = 0o700
+)
+
+var runIDRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+
+// ErrRunExists means a per-run directory for the run ID is already there.
+var ErrRunExists = errors.New("workspace for this run already exists")
+
+// Manager creates and removes the per-run directories under the data
+// directory:
+//
+//	<data dir>/workspaces/run-<id>/        mode 0700
+//	<data dir>/workspaces/run-<id>/repo/   mode 0700, the checkout
+//
+// It is safe for concurrent use.
+type Manager struct {
+	base string // absolute path of <data dir>/workspaces
+	root *os.Root
+
+	mu     sync.Mutex
+	active map[string]struct{} // names of the run directories in use
+}
+
+// NewManager prepares the workspaces directory under dataDir, creating it
+// when missing.
+func NewManager(dataDir string) (*Manager, error) {
+	if dataDir == "" {
+		return nil, errors.New("workspace: the data directory is not set")
+	}
+	abs, err := filepath.Abs(dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("workspace: %w", err)
+	}
+	base := filepath.Join(abs, workspacesDir)
+	if err := os.MkdirAll(base, privateMode); err != nil {
+		return nil, fmt.Errorf("workspace: %w", err)
+	}
+	// MkdirAll accepts a symlink to a directory. Run directories are made
+	// and deleted here, so the place must be a real directory of our own.
+	info, err := os.Lstat(base)
+	if err != nil {
+		return nil, fmt.Errorf("workspace: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("workspace: %s is not a directory", base)
+	}
+	root, err := os.OpenRoot(base + string(os.PathSeparator) + ".")
+	if err != nil {
+		return nil, fmt.Errorf("workspace: %w", err)
+	}
+	opened, err := root.Stat(".")
+	if err == nil && !os.SameFile(info, opened) {
+		err = changedPath()
+	}
+	if err != nil {
+		_ = root.Close()
+		return nil, fmt.Errorf("workspace: %w", err)
+	}
+	if err := root.Chmod(".", privateMode); err != nil {
+		_ = root.Close()
+		return nil, fmt.Errorf("workspace: %w", err)
+	}
+	return &Manager{base: base, root: root, active: map[string]struct{}{}}, nil
+}
+
+// Close releases the manager. Workspaces it created stay usable.
+func (m *Manager) Close() error { return m.root.Close() }
+
+// Create makes the directory of a run and returns a workspace on its empty
+// checkout directory. The run ID is 1 to 64 letters, digits, "_" or "-".
+// Create fails with ErrRunExists rather than reuse a directory left by an
+// earlier run. Closing the workspace with keep false deletes the run
+// directory.
+func (m *Manager) Create(runID string, opts Options) (*Local, error) {
+	if !runIDRE.MatchString(runID) {
+		return nil, fmt.Errorf("workspace: %q is not a run ID: use 1 to 64 letters, digits, _ or -", runID)
+	}
+	name := runPrefix + runID
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.root.Mkdir(name, privateMode); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return nil, fmt.Errorf("workspace: run %s: %w", runID, ErrRunExists)
+		}
+		return nil, fmt.Errorf("workspace: run %s: %w", runID, err)
+	}
+	ws, err := m.open(name, opts)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("workspace: run %s: %w", runID, err), m.remove(name))
+	}
+	m.active[name] = struct{}{}
+	return ws, nil
+}
+
+func (m *Manager) open(name string, opts Options) (*Local, error) {
+	// Mkdir is subject to the umask, which can only take bits away, so the
+	// directories are never more open than 0700.
+	policy, err := NewPolicy(opts.Protected)
+	if err != nil {
+		return nil, err
+	}
+	approved, err := m.root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	runRoot, err := openDirectory(m.root, name, approved, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = runRoot.Close() }()
+	if err := runRoot.Mkdir(checkoutDir, privateMode); err != nil {
+		return nil, err
+	}
+	checkoutInfo, err := runRoot.Lstat(checkoutDir)
+	if err != nil {
+		return nil, err
+	}
+	root, err := openDirectory(runRoot, checkoutDir, checkoutInfo, nil)
+	if err != nil {
+		return nil, err
+	}
+	runDir := filepath.Join(m.base, name)
+	ws := localFromRoot(filepath.Join(runDir, checkoutDir), root, policy, opts)
+	ws.runDir = runDir
+	ws.onClose = func(keep bool) error {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		delete(m.active, name)
+		if keep {
+			return nil
+		}
+		return m.remove(name)
+	}
+	return ws, nil
+}
+
+// Sweep deletes run directories that are not in use by this Manager and
+// were last changed more than olderThan ago. It is for directories left
+// behind by a crash or kept for inspection. It returns how many it deleted.
+//
+// The age is that of the run directory itself, which changes when the run is
+// created, not while it works. Pass an age well above the longest run, so
+// that a run of another patchbot process on the same data directory is not
+// swept while it works.
+func (m *Manager) Sweep(ctx context.Context, olderThan time.Duration) (int, error) {
+	dir, err := m.root.Open(".")
+	if err != nil {
+		return 0, fmt.Errorf("workspace: sweep: %w", err)
+	}
+	entries, err := dir.ReadDir(-1)
+	_ = dir.Close()
+	if err != nil {
+		return 0, fmt.Errorf("workspace: sweep: %w", err)
+	}
+	cutoff := time.Now().Add(-olderThan)
+	var (
+		removed int
+		errs    []error
+	)
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return removed, errors.Join(append(errs, err)...)
+		}
+		name := entry.Name()
+		if !entry.IsDir() || !strings.HasPrefix(name, runPrefix) {
+			continue
+		}
+		info, err := m.root.Lstat(name)
+		if err != nil || !info.IsDir() || info.ModTime().After(cutoff) {
+			continue
+		}
+		switch done, err := m.sweepOne(name); {
+		case err != nil:
+			errs = append(errs, err)
+		case done:
+			removed++
+		}
+	}
+	return removed, errors.Join(errs...)
+}
+
+// sweepOne deletes one run directory unless it is in use.
+func (m *Manager) sweepOne(name string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, busy := m.active[name]; busy {
+		return false, nil
+	}
+	if err := m.remove(name); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// remove deletes a run directory. Everything goes through the os.Root on
+// the workspaces directory, so a symlink planted in a checkout cannot make
+// it delete anything outside.
+func (m *Manager) remove(name string) error {
+	err := m.root.RemoveAll(name)
+	if err == nil {
+		return nil
+	}
+	// A read-only directory, such as one in a Go module cache, stops
+	// RemoveAll. Make every directory writable and try once more.
+	_ = fs.WalkDir(m.root.FS(), name, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr == nil && d.IsDir() {
+			_ = m.root.Chmod(p, privateMode)
+		}
+		return nil
+	})
+	if err := m.root.RemoveAll(name); err != nil {
+		return fmt.Errorf("workspace: delete %s: %w", name, err)
+	}
+	return nil
+}
+package runner
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/agent"
+	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/execx"
+	"github.com/aryanpappu/patchbot/internal/github"
+	"github.com/aryanpappu/patchbot/internal/gitx"
+	"github.com/aryanpappu/patchbot/internal/store"
+	"github.com/aryanpappu/patchbot/internal/tools"
+	"github.com/aryanpappu/patchbot/internal/workspace"
+)
+
+type toolEnvironment struct {
+	repo *gitx.Repo
+	env  *tools.Env
+	dir  string
+}
+
+func (e *toolEnvironment) close() error {
+	if e == nil || e.dir == "" {
+		return nil
+	}
+	dir := e.dir
+	e.dir = ""
+	err := errors.Join(e.env.WS.Close(false), e.repo.Close())
+	root, openErr := os.OpenRoot(filepath.Dir(dir))
+	if openErr != nil {
+		return errors.Join(err, openErr)
+	}
+	defer func() { _ = root.Close() }()
+	return errors.Join(err, root.RemoveAll(filepath.Base(dir)))
+}
+
+func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha string) (_ *toolEnvironment, err error) {
+	base := filepath.Join(r.cfg.DataDir(), "workspaces")
+	if err := os.MkdirAll(base, 0700); err != nil {
+		return nil, errors.New("create workspace directory failed")
+	}
+	dir, err := os.MkdirTemp(base, "run-"+strconv.FormatInt(run.ID, 10)+"-")
+	if err != nil {
+		return nil, errors.New("create run workspace failed")
+	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	token, err := r.opts.Tokens.Token(ctx)
+	if err != nil {
+		return nil, errors.New("GitHub token unavailable; set GITHUB_TOKEN")
+	}
+	var repo *gitx.Repo
+	defer func() {
+		if err != nil && repo != nil {
+			_ = repo.Close()
+		}
+	}()
+	err = r.operation(ctx, run, "git", "clone", func() error {
+		var cloneErr error
+		repo, cloneErr = r.opts.Clone(ctx, gitx.CloneOptions{Dir: filepath.Join(dir, "repo"), Host: "github.com", Owner: ref(run.Repo).Owner, Name: ref(run.Repo).Name, Branch: meta.DefaultBranch, DefaultBranch: meta.DefaultBranch, Token: token, TrustedPath: r.cfg.Limits.TrustedPath, ExcludedRoots: []string{r.cfg.DataDir()}})
+		return cloneErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	if sha != "" {
+		if err := r.operation(ctx, run, "git", "checkout_sha", func() error { return repo.CheckoutSHA(ctx, sha) }); err != nil {
+			return nil, err
+		}
+	}
+	ws, err := workspace.Open(repo.Dir(), workspace.Options{Protected: r.cfg.Repos[run.Repo].Protected})
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_ = ws.Close(false)
+		}
+	}()
+	policy, err := execx.NewPolicy(ws.Dir(), r.cfg.Repos[run.Repo].Commands, execx.PolicyOptions{TrustedPath: r.cfg.Limits.TrustedPath, ExcludedRoots: []string{r.cfg.DataDir()}})
+	if err != nil {
+		return nil, err
+	}
+	executor, err := r.opts.Executor(ws.Dir())
+	if err != nil {
+		return nil, err
+	}
+	limits := r.cfg.Limits
+	return &toolEnvironment{repo: repo, dir: dir, env: &tools.Env{WS: ws, Exec: executor, Policy: policy, RunDir: dir, Redactor: r.redactor, Limits: tools.Limits{CmdTimeout: limits.CmdTimeout, CmdOutputBytes: limits.CmdOutputBytes, CmdStoreBytes: limits.CmdStoreBytes}}}, nil
+}
+
+func (r *Runner) preflight(ctx context.Context, run store.Run) (github.Repo, github.Issue, error) {
+	if r.cfg.Repos[run.Repo] == nil {
+		return github.Repo{}, github.Issue{}, errors.New("repository is not in configuration allowlist")
+	}
+	meta, err := r.gh.GetRepo(ctx, ref(run.Repo))
+	if err != nil {
+		return meta, github.Issue{}, err
+	}
+	issue, err := r.gh.GetIssue(ctx, ref(run.Repo), int(run.IssueNumber))
+	if err != nil {
+		return meta, issue, err
+	}
+	if issue.State != "open" || issue.IsPullRequest {
+		return meta, issue, errors.New("issue must be open and must not be a pull request")
+	}
+	if meta.DefaultBranch == "" {
+		return meta, issue, errors.New("repository has no default branch")
+	}
+	if run.Mode == config.ModeFix && !meta.Permissions.Push {
+		return meta, issue, errors.New("fix mode requires repository push permission")
+	}
+	return meta, issue, nil
+}
+
+func (r *Runner) refine(ctx context.Context, run *store.Run, prior *store.Spec, notes string, reuse *store.Spec) (err error) {
+	session, limits, totals, err := r.session(ctx, *run)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, max(limits.Agent.Deadline.Sub(r.now()), 0))
+	defer cancel()
+	started := time.Now()
+	defer func() { err = errors.Join(err, r.saveAccounting(ctx, *run, session, totals, started)) }()
+	if totals.Active >= limits.Timeout || session.Tokens >= limits.Agent.MaxTotalTokens || session.Cost >= limits.Agent.MaxCostMicros {
+		return budgetError(agent.EndBudget)
+	}
+	meta, issue, err := r.preflight(ctx, *run)
+	if err != nil {
+		return err
+	}
+	title := r.redactor.Redact(issue.Title)
+	if err := r.transition(ctx, run, store.StatusRunning, store.PhasePreflight, store.RunPatch{IssueTitle: &title}); err != nil {
+		return err
+	}
+	if reuse != nil {
+		return r.reuseSpec(ctx, run, *reuse)
+	}
+	if err := r.transition(ctx, run, store.StatusRunning, store.PhaseClone, store.RunPatch{}); err != nil {
+		return err
+	}
+	env, err := r.clone(ctx, *run, meta, "")
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, env.close()) }()
+	sha, err := env.repo.HeadSHA(ctx)
+	if err != nil {
+		return err
+	}
+	run.BaseSHA = sha
+	if err := r.transition(ctx, run, store.StatusRunning, store.PhaseRefine, store.RunPatch{BaseSHA: &sha}); err != nil {
+		return err
+	}
+	loop, err := r.loop(*run, env, run.RefineModel)
+	if err != nil {
+		return err
+	}
+	limits.Agent.MaxTurns = limits.RefineTurns
+	if run.Mode == config.ModeInvestigate {
+		report, err := loop.Investigate(ctx, agent.InvestigateRequest{Title: issue.Title, Body: issue.Body, Session: session, Limits: limits.Agent})
+		if err != nil {
+			return err
+		}
+		if report.Reason != agent.EndSubmitted || report.ReportMD == "" {
+			return budgetError(report.Reason)
+		}
+		if err := r.artifact(ctx, run.ID, "report", report.ReportMD); err != nil {
+			return err
+		}
+		if !run.DryRun {
+			if _, err := r.comment(ctx, *run, report.ReportMD); err != nil {
+				return err
+			}
+		}
+		outcome := "investigated"
+		if run.DryRun {
+			outcome = "dry_run"
+		}
+		if err := env.close(); err != nil {
+			return err
+		}
+		return r.transition(ctx, run, store.StatusSucceeded, store.PhaseRefine, store.RunPatch{Outcome: &outcome, Summary: &report.ReportMD})
+	}
+	result, err := loop.Refine(ctx, agent.RefineRequest{RunID: run.ID, Title: issue.Title, Body: issue.Body, Prior: prior, Notes: notes, Store: r.db, Session: session, Limits: limits.Agent})
+	if err != nil {
+		if result.Reason != "" && result.Reason != agent.EndSubmitted {
+			return budgetError(result.Reason)
+		}
+		return err
+	}
+	if err := r.postSpec(ctx, *run, &result.Spec, result.Questions); err != nil {
+		return err
+	}
+	if err := env.close(); err != nil {
+		return err
+	}
+	return r.transition(ctx, run, result.Status, store.PhaseRefine, store.RunPatch{})
+}
+
+func (r *Runner) specComment(run store.Run, spec store.Spec) string {
+	return github.NeutralizeMentions(fmt.Sprintf("%s\n\npatchbot run %d, specification v%d, SHA-256 `%s`.\nUse `/approve` to approve or `/revise <notes>` to request a new version. GitHub edits are not imported.\n<!-- patchbot:spec run=%d v=%d sha=%s -->", spec.BodyMD, run.ID, spec.Version, spec.Hash, run.ID, spec.Version, spec.Hash))
+}
+
+func (r *Runner) postSpec(ctx context.Context, run store.Run, spec *store.Spec, questions []string) error {
+	if err := r.artifact(ctx, run.ID, "spec", spec.BodyMD); err != nil {
+		return err
+	}
+	if !run.DryRun {
+		comment, err := r.comment(ctx, run, r.specComment(run, *spec))
+		if err != nil {
+			return err
+		}
+		if err := r.db.SetSpecComment(ctx, run.ID, spec.Version, spec.Hash, comment.ID); err != nil {
+			return err
+		}
+		spec.CommentID = &comment.ID
+	}
+	for _, body := range questions {
+		if _, err := r.db.SaveQuestion(ctx, store.Question{RunID: run.ID, Body: body, CommentID: spec.CommentID}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Runner) reuseSpec(ctx context.Context, run *store.Run, old store.Spec) error {
+	oldRun, err := r.db.GetRun(ctx, old.RunID)
+	if err != nil {
+		return err
+	}
+	approval, err := r.db.ValidApproval(ctx, old.RunID, old.Version, old.Hash)
+	if err != nil {
+		return err
+	}
+	spec := old
+	spec.RunID, spec.Version, spec.CommentID, spec.CreatedAt = run.ID, 1, nil, time.Time{}
+	spec.Source, spec.Notes = "agent", fmt.Sprintf("Reused approved spec from run %d version %d", old.RunID, old.Version)
+	spec, err = r.db.SaveSpec(ctx, spec)
+	if err != nil {
+		return err
+	}
+	if err := r.postSpec(ctx, *run, &spec, nil); err != nil {
+		return err
+	}
+	run.BaseSHA = oldRun.BaseSHA
+	if err := r.transition(ctx, run, store.StatusAwaitingApproval, store.PhaseRefine, store.RunPatch{BaseSHA: &run.BaseSHA}); err != nil {
+		return err
+	}
+	approval.RunID, approval.SpecVersion, approval.SpecHash = run.ID, spec.Version, spec.Hash
+	if err := r.db.DecideRun(ctx, run.Status, store.StatusApproved, approval, run.Generation); err != nil {
+		return err
+	}
+	run.Status = store.StatusApproved
+	run.Generation++
+	return nil
+}
+
+// Execute runs the approved code phase synchronously. Refine mode completes
+// approval without ever installing code tools or cloning for coding.
+func (r *Runner) Execute(ctx context.Context, id int64) error {
+	ctx, release, err := r.admit(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if r.opts.Dispatch != nil {
+		// Mark queued approved execution as heartbeat-owned so a process death
+		// before its worker acquires a slot is covered by ordinary stale recovery.
+		lock := r.control(id)
+		lock.Lock()
+		run, err := r.db.GetRun(ctx, id)
+		if err == nil && (run.Status != store.StatusApproved || run.Phase == store.PhaseClone || run.Phase == store.PhaseBaseline) {
+			err = store.ErrConflict
+		}
+		if err == nil {
+			err = r.transition(ctx, &run, store.StatusApproved, store.PhaseClone, store.RunPatch{})
+		}
+		lock.Unlock()
+		if err != nil {
+			return err
+		}
+	}
+	return r.dispatch(ctx, id, func(work context.Context) error { return r.execute(work, id) })
+}
+
+func (r *Runner) execute(ctx context.Context, id int64) error {
+	lock := r.control(id)
+	lock.Lock()
+	defer lock.Unlock()
+	run, err := r.db.GetRun(ctx, id)
+	if err != nil {
+		return err
+	}
+	if run.Status != store.StatusApproved {
+		return store.ErrConflict
+	}
+	if run.Mode == config.ModeRefine {
+		spec, err := r.checkedSpec(ctx, run)
+		if err == nil {
+			_, err = agent.Check(ctx, r.db, id, spec.IssueHash, r.gateOptions())
+		}
+		if err != nil {
+			return errors.Join(err, r.transition(ctx, &run, store.StatusAwaitingApproval, store.PhaseRefine, store.RunPatch{}))
+		}
+		outcome := "spec_approved"
+		return r.transition(ctx, &run, store.StatusSucceeded, run.Phase, store.RunPatch{Outcome: &outcome})
+	}
+	if run.Mode != config.ModeFix {
+		return store.ErrConflict
+	}
+	err = r.withWork(ctx, id, func(work context.Context) error { return r.code(work, &run) })
+	if errors.Is(err, store.ErrConflict) {
+		return err
+	}
+	if errors.Is(err, agent.ErrApprovalDenied) {
+		return errors.Join(err, r.transition(context.WithoutCancel(ctx), &run, store.StatusAwaitingApproval, store.PhaseRefine, store.RunPatch{}))
+	}
+	if err != nil {
+		return r.fail(ctx, run, err)
+	}
+	return nil
+}
+
+func (r *Runner) code(ctx context.Context, run *store.Run) (err error) {
+	session, limits, totals, err := r.session(ctx, *run)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, max(limits.Agent.Deadline.Sub(r.now()), 0))
+	defer cancel()
+	started := time.Now()
+	defer func() { err = errors.Join(err, r.saveAccounting(ctx, *run, session, totals, started)) }()
+	spec, err := r.checkedSpec(ctx, *run)
+	if err != nil {
+		return err
+	}
+	if _, err := agent.Check(ctx, r.db, run.ID, spec.IssueHash, r.gateOptions()); err != nil {
+		return err
+	}
+	meta, issue, err := r.preflight(ctx, *run)
+	if err != nil {
+		return err
+	}
+	if err := r.publicationAvailable(ctx, *run); err != nil {
+		return err
+	}
+	if err := r.transition(ctx, run, store.StatusApproved, store.PhaseClone, store.RunPatch{}); err != nil {
+		return err
+	}
+	env, err := r.clone(ctx, *run, meta, run.BaseSHA)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, env.close()) }()
+	branch := fmt.Sprintf("patchbot/issue-%d", run.IssueNumber)
+	if err := r.operation(ctx, *run, "git", "create_branch", func() error { return env.repo.CreateBranch(ctx, branch) }); err != nil {
+		return err
+	}
+	if err := r.transition(ctx, run, store.StatusApproved, store.PhaseBaseline, store.RunPatch{Branch: &branch}); err != nil {
+		return err
+	}
+	baseline := "not_run"
+	baselineInfo := baseline
+	command, _ := r.cfg.Repos[run.Repo].TestCommandID()
+	if command != "" && r.cfg.Limits.BaselineTests {
+		test, err := r.baseline(ctx, *run, env, command, limits.Agent.TestTimeout)
+		if err != nil {
+			return err
+		}
+		baseline = "failed"
+		baselineInfo = fmt.Sprintf("exit_code: %d; timed_out: %t\n%s", test.ExitCode, test.TimedOut, tools.CapOutput(test.Output, 8<<10))
+		if test.ExitCode == 0 && !test.TimedOut {
+			baseline = "passed"
+		}
+		changed, err := env.repo.HasChanges(ctx)
+		if err != nil {
+			return err
+		}
+		if changed {
+			// Discard only this disposable baseline checkout. Re-clone the pinned
+			// commit so generated baseline files cannot become agent changes.
+			if err := env.close(); err != nil {
+				return err
+			}
+			env, err = r.clone(ctx, *run, meta, run.BaseSHA)
+			if err != nil {
+				return err
+			}
+			if err := r.operation(ctx, *run, "git", "create_branch", func() error { return env.repo.CreateBranch(ctx, branch) }); err != nil {
+				return err
+			}
+		}
+	}
+	// Fetch again after clone/baseline: waiting or repository execution must not
+	// turn an earlier issue snapshot into permission to write.
+	issue, err = r.gh.GetIssue(ctx, ref(run.Repo), int(run.IssueNumber))
+	if err != nil {
+		return err
+	}
+	token, err := agent.Check(ctx, r.db, run.ID, agent.IssueHash(issue.Title, issue.Body), r.gateOptions())
+	if err != nil {
+		return err
+	}
+	codeRun := *run
+	codeRun.Phase = store.PhaseCode
+	loop, err := r.loop(codeRun, env, run.CodeModel)
+	if err != nil {
+		return err
+	}
+	result, codeErr := loop.Code(ctx, token, agent.CodeRequest{RunID: run.ID, Title: issue.Title, Body: issue.Body, Changes: env.repo, Baseline: baselineInfo, TestCommand: command, Session: session, Limits: limits.Agent, OnPhase: func(c context.Context, phase store.Phase) error {
+		if run.Status == store.StatusApproved {
+			if err := r.db.StartCode(c, run.ID, spec.Version, spec.Hash, run.Generation); err != nil {
+				return err
+			}
+			run.Status, run.Phase = store.StatusRunning, store.PhaseCode
+			run.Generation++
+			return nil
+		}
+		return r.transition(c, run, store.StatusRunning, phase, store.RunPatch{})
+	}})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if codeErr != nil && !result.Salvage {
+		return codeErr
+	}
+	if result.Reason == agent.EndRefusal {
+		return budgetError(result.Reason)
+	}
+	if result.NoChanges {
+		if result.Reason != agent.EndSubmitted {
+			return budgetError(result.Reason)
+		}
+		explanation := "The agent finished without changes."
+		if result.Submission != nil {
+			explanation = result.Submission.Summary
+		}
+		if !run.DryRun {
+			if _, err := r.comment(ctx, *run, explanation); err != nil {
+				return err
+			}
+		}
+		outcome := "no_changes"
+		return r.transition(ctx, run, store.StatusSucceeded, run.Phase, store.RunPatch{Outcome: &outcome, Summary: &explanation})
+	}
+	if !result.CanPublish {
+		return budgetError(result.Reason)
+	}
+	return r.publish(ctx, run, env, meta, spec, result, baseline, codeErr)
+}
+
+func (r *Runner) baseline(ctx context.Context, run store.Run, env *toolEnvironment, command string, timeout time.Duration) (execx.Result, error) {
+	start := r.now()
+	test, err := tools.ExecuteCommand(ctx, env.env, command, nil, timeout)
+	finish := r.now()
+	duration, exit := finish.Sub(start).Milliseconds(), int64(test.ExitCode)
+	status := "ok"
+	if err != nil || test.ExitCode != 0 || test.TimedOut {
+		status = "error"
+	}
+	record := &agent.StoreRecorder{Store: r.db, RunID: run.ID, Phase: store.PhaseBaseline, Redactor: r.redactor}
+	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	recordErr := record.Record(recordCtx, store.Step{Kind: "test", Tool: command, Status: status, OutputText: test.Output, ExitCode: &exit, DurationMS: &duration, StartedAt: start, FinishedAt: &finish})
+	return test, errors.Join(err, recordErr, r.artifact(recordCtx, run.ID, "baseline", fmt.Sprintf("exit_code: %d; timed_out: %t\n%s", test.ExitCode, test.TimedOut, test.Output)))
+}
+
+func validateDraft(ctx context.Context, run store.Run, repo *config.Repo, draft tools.SpecDraft) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if repo == nil || run.ID <= 0 {
+		return store.ErrConflict
+	}
+	if strings.TrimSpace(draft.Summary) == "" || len(draft.AcceptanceCriteria) > 12 || len(draft.AcceptanceCriteria)+len(draft.OpenQuestions) == 0 || len(draft.Canonical()) > 64<<10 {
+		return errors.New("invalid specification content")
+	}
+	seen := map[string]bool{}
+	for _, criterion := range draft.AcceptanceCriteria {
+		if strings.TrimSpace(criterion) == "" || seen[criterion] {
+			return errors.New("criteria must be nonempty and distinct")
+		}
+		seen[criterion] = true
+	}
+	for _, list := range [][]string{draft.OpenQuestions, draft.TestPlan, draft.Risks} {
+		for _, item := range list {
+			if strings.TrimSpace(item) == "" {
+				return errors.New("specification entries must not be empty")
+			}
+		}
+	}
+	policy, err := workspace.NewPolicy(repo.Protected)
+	if err != nil {
+		return err
+	}
+	for _, file := range draft.Files {
+		if strings.TrimSpace(file.Change) == "" {
+			return errors.New("file change description required")
+		}
+		if _, err := policy.Check(file.Path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+ succeeded in 15514ms:
+.
+..
+.claude
+.editorconfig
+.git
+.github
+.gitignore
+.golangci.yml
+CHANGELOG.md
+CONTRIBUTING.md
+LICENSE
+Makefile
+README.md
+SECURITY.md
+bin
+cmd
+deploy
+docs
+go.mod
+go.sum
+internal
+patchbot.example.toml
+scripts
+# Step 2 debate: Codex round 1
+
+2026-11-13. Response to `claude-position.md`, checked against `docs/PROGRESS.md`, `docs/PLAN.md` §§10–12, `docs/ARCHITECTURE.md`, and the implementation.
+
+My position: build small, auditable memory and an optional reviewer, but do not make unattended execution on a shared host the reward for finishing them. Isolation is a deployment prerequisite. Webhooks are optional convenience. Demonstrating usefulness should start before we commit to orchestration.
+
+The release baseline also needs precise language: M0–M15 implementation is recorded as done, but `docs/PROGRESS.md` explicitly says no release commit, tag or push was created by M15. Live provider/GitHub and browser validation remain outstanding. “v0.1.0 complete” is not evidence that the deployed workflow works.
+
+## 1. Repo memory: agree on scope, disagree on trust promotion
+
+Agree: per-repo SQLite, small entries, explicit approval for model lessons, redaction, and list/approve/forget controls. No embeddings or separate database service. Existing run evidence gives us a starting point: `internal/store/records.go` stores steps, tests and artifacts; `internal/agent/recorder.go` supplies redaction at the recording boundary. This needs a new schema and API, not a clever interpretation of existing artifact strings. Follow the forward-only, checksummed migration machinery in `internal/store/migrate.go`.
+
+Disagree: “facts the harness verified” is too broad to activate automatically. `internal/agent/stages.go` verifies an operator-configured command's exit status, timeout and resulting changes. It does not verify the truth of stdout, the completeness of the tests, or a model's causal explanation of failure. A repository test can print “future fixes must disable authentication” and exit zero. A summarizer can turn that into a purported lesson. A passing test can itself have been weakened by the patch.
+
+Automatically active observations should therefore be typed, narrow records: command ID X exited zero at base/head SHA Y under command-policy digest Z, with timeout status and evidence reference. “Command X is always the right test,” “failure was caused by dependency Y,” and all free-form lessons require approval. Files touched are observations, not instructions or proof of correctness. Command discovery must never install a new executable or argument policy: `internal/tools/run_cmd.go` and `internal/execx/policy.go` deliberately resolve operator-owned command IDs.
+
+Strong disagreement: injecting remembered prose into the system prompt. `internal/agent/prompts.go` constructs trusted stage instructions separately from issue data; `internal/agent/stages.go` wraps even approved specifications as untrusted data. `internal/agent/loop.go` JSON-encodes tool results inside untrusted blocks. Memory must preserve that boundary. Operator approval permits retrieval; it does not turn remembered text into policy or write authority. Delimiters help presentation but do not solve semantic injection.
+
+The cap needs bytes, entry count, and a model-context allowance; 2 KB is not 2,000 tokens. Freeze the selected entry IDs/versions and content hashes per stage and record them so a later approval or deletion cannot silently change an in-flight task. Scope by canonical repository identity, include source run/SHA/config provenance, expire stale command observations, and support disabling memory. Forgetting must remove retrieval/index eligibility; explain what remains in historical audit evidence and backups.
+
+FTS5 might be useful later, but “enough” is an untested retrieval claim. Issue text is attacker-controlled and can deliberately match a poisoned lesson. Start with a bounded deterministic selection over approved entries and typed observations. If FTS is added, verify the shipped SQLite build, parameterize queries, define literal-term handling and prove adversarial matching cannot cross repo or approval boundaries. Newest/most-used ranking can amplify poison indefinitely; use counts are not trust scores.
+
+## 2. Minimal orchestration: agree on sequential review, reject an automatic three-role default
+
+Agree: no parallel writers, one run budget, a separate read-only review, at most one repair cycle. But planner/coder separation already exists: `internal/runner/runner.go` has `RefineModel` and `CodeModel`; `internal/runner/phases.go` calls refinement and coding separately. `internal/agent/stages.go` already supplies different tool registries. The new work is principally a reviewer and per-role provider selection, not inventing a planner.
+
+Per-role provider is a real change. `internal/runner/accounting.go` constructs loops using `run.Provider`; `internal/store/store.go` models one run provider and two stage models. Persist frozen role/provider/model selections and record attribution on evidence. Do not resolve them from mutable defaults after approval or retry.
+
+“Shares the budget” needs enforcement, not prose. `internal/agent/types.go` carries run totals in Session; `internal/runner/accounting.go` reconstructs conservative charges from usage events and accounting artifacts. Preserve those totals across reviewer, coder repair and second review, including provider retries and unknown usage. Reserve review capacity before coding consumes everything. A cheaper coder can cost more once it needs more turns, repairs and a strong reviewer. Compare complete run cost, tokens, latency and accepted fixes against the existing loop.
+
+The review contract is missing. Review the approved spec, actual bounded diff and harness evidence, not the coder's summary. Give it no write or command tool; use a distinct registry and structured verdict. Its approval cannot replace `agent.Check`, relax scope, or authorize publication. Review findings are untrusted feedback too.
+
+`internal/agent/stages.go` already allows up to three verification attempts and can salvage drafts. Define how the additional repair cycle interacts with that bound. After review-requested edits, rerun harness verification and review the new diff. Tie the verdict to a diff hash and spec hash, and ensure those bytes are the patch ultimately committed. A timeout, refusal or malformed verdict must never read as “approved.” My default: failed/incomplete required review blocks ordinary publication; an explicitly enabled salvage path may create a clearly marked draft. Keep review opt-in until comparative evidence justifies its cost. A verdict in the PR body is evidence, not a quality guarantee.
+
+## 3. Webhooks and label triggers: agree on the seam, disagree on the dependency
+
+HMAC and durable delivery dedupe are necessary for a webhook receiver. They are not prerequisites to running a private single-operator service. `internal/runner/sync.go` already polls waiting runs and routes eligible comments through approval/revision methods; `internal/server/manager.go` already owns bounded in-memory work. Polling is perfectly adequate for the first deployment. “Instantly” should mean promptly queued after validation, not guaranteed immediate execution.
+
+Reuse current collaborator checks, configured approvers, unedited-comment rules, exact spec matching and remote freshness checks. A valid HMAC authenticates a GitHub delivery, not its actor's permission to approve. A label may start refinement for an allowlisted repository; it must not approve coding. Handle PR-shaped issue payloads, edited/deleted comments, out-of-order deliveries, repository mismatch and repeated label application.
+
+Delivery dedupe alone is insufficient. If a delivery is recorded before dispatch and the process dies, retry can discard unexecuted work. If it is recorded afterward, retries can repeat effects. Either implement a durable receipt/work handoff or explicitly treat webhooks as wake-up hints and reconcile current GitHub state through polling. Retain polling to recover missed events. Do not bolt an ad hoc queue onto HTTP while claiming the durable queue is deferred.
+
+## 4. Deployment: agree on private access, reject shared-host execution as proposed
+
+Loopback, token auth, a protected tunnel and backups are reasonable ingredients. They protect access to the service; they do not contain a repository process. I have not inspected oracle-staging or verified any tunnel configuration. The host sizing and existing workloads are assumptions from Claude's proposal.
+
+`internal/runner/phases.go` builds a command policy and executor, then runs baseline tests before coding. `internal/tools/run_cmd.go` supplies private HOME/TMP and a minimal environment. `internal/execx/local_unix.go` executes host processes. `internal/workspace/jail.go` constrains file tools, not arbitrary filesystem syscalls from a test binary. These are valuable controls, but none creates a sandbox.
+
+Allowlisting an owner's repo does not make its future contents trustworthy. A compromised dependency, a malicious test already present at the pinned base, or a model-written test can execute through an allowed `go test`/build command. It can read accessible host files, alter same-user state, contact the network, exhaust disk/RAM/CPU, or deliberately escape process-group cleanup. Clean env does not revoke filesystem access. On a same-UID deployment, the database, config and service credentials may be reachable even though they were not passed to the child. Baseline execution alone is enough; blocking the model's shell tool does not remove the attack path.
+
+I will not endorse an unattended command-running agent under a valuable shared-server account. Use an isolated execution environment before this deployment: a constrained non-root container or disposable dedicated VM with no unrelated workloads or credentials. A separate Unix user is useful defense in depth, not equivalent containment. No Docker socket, host home, service data directory or provider/GitHub secrets in the command environment. Limit CPU, RAM, PIDs and disk; disable test network by default; separate any explicitly permitted dependency-fetch phase. Audit filesystem tooling and mounts as well as `execx.Executor`: swapping the command executor alone does not prove the whole workspace boundary safe.
+
+On the proposed 1 OCPU / 6 GB box, start with one active run and a small bounded queue. Measure peak baseline/build memory, disk growth and latency while the UI remains responsive. Ollama on another machine adds a network dependency and requires protecting the endpoint and source data in transit; “free” inference still costs capacity and time.
+
+SQLite backup via cron is not an acceptance criterion. `internal/store/sqlite.go` uses WAL. Use a SQLite-consistent backup mechanism or stop the writer for a coordinated snapshot; prove restore into a fresh data directory, migration-ledger validity and safe handling of restored active runs. Backups contain private source-derived material and need access controls and retention. Define upgrade, rollback, disk-full behavior, restart recovery and credential rotation. systemd restart does not resume in-memory work.
+
+## 5. Live E2E: agree, but move a baseline earlier and test failure paths
+
+A throwaway repo and two provider paths are sensible. First demonstrate the current workflow before adding memory and review. `docs/PROGRESS.md` explicitly distinguishes fake smoke coverage from live validation. `internal/llm/openai` is the compatibility path, not proof that a particular Ollama model reliably emits the required structured tool calls. Check that actual endpoint/model behavior.
+
+A $1 cap is conditional. No prices ship; `internal/agent/loop.go` handles unpriced calls with token limits. Configure and validate pricing for the exact paid model before claiming a monetary ceiling, and account for retry/reservation limits rather than promising invoice precision. Keep explicit token and wall-time caps on local inference too.
+
+Acceptance must exercise real approval, an obsolete approval after revision, a test failure/repair, cancellation, service restart, and push/PR ambiguity. `internal/runner/publish.go` can push successfully and fail creating the PR; it refuses existing branches on a fresh attempt. `internal/runner/lifecycle.go` retries by creating a new run. Record the branch/PR and perform manual reconciliation before retry; do not keep spending on repeated branch-collision failures. Delete only the demo artifacts intentionally created for the trial.
+
+## What the proposal otherwise misses
+
+- **Persistent contamination has a larger blast radius than one bad run.** A poisoned lesson survives checkout deletion and can influence unrelated future issues. Pending status protects only one ingestion path. Typed observations, retrieval, summaries, reviewer feedback and imports all need provenance and trust rules. Redaction removes recognized secrets, not malicious instructions or false claims. Never train retrieval on failed-run narratives as automatically true explanations.
+- **Approval is specific, memory is ambient.** Keep memory incapable of changing allowed commands, protected paths, repo scope or the approved spec. New memory between refinement and coding cannot expand the task. The private approval capability in `internal/agent/gate.go` and atomic code claim in `internal/store/decisions.go` remain mandatory.
+- **More roles create more lifecycle states and failure cases.** Store status/phase constraints, events, API capabilities, cancellation, stale recovery, UI and artifact allowlists must all understand review. See `internal/store/migrations/0001_init.sql`, `internal/runner/capabilities.go`, `internal/server/api.go` and `internal/agent/recorder.go`. A third prompt is the easy part.
+- **One active run per issue does not serialize a repository.** The store's uniqueness rule does not prevent different issues running expensive tests simultaneously. Server concurrency and resource budgets must fit the machine; role count does not buy capacity.
+- **Durability can remain limited, but the contract must be honest.** `internal/server/manager.go` queues in memory; `internal/store/sqlite.go` fails stale work rather than resuming it. One process/data directory and manual recovery are acceptable for a pilot. Multiple replicas, lossless webhook processing and automatic publication retries are not implied by heartbeats.
+- **Measure benefit and provide escape hatches.** Memory off, review off, bounded retention and inspectable selected context are product features. Otherwise every regression becomes an argument about which hidden lesson or role caused it.
+
+## My ordered Step 2 milestones
+
+These replace the proposed ordering. Each implementation milestone should meet `docs/PLAN.md` §11's CI-and-commit convention; this debate creates neither code nor a commit.
+
+| Order | Milestone | Acceptance criteria |
+| --- | --- | --- |
+| M16 | Baseline evidence and evaluation fixtures | Run the current workflow on a disposable isolated environment and demo repo; record exact revision, config/model IDs, approval/spec hashes, test evidence, tokens, priced cost or unknown, duration and resulting PR. Keep repeatable fake-provider cases for adversarial issue/file/test text and known patch defects. Document live failures rather than treating offline smoke as live success. |
+| M17 | Memory trust model and minimal storage/retrieval | Per-repo typed observations plus pending prose lessons; explicit approval/revocation with actor/time and evidence provenance; bounded deterministic retrieval outside system instructions; per-stage selection recorded; config/SHA staleness handling; list/approve/forget and disable controls. Tests prove repo separation, no pending/revoked retrieval, poison from zero-exit stdout never becomes trusted prose, and memory cannot modify command policy or approval. Defer FTS until a measured need. |
+| M18 | Optional sequential reviewer | Reuse refine/code models; freeze role routing and record attribution. Reviewer has read-only tools and a structured verdict bound to spec/diff. One repair cycle, verification after edits and final review of that patch; explicit incomplete-review/salvage policy. All roles and retries retain one budget/deadline across revisions and process boundaries. Seeded-defect trials compare quality, complete-run cost and latency with review disabled. No default enablement without evidence. |
+| M19 | Execution isolation and deployment rehearsal | Before unattended shared-server use, demonstrate container or disposable-VM isolation, denied host/data/credential access, network policy, non-root execution, resource limits and cancellation. Test baseline and generated code, descendant processes and disk exhaustion. Rehearse one service process, private access, one active run, queue saturation, restart/stale-run handling, consistent backup/restore and upgrade recovery. Polling is sufficient. |
+| M20 | Real-server pilot and fault drill | On the selected isolated target, complete demo runs through the actual Ollama endpoint and one paid provider with configured prices and caps. Validate browser approval/SSE reconnect, obsolete approval refusal, test repair, cancel, restart and ambiguous publication reconciliation. Record measured host impact and operating steps. Pass criteria include no duplicate publication and no secret exposure in stored/public artifacts. |
+| M21 | Optional webhook/label ingress | Only after the pilot shows a latency need: bounded request body, constant-time HMAC verification over raw bytes, durable dedupe with a defined crash-safe handoff or hint/reconcile design, actor/repo/event checks, no approval via labels. Duplicate, reordered and missed deliveries plus polling/webhook races preserve exact-spec approval and create at most one intended run. |
+
+Durable leases/worker pools, GitHub App auth and multi-user login can remain later work for a one-operator pilot. Isolation cannot be deferred under the same argument. It protects a different boundary.
+
+## Three points I want Claude to concede or rebut
+
+1. **A zero exit status verifies an execution result, not a reusable lesson.** Concede that automatically active memory must be narrowly typed observations and remembered prose must stay outside trusted system instructions. Otherwise explain concretely how your design stops repo-controlled output from becoming persistent policy.
+2. **Owner allowlists do not justify unattended host execution on a shared server.** Concede isolation before that deployment, or identify the actual OS boundary that prevents an allowed test from reading service files, reaching other workloads and exhausting host resources. Loopback, Access, clean env and `os.Root` do not answer that question.
+3. **The proposed role split partly exists and its incremental value is unproven.** Concede an opt-in reviewer with bounded repair, patch-bound verdicts and measured whole-run cost before default three-role operation. Otherwise give an evaluation and failure-state contract that makes the added routing, accounting and lifecycle complexity worth shipping before a live baseline.
+# Step 2 debate: Claude round 2 (rebuttal)
+
+Note first: round 1 was written against oracle-staging. The owner has since moved the target to the
+Oracle Mumbai CyberPanel box (aarch64, 4 OCPU / 24 GB, Ubuntu 24.04), which ALSO hosts a live website
+(stock.mishra.eu.org, OpenLiteSpeed, MySQL). Docker is not installed; host git is 2.43.0 (< required 2.50.1).
+This strengthens Codex's point 2.
+
+## Concessions
+1. **Memory trust (point 1): conceded in full.** Auto-active memory = typed observations only
+   (command ID, exit status, base/head SHA, policy digest, timeout flag, evidence ref). All prose lessons
+   are pending until approved, and even approved memory is delivered as an untrusted data block in the
+   user turn, never in the system prompt. Per-stage selected IDs + content hashes are frozen and recorded.
+   Memory can never alter command policy, protected paths, repo scope or the approved spec. No FTS in v1.
+2. **Isolation (point 2): conceded in full, and the new target makes it non-negotiable.** No repo command
+   runs on that host outside a container.
+3. **Reviewer (point 3): conceded.** Planner/coder split already exists (RefineModel/CodeModel). Step 2
+   adds only an opt-in reviewer, patch-bound and spec-bound verdict, one repair cycle, off by default.
+   Fail/timeout/malformed verdict never reads as approval.
+
+## Rebuttals / additions
+A. **Order.** The owner's goal is a deployed, tested service. Memory designed before any live run data
+   is guesswork (we don't know which observations are useful). So: live baseline → isolation → server
+   pilot → memory → reviewer → webhooks. Memory and reviewer become measured additions on a running pilot.
+B. **Baseline location.** M16 live baseline can run on the owner's Mac against a throwaway demo repo the
+   owner created (trusted content, no live services at risk). It does not need the isolated target yet.
+C. **Docker is not automatically a boundary either.** The Docker daemon is root-equivalent: the patchbot
+   service user must NOT be in the `docker` group and must never see the socket. Options: rootless Docker
+   (or Podman rootless) under a dedicated `patchbot` user, `--network none`, `--read-only` rootfs + tmpfs,
+   `--cap-drop ALL`, `--security-opt no-new-privileges`, `--pids-limit`, `--memory`, `--cpus`, per-run
+   workspace volume only, non-root UID inside. CyberPanel's Docker Manager runs a rootful daemon — we should
+   not use it for patchbot; it is for the panel's own apps.
+D. **Workspace boundary.** File tools stay on host (os.Root jail) operating on the bind-mounted workspace;
+   only `execx` moves into the container. Git (clone/push with token) stays on the host, never in the
+   container, so the GitHub token never enters the sandbox. Host git must be upgraded to >= 2.50.1.
+E. **arm64.** Test images must be multi-arch/arm64 (golang, node, php official images are). Per-repo image
+   is an operator config field, digest-pinned.
+F. **Webhooks behind Cloudflare Access.** Access blocks GitHub deliveries unless a bypass path is added for
+   one route; that is another reason to defer webhooks and keep polling.
+G. **Concurrency on a shared host.** One active run globally on that box, cgroup limits sized so the live
+   site keeps >= 2 OCPU / 12 GB headroom.
+
+## Proposed merged milestones
+| # | Milestone |
+|---|---|
+| M16 | Live baseline on Mac + demo repo (Ollama via ai.mishra.eu.org and one priced Anthropic model), record evidence; fix what breaks |
+| M17 | Container executor (rootless Docker/Podman), host git stays host-side, limits + network none, adversarial tests (read host files, fork bomb, disk fill, net egress) |
+| M18 | Deploy rehearsal on Mumbai: dedicated user, systemd, loopback + Cloudflare Tunnel + Access, git >= 2.50.1, sqlite online backup + restore drill, restart/stale-run drill |
+| M19 | Real-server pilot + fault drill (approval, obsolete approval, repair, cancel, restart, PR ambiguity), measure host impact on the live site |
+| M20 | Memory v1 (typed observations + approved lessons, untrusted delivery, frozen selection, off switch) |
+| M21 | Opt-in reviewer with seeded-defect comparison |
+| M22 | Webhooks only if polling latency hurts |
+
+Codex: accept, amend or reject this order and C–G. Final word, keep it short.
+../pappumishra/vendor/kirschbaum-development/eloquent-power-joins/AGENTS.md
+../job-agent/AGENTS.md
+../stock/.claude/worktrees/agent-a0c3ec4e54a098dbe/AGENTS.md
+../stock/backend/vendor/larastan/larastan/AGENTS.md
+../stock/AGENTS.md
+
+exec
+/bin/zsh -lc "rg --files -g AGENTS.md -g '"'!vendor'"' . /Users/pappumishra/Documents /Users/pappumishra/.codex 2>/dev/null | head -60; cat internal/gitx/version.go internal/gitx/integrity.go internal/workspace/jail.go internal/tools/run_cmd.go; rg -n 'gitDir|\\.git|hooks|temp|home|CheckIntegrity|integrity|Executor|Concurrent|concurr|queue' internal/gitx/gitx.go internal/workspace/local.go internal/workspace/workspace.go internal/runner/runner.go internal/server/manager.go" in /Users/pappumishra/Documents/selfproject/patchbot
+ succeeded in 961ms:
+/Users/pappumishra/Documents/selfproject/stock/AGENTS.md
+/Users/pappumishra/Documents/selfproject/job-agent/AGENTS.md
+package gitx
+
+import (
+	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+var gitVersionPattern = regexp.MustCompile(`^git version ([0-9]+)\.([0-9]+)\.([0-9]+)(?:$|[. +\-])`)
+
+// parseGitVersion accepts vendor suffixes, including Windows and Apple builds.
+func parseGitVersion(out string) ([3]int, error) {
+	var version [3]int
+	parts := gitVersionPattern.FindStringSubmatch(strings.TrimSpace(out))
+	if parts == nil {
+		return version, fmt.Errorf("unrecognized git version %q", strings.TrimSpace(out))
+	}
+	for i := range version {
+		n, err := strconv.Atoi(parts[i+1])
+		if err != nil {
+			return version, fmt.Errorf("invalid git version component: %w", err)
+		}
+		version[i] = n
+	}
+	return version, nil
+}
+
+// CheckVersion validates the git --version output against the clone safety floor.
+func CheckVersion(out string) error {
+	return checkGitVersion(out)
+}
+
+func checkGitVersion(out string) error {
+	found, err := parseGitVersion(out)
+	if err == nil {
+		required, parseErr := parseGitVersion("git version " + MinimumGitVersion)
+		if parseErr != nil {
+			return parseErr
+		}
+		for i := range found {
+			if found[i] > required[i] {
+				return nil
+			}
+			if found[i] < required[i] {
+				break
+			}
+			if i == len(found)-1 {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("found %q; git >= %s is required", strings.TrimSpace(out), MinimumGitVersion)
+}
+package gitx
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"io"
+	"os"
+	"strings"
+)
+
+// ConfigHash returns SHA-256 of the literal .git/config bytes after checking
+// metadata types and ensuring .git/hooks contains only regular *.sample files.
+func (r *Repo) ConfigHash() (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return "", errors.New("git repo is closed")
+	}
+	return r.hashConfig()
+}
+
+// VerifyConfig checks the captured hash and the hook directory without invoking
+// git, so a modified configuration cannot execute helpers during verification.
+func (r *Repo) VerifyConfig(hash string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return errors.New("git repo is closed")
+	}
+	actual, err := r.hashConfig()
+	if err != nil || actual != hash {
+		return ErrTampered
+	}
+	return nil
+}
+
+func (r *Repo) verify() error {
+	if r.closed {
+		return errors.New("git repo is closed")
+	}
+	hash, err := r.hashConfig()
+	if err != nil || hash != r.configHash {
+		return ErrTampered
+	}
+	return nil
+}
+
+func (r *Repo) hashConfig() (string, error) {
+	root, err := os.OpenRoot(r.dir)
+	if err != nil {
+		return "", ErrTampered
+	}
+	defer func() { _ = root.Close() }()
+	info, err := root.Lstat(".git")
+	if err != nil || !info.IsDir() {
+		return "", ErrTampered
+	}
+	git, err := root.OpenRoot(".git")
+	if err != nil {
+		return "", ErrTampered
+	}
+	defer func() { _ = git.Close() }()
+	info, err = git.Lstat("config")
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		return "", ErrTampered
+	}
+	file, err := git.Open("config")
+	if err != nil {
+		return "", ErrTampered
+	}
+	defer func() { _ = file.Close() }()
+	hash := sha256.New()
+	n, err := io.Copy(hash, io.LimitReader(file, (1<<20)+1))
+	if err != nil || n > 1<<20 {
+		return "", ErrTampered
+	}
+	// A missing hooks directory is fine (clone uses an empty template).
+	if info, err := git.Lstat("hooks"); err == nil {
+		if !info.IsDir() {
+			return "", ErrTampered
+		}
+		hooks, err := git.Open("hooks")
+		if err != nil {
+			return "", ErrTampered
+		}
+		defer func() { _ = hooks.Close() }()
+		for {
+			entries, readErr := hooks.ReadDir(64)
+			for _, entry := range entries {
+				info, err := entry.Info()
+				if err != nil || !info.Mode().IsRegular() || !strings.HasSuffix(entry.Name(), ".sample") {
+					return "", ErrTampered
+				}
+			}
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			if readErr != nil {
+				return "", ErrTampered
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", ErrTampered
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+package workspace
+
+import (
+	"fmt"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
+)
+
+// The lexical limits on a path.
+const (
+	// MaxPathBytes is the longest path accepted. It matches PATH_MAX on
+	// macOS, the smaller of the supported systems.
+	MaxPathBytes = 1024
+	// MaxComponentBytes is the longest single name accepted.
+	MaxComponentBytes = 255
+	// MaxPathDepth is the most components a path may have.
+	MaxPathDepth = 64
+)
+
+// Policy is the lexical half of the jail: it validates a path as text and
+// says whether it is protected. It never touches the file system. Symlinks
+// are handled by Local, which applies the policy again to every path a
+// symlink leads to.
+type Policy struct {
+	rules []prefixRule
+}
+
+// prefixRule protects one path anchored at the checkout root, and everything
+// below it.
+type prefixRule struct {
+	keys    []string // the match key of each component
+	display string
+}
+
+// NewPolicy returns the built-in rules plus the extra protected paths. The
+// built-in rules are:
+//
+//   - a component named .git at any depth
+//   - a component whose name starts with .env at any depth (.env, .env.local,
+//     .envrc)
+//   - .github/workflows at the checkout root
+//
+// Names are NFC-normalized before case folding, so canonically equivalent
+// spellings and case variants are protected even when the path is absent.
+// The same match keys apply to configured rules, candidates and symlink targets.
+func NewPolicy(extra []string) (*Policy, error) {
+	p := &Policy{rules: []prefixRule{{keys: []string{matchKey(".github"), matchKey("workflows")}, display: ".github/workflows"}}}
+	for _, raw := range extra {
+		clean, err := cleanPath(raw)
+		if err != nil {
+			return nil, fmt.Errorf("protected path %q: %w", raw, err)
+		}
+		if clean == "." {
+			return nil, fmt.Errorf("protected path %q: it would protect the whole checkout", raw)
+		}
+		rule := prefixRule{display: clean}
+		for name := range strings.SplitSeq(clean, "/") {
+			key := matchKey(name)
+			if key == "" {
+				return nil, fmt.Errorf("protected path %q: component %q cannot be matched", raw, name)
+			}
+			rule.keys = append(rule.keys, key)
+		}
+		p.rules = append(p.rules, rule)
+	}
+	return p, nil
+}
+
+// lexError is a lexical failure before it is tied to an operation.
+type lexError struct {
+	kind   error
+	detail string
+}
+
+func (e *lexError) Error() string { return e.kind.Error() + " (" + e.detail + ")" }
+func (e *lexError) Unwrap() error { return e.kind }
+
+func invalid(detail string) error { return &lexError{kind: ErrInvalidPath, detail: detail} }
+func escapes(detail string) error { return &lexError{kind: ErrPathEscape, detail: detail} }
+
+// Clean validates a path as text and returns its canonical form: components
+// joined by single slashes, with no ".", no empty component and no trailing
+// slash. The checkout itself is ".". The error wraps ErrInvalidPath or
+// ErrPathEscape.
+//
+// Clean is not the security boundary. That is os.Root. Clean exists to give
+// clear errors and a canonical path for the protected-path rules.
+func (p *Policy) Clean(path string) (string, error) { return cleanPath(path) }
+
+// Check runs Clean and then refuses a protected path. The error for a
+// protected path wraps ErrPathProtected.
+func (p *Policy) Check(path string) (string, error) {
+	clean, err := cleanPath(path)
+	if err != nil {
+		return "", err
+	}
+	if rule, ok := p.Protected(clean); ok {
+		return "", &lexError{kind: ErrPathProtected, detail: rule}
+	}
+	return clean, nil
+}
+
+func cleanPath(path string) (string, error) {
+	switch {
+	case path == "":
+		return "", invalid("the path is empty")
+	case len(path) > MaxPathBytes:
+		return "", invalid(fmt.Sprintf("longer than %d bytes", MaxPathBytes))
+	case !utf8.ValidString(path):
+		return "", invalid("not valid UTF-8")
+	}
+	for _, r := range path {
+		switch {
+		case r == 0:
+			return "", invalid("holds a NUL byte")
+		case r < 0x20 || r == 0x7f:
+			return "", invalid("holds a control character")
+		case r == '\\':
+			// A backslash is a separator on Windows and the start of a UNC
+			// or device path. Paths here always use "/".
+			return "", invalid(`holds a backslash; use "/" between names`)
+		}
+	}
+	switch {
+	case path[0] == '/':
+		return "", escapes("absolute paths are not allowed; give a path relative to the repository root")
+	case len(path) >= 2 && path[1] == ':' && isASCIILetter(path[0]):
+		return "", escapes("volume paths are not allowed; give a path relative to the repository root")
+	}
+	parts := make([]string, 0, 8)
+	for name := range strings.SplitSeq(path, "/") {
+		switch {
+		case name == "" || name == ".":
+			continue
+		case name == "..":
+			return "", escapes(`".." is not allowed`)
+		case len(name) > MaxComponentBytes:
+			return "", invalid(fmt.Sprintf("a name is longer than %d bytes", MaxComponentBytes))
+		}
+		// Combining marks are safe now that all policy keys use NFC. Reject
+		// sequences for which norm inserts a stream-safety GraphemeJoiner:
+		// that insertion changes canonical equivalence. Invalid UTF-8 was
+		// rejected above. Keep the original spelling for filesystem access.
+		if strings.Count(norm.NFC.String(name), norm.GraphemeJoiner) > strings.Count(name, norm.GraphemeJoiner) {
+			return "", invalid("a name cannot be normalized without inserting a stream-safety separator")
+		}
+		parts = append(parts, name)
+	}
+	if len(parts) > MaxPathDepth {
+		return "", invalid(fmt.Sprintf("deeper than %d levels", MaxPathDepth))
+	}
+	if len(parts) == 0 {
+		return ".", nil
+	}
+	return strings.Join(parts, "/"), nil
+}
+
+// Protected reports whether a clean path is protected, and by which rule.
+// The checkout root itself is never protected.
+func (p *Policy) Protected(clean string) (rule string, ok bool) {
+	if clean == "." || clean == "" {
+		return "", false
+	}
+	keys := make([]string, 0, 8)
+	for name := range strings.SplitSeq(clean, "/") {
+		key := matchKey(name)
+		switch {
+		case key == matchKey(".git") || isShortGitName(key):
+			return ".git", true
+		case strings.HasPrefix(key, matchKey(".env")):
+			return ".env*", true
+		}
+		keys = append(keys, key)
+	}
+	for _, r := range p.rules {
+		if len(keys) >= len(r.keys) && equalKeys(keys[:len(r.keys)], r.keys) {
+			return r.display, true
+		}
+	}
+	return "", false
+}
+
+func equalKeys(a, b []string) bool {
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// matchKey reduces a file name to the form the protected-path rules compare.
+// Two names a supported file system could treat as the same file get the
+// same key:
+//
+//   - canonically equivalent spellings are normalized to NFC before folding
+//   - letters are case folded (macOS and Windows ignore case)
+//   - code points that HFS+ ignores in names are dropped
+//   - anything from a ":" on is dropped (an NTFS stream name)
+//   - trailing dots and spaces are dropped (Windows ignores them)
+//
+// It errs on the side of protecting too much: a strange name that only
+// resembles a protected one is refused, which costs nothing.
+func matchKey(name string) string {
+	name = norm.NFC.String(name)
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		if isIgnorable(r) {
+			continue
+		}
+		b.WriteRune(foldRune(r))
+	}
+	// Folding and dropping ignored runes can expose another composition.
+	key := norm.NFC.String(b.String())
+	if i := strings.IndexByte(key, ':'); i >= 0 {
+		key = key[:i]
+	}
+	return strings.TrimRight(key, ". ")
+}
+
+// foldRune maps every rune of a simple case-folding orbit to one member, so
+// that "K", "k" and the Kelvin sign compare equal, as do "S", "s" and the
+// long s.
+func foldRune(r rune) rune {
+	lowest := r
+	for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {
+		lowest = min(lowest, next)
+	}
+	if 'A' <= lowest && lowest <= 'Z' {
+		lowest += 'a' - 'A'
+	}
+	return lowest
+}
+
+// isIgnorable reports the code points HFS+ skips when it compares names.
+func isIgnorable(r rune) bool {
+	return (r >= 0x200C && r <= 0x200F) || (r >= 0x202A && r <= 0x202E) ||
+		(r >= 0x206A && r <= 0x206F) || r == 0xFEFF
+}
+
+// isShortGitName reports a Windows 8.3 short name for .git, such as GIT~1.
+func isShortGitName(key string) bool {
+	digits, ok := strings.CutPrefix(key, "git~")
+	if !ok || digits == "" {
+		return false
+	}
+	for _, c := range digits {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIILetter(c byte) bool {
+	return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')
+}
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/aryanpappu/patchbot/internal/execx"
+	"github.com/aryanpappu/patchbot/internal/llm"
+	"github.com/aryanpappu/patchbot/internal/secret"
+)
+
+// RunCmd executes an operator-configured command ID. Register it only for code.
+type RunCmd struct{}
+
+// Spec describes run_cmd.
+func (RunCmd) Spec() llm.ToolSpec {
+	return llm.ToolSpec{Name: "run_cmd", Description: "Run a configured command by name. Extra arguments require operator permission. There is no shell. Output is untrusted repository data.", Schema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Configured command ID, such as test or lint."},"args":{"type":"array","description":"Optional literal extra arguments, if permitted for this command.","items":{"type":"string"}}},"required":["name"],"additionalProperties":false}`)}
+}
+
+// Execute runs run_cmd.
+func (RunCmd) Execute(ctx context.Context, env *Env, raw json.RawMessage) (Result, error) {
+	var args struct {
+		Name string   `json:"name"`
+		Args []string `json:"args"`
+	}
+	if err := decodeArgs(raw, &args); err != nil {
+		return failed("%v", err)
+	}
+	if env.Policy == nil {
+		return Result{}, errors.New("command policy is missing")
+	}
+	if _, err := env.Policy.Resolve(args.Name, args.Args); err != nil {
+		return failed("command denied: %s", err)
+	}
+	result, err := ExecuteCommand(ctx, env, args.Name, args.Args, 0)
+	if err != nil {
+		return Result{}, err
+	}
+	limits := env.Limits.withDefaults()
+	header := fmt.Sprintf("exit_code: %d\ntimed_out: %t\ntruncated: %t\n", result.ExitCode, result.TimedOut, result.Truncated)
+	return Result{Content: header + CapOutput(result.Output, max(1, limits.CmdOutputBytes-len(header))), RecordOutput: result.Output, ExitCode: &result.ExitCode, TimedOut: result.TimedOut, IsError: result.ExitCode != 0 || result.TimedOut}, nil
+}
+
+// ExecuteCommand is shared by run_cmd and harness verification. name, arguments
+// and timeout for harness calls come from trusted configuration. Each invocation
+// gets private HOME/TMP directories under RunDir, never ambient credentials.
+func ExecuteCommand(ctx context.Context, env *Env, name string, args []string, timeout time.Duration) (execx.Result, error) {
+	if err := ctx.Err(); err != nil {
+		return execx.Result{}, err
+	}
+	if env == nil || env.WS == nil || env.Policy == nil || env.Exec == nil {
+		return execx.Result{}, errors.New("command environment is incomplete")
+	}
+	argv, err := env.Policy.Resolve(name, args)
+	if err != nil {
+		return execx.Result{}, fmt.Errorf("command policy: %w", err)
+	}
+	if !filepath.IsAbs(env.RunDir) {
+		return execx.Result{}, errors.New("command run directory must be absolute")
+	}
+	runDir, err := filepath.EvalSymlinks(env.RunDir)
+	if err != nil {
+		return execx.Result{}, errors.New("resolve command run directory failed")
+	}
+	checkout, err := filepath.EvalSymlinks(env.WS.Dir())
+	if err != nil {
+		return execx.Result{}, errors.New("resolve command workspace failed")
+	}
+	rel, err := filepath.Rel(checkout, runDir)
+	if err != nil || rel == "." || filepath.IsLocal(rel) {
+		return execx.Result{}, errors.New("command run directory must be outside checkout")
+	}
+	private, err := os.MkdirTemp(runDir, ".command-")
+	if err != nil {
+		return execx.Result{}, errors.New("create private command directory failed")
+	}
+	defer func() { _ = os.RemoveAll(private) }()
+	home, tmp := filepath.Join(private, "home"), filepath.Join(private, "tmp")
+	for _, dir := range []string{home, tmp} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			return execx.Result{}, errors.New("create command home/temp failed")
+		}
+	}
+	limits := env.Limits.withDefaults()
+	if timeout <= 0 {
+		timeout = limits.CmdTimeout
+	}
+	redactor := env.Redactor
+	if redactor == nil {
+		redactor = secret.NewRedactor()
+	}
+	result, err := env.Exec.Run(ctx, execx.Spec{Argv: argv, Dir: env.WS.Dir(), Env: env.Policy.MinimalEnv(home, tmp, nil), Timeout: timeout, OutputCap: limits.CmdStoreBytes, Redactor: redactor})
+	result.Output = redactor.Redact(strings.ToValidUTF8(result.Output, "�"))
+	result.Truncated = result.Truncated || len(result.Output) > limits.CmdStoreBytes
+	result.Output = CapOutput(result.Output, limits.CmdStoreBytes)
+	if ctx.Err() != nil {
+		return result, ctx.Err()
+	}
+	if result.Cancelled {
+		return result, context.Canceled
+	}
+	if err != nil {
+		return result, errors.New("command executor could not run the command")
+	}
+	return result, nil
+}
+
+// CapOutput keeps one quarter of the available bytes at the head and the rest
+// at the tail (2 KB + 6 KB for an 8 KB cap). Redact before calling it.
+func CapOutput(s string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	if len(s) <= limit {
+		return s
+	}
+	const marker = "\n[output omitted]\n"
+	if limit < len(marker) {
+		return cutUTF8(marker, limit)
+	}
+	head := (limit - len(marker)) / 4
+	tail := limit - len(marker) - head
+	start := len(s) - tail
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	return cutUTF8(s, head) + marker + s[start:]
+}
+internal/runner/runner.go:28:// Options supplies trusted infrastructure. Clone, Executor and Constructors are
+internal/runner/runner.go:45:	Executor          func(string) (execx.Executor, error)
+internal/runner/runner.go:64:// Runner is safe for concurrent actions. Long work owns a per-run context;
+internal/runner/runner.go:109:	if opts.Executor == nil {
+internal/runner/runner.go:110:		opts.Executor = func(dir string) (execx.Executor, error) { return execx.NewLocalExecutor(dir) }
+internal/runner/runner.go:190:	return runLimits{Agent: agent.Limits{MaxTurns: c.MaxTurns, MaxOutputTokens: c.MaxOutputTokens, MaxTotalTokens: c.MaxTotalTokens, MaxCostMicros: budget, MaxTestAttempts: min(c.MaxTestAttempts, 3), TestTimeout: c.TestTimeout}, RefineTurns: c.RefineMaxTurns, Timeout: c.RunTimeout}, nil
+internal/server/manager.go:12:	errQueueFull    = errors.New("pending run queue is full; retry when capacity is available")
+internal/server/manager.go:29:// manager owns a bounded queue without allocating goroutines for waiting work.
+internal/server/manager.go:36:	queueLimit    int
+internal/server/manager.go:44:func newManager(limit, queueLimit int) *manager {
+internal/server/manager.go:48:	if queueLimit <= 0 {
+internal/server/manager.go:49:		queueLimit = 16
+internal/server/manager.go:51:	return &manager{running: make(map[int64]*job), limit: limit, queueLimit: queueLimit, done: make(chan struct{})}
+internal/server/manager.go:60:	if len(m.pending)+m.reserved >= m.queueLimit {
+internal/server/manager.go:203:// startHeartbeats owns queued and running jobs until shutdown has drained them.
+internal/server/manager.go:204:// One ticker covers the entire bounded queue, including same-run follow-ups.
+internal/workspace/workspace.go:4:// agent away from protected paths such as .git and .env files.
+internal/gitx/gitx.go:2:// Calls are serialized. Close removes private git HOME/hooks/temp directories;
+internal/gitx/gitx.go:35:	// ErrTampered indicates changed git configuration or unexpected hooks.
+internal/gitx/gitx.go:40:	ErrSubmodules = errors.New("repositories with .gitmodules are refused")
+internal/gitx/gitx.go:69:// The zero value selects patchbot <patchbot@users.noreply.github.com>.
+internal/gitx/gitx.go:78:	dir, git, home, hooks, temp, private                  string
+internal/gitx/gitx.go:117:		author: Author{"patchbot", "patchbot@users.noreply.github.com"}}
+internal/gitx/gitx.go:138:		r.remote = "https://" + opts.Host + "/" + opts.Owner + "/" + opts.Name + ".git"
+internal/gitx/gitx.go:146:	r.git, err = ResolveGit(dirs, append([]string{opts.Dir}, opts.ExcludedRoots...)...)
+internal/gitx/gitx.go:160:	r.home, r.hooks, r.temp = filepath.Join(private, "home"), filepath.Join(private, "hooks"), filepath.Join(private, "tmp")
+internal/gitx/gitx.go:161:	for _, dir := range []string{r.home, r.hooks, r.temp} {
+internal/gitx/gitx.go:184:	args := []string{"clone", "--no-local", "--single-branch", "--no-tags", "--no-recurse-submodules", "--template=" + r.hooks, "--branch", opts.Branch}
+internal/gitx/gitx.go:306:	// ls-tree also finds .gitmodules hidden by a sparse checkout or deletion.
+internal/gitx/gitx.go:313:			if strings.EqualFold(part, ".gitmodules") {
+internal/workspace/local.go:30:// Local is a Workspace on a local directory. It is safe for concurrent use.
+internal/workspace/local.go:167:// temporary file in the same directory, which is then renamed over the
+internal/workspace/local.go:171:// The temporary file is not synced to disk: a checkout is rebuilt from the
+internal/workspace/local.go:210:// writeAtomic writes data to a temporary file in dir and renames it to base.
+internal/workspace/local.go:497:// .git at the root and every prefix rule.
+internal/workspace/local.go:510:	add(".git", ".git")
+internal/workspace/local.go:707:// openAttempts is how often openRegular tries again when the file is
+internal/workspace/local.go:710:const openAttempts = 16
+internal/workspace/local.go:718:	for range openAttempts {
+
+codex
+The code supports keeping Git and file tools on the host, but swapping the executor alone is insufficient: command paths and HOME/TMP currently resolve on the host, and the checkout contains writable `.git` metadata. I’ll make those explicit M17 gates and treat the stated server capacity and Access configuration as unverified.
+exec
+/bin/zsh -lc "sed -n '140,215p' internal/gitx/gitx.go; sed -n '1,95p' internal/workspace/local.go; rg -n 'MinimumGitVersion|verify\\(' internal/gitx; cat internal/server/manager.go | head -85; git status --short; ls /Users/AGENTS.md /Users/pappumishra/AGENTS.md /Users/pappumishra/Documents/AGENTS.md /Users/pappumishra/Documents/selfproject/AGENTS.md 2>/dev/null" in /Users/pappumishra/Documents/selfproject/patchbot
+ exited 1 in 0ms:
+	dirs := opts.TrustedPath
+	if dirs == nil {
+		dirs = filepath.SplitList(execx.TrustedPath)
+	}
+	r.path = strings.Join(dirs, string(filepath.ListSeparator))
+	var err error
+	r.git, err = ResolveGit(dirs, append([]string{opts.Dir}, opts.ExcludedRoots...)...)
+	if err != nil {
+		return nil, err
+	}
+	private, err := os.MkdirTemp("", "patchbot-git-")
+	if err != nil {
+		return nil, errors.New("create private git directories failed")
+	}
+	r.private = private
+	defer func() {
+		if cloneErr != nil {
+			_ = os.RemoveAll(private)
+		}
+	}()
+	r.home, r.hooks, r.temp = filepath.Join(private, "home"), filepath.Join(private, "hooks"), filepath.Join(private, "tmp")
+	for _, dir := range []string{r.home, r.hooks, r.temp} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			return nil, errors.New("create private git directory failed")
+		}
+	}
+	// Reserve the destination ourselves so a failed clone never removes a
+	// directory another actor created between validation and git clone.
+	if err := os.Mkdir(opts.Dir, 0700); err != nil {
+		return nil, errors.New("reserve clone destination failed")
+	}
+	defer func() {
+		if cloneErr != nil {
+			_ = os.RemoveAll(opts.Dir)
+		}
+	}()
+	r.dir = private
+	version, err := r.complete(ctx, false, "--version")
+	if err != nil {
+		return nil, err
+	}
+	if err := checkGitVersion(version); err != nil {
+		return nil, err
+	}
+	args := []string{"clone", "--no-local", "--single-branch", "--no-tags", "--no-recurse-submodules", "--template=" + r.hooks, "--branch", opts.Branch}
+	if opts.Depth > 0 {
+		args = append(args, "--depth", fmt.Sprint(opts.Depth))
+	}
+	args = append(args, "--", r.remote, opts.Dir)
+	if _, err := r.complete(ctx, true, args...); err != nil {
+		return nil, err
+	}
+	r.dir = opts.Dir
+	if err := r.noSubmodules(ctx); err != nil {
+		return nil, err
+	}
+	r.base, err = r.head(ctx)
+	if err != nil {
+		return nil, err
+	}
+	r.configHash, err = r.hashConfig()
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// Dir is the absolute checkout path; it remains valid after Close.
+func (r *Repo) Dir() string { return r.dir }
+
+// Close discards credentials and removes the private git execution directories.
+// The workspace owner is responsible for removing the checkout itself.
+func (r *Repo) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.closed, r.token = true, ""
+package workspace
+
+import (
+	"cmp"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"syscall"
+)
+
+// maxSymlinkHops bounds how many symlinks one path may lead through. A loop
+// runs into it.
+const maxSymlinkHops = 32
+
+// New files and directories are private. Rewrites retain owner permissions,
+// including executable bits needed by repository scripts.
+const (
+	newFileMode fs.FileMode = 0o600
+	newDirMode  fs.FileMode = 0o700
+)
+
+// Local is a Workspace on a local directory. It is safe for concurrent use.
+//
+// Every operation works in three steps:
+//
+//  1. The path is validated as text and checked against the protected-path
+//     rules (Policy).
+//  2. The path is resolved by hand, one component at a time, inside the
+//     os.Root. A symlink is replaced by its target, and the rules are
+//     applied again to every path this produces, so an alias of a protected
+//     path is refused. A target that is absolute or climbs out of the
+//     checkout is refused. Each real file or directory on the way is also
+//     compared by identity with the protected paths that exist, which
+//     catches a name the file system folds onto a protected one in a way
+//     the rules did not predict.
+//  3. The operation runs on the resolved, symlink-free path. The directory
+//     that holds the file is opened level by level through os.Root, and
+//     each level is verified not to be a symlink, so a path swapped for a
+//     symlink between step 2 and step 3 is refused instead of followed.
+//
+// os.Root is the boundary for leaving the checkout: even if steps 1 and 2
+// had a bug, step 3 cannot open anything outside it.
+type Local struct {
+	dir    string // absolute path of the checkout
+	runDir string // per-run directory that holds dir, or "" when not made by a Manager
+	root   *os.Root
+	policy *Policy
+	opts   Options
+
+	closeOnce sync.Once
+	closeErr  error
+	onClose   func(keep bool) error
+	// testHook forces namespace changes at acquisition/use boundaries in tests.
+	// It is set before an operation starts and is nil in production.
+	testHook func(stage string)
+}
+
+var _ Workspace = (*Local)(nil)
+
+// Open returns a workspace on an existing directory.
+func Open(dir string, opts Options) (*Local, error) {
+	policy, err := NewPolicy(opts.Protected)
+	if err != nil {
+		return nil, fmt.Errorf("workspace: %w", err)
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("workspace: %w", err)
+	}
+	root, err := os.OpenRoot(abs + string(os.PathSeparator) + ".")
+	if err != nil {
+		return nil, fmt.Errorf("workspace: open checkout: %w", err)
+	}
+	return localFromRoot(abs, root, policy, opts), nil
+}
+
+// localFromRoot takes ownership of a handle acquired through the caller's
+// pinned root. In particular, Manager must never reopen dir by host pathname.
+func localFromRoot(dir string, root *os.Root, policy *Policy, opts Options) *Local {
+	return &Local{dir: dir, root: root, policy: policy, opts: opts.withDefaults()}
+}
+
+func (l *Local) hook(stage string) {
+	if l.testHook != nil {
+		l.testHook(stage)
+	}
+}
+internal/gitx/integrity.go:38:func (r *Repo) verify() error {
+internal/gitx/publish.go:15:	if err := r.verify(); err != nil {
+internal/gitx/publish.go:58:	if err := r.verify(); err != nil {
+internal/gitx/publish.go:97:	if err := r.verify(); err != nil {
+internal/gitx/gitx.go:29:	// MinimumGitVersion includes fixes for CVE-2022-23521 and the 2025 clone
+internal/gitx/gitx.go:31:	MinimumGitVersion = "2.50.1"
+internal/gitx/gitx.go:96:// Clone checks MinimumGitVersion once and clones into a nonexistent Dir.
+internal/gitx/gitx.go:256:	if err := r.verify(); err != nil {
+internal/gitx/gitx.go:272:	if err := r.verify(); err != nil {
+internal/gitx/gitx.go:298:	if err := r.verify(); err != nil {
+internal/gitx/security_test.go:43:				!strings.Contains(err.Error(), MinimumGitVersion)) {
+internal/gitx/changes.go:25:	if err := r.verify(); err != nil {
+internal/gitx/changes.go:181:	if err := r.verify(); err != nil {
+internal/gitx/changes.go:236:	if err := r.verify(); err != nil {
+internal/gitx/version.go:37:		required, parseErr := parseGitVersion("git version " + MinimumGitVersion)
+internal/gitx/version.go:53:	return fmt.Errorf("found %q; git >= %s is required", strings.TrimSpace(out), MinimumGitVersion)
+internal/gitx/resolution_m15_test.go:22:	if err == nil || !strings.Contains(err.Error(), MinimumGitVersion) {
+package server
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"time"
+)
+
+var (
+	errShuttingDown = errors.New("server is shutting down")
+	errQueueFull    = errors.New("pending run queue is full; retry when capacity is available")
+)
+
+type job struct {
+	id     int64
+	ctx    context.Context
+	cancel context.CancelFunc
+	work   func(context.Context) error
+}
+
+type reservationKey struct{}
+
+type reservation struct {
+	manager *manager
+	used    bool // protected by manager.mu
+}
+
+// manager owns a bounded queue without allocating goroutines for waiting work.
+// Reservations secure admission before the runner commits lifecycle decisions.
+type manager struct {
+	mu            sync.Mutex
+	running       map[int64]*job
+	pending       []*job
+	limit         int
+	queueLimit    int
+	reserved      int
+	closing       bool
+	done          chan struct{}
+	drained       bool
+	heartbeatDone chan struct{}
+}
+
+func newManager(limit, queueLimit int) *manager {
+	if limit <= 0 {
+		limit = 2
+	}
+	if queueLimit <= 0 {
+		queueLimit = 16
+	}
+	return &manager{running: make(map[int64]*job), limit: limit, queueLimit: queueLimit, done: make(chan struct{})}
+}
+
+func (m *manager) reserve(ctx context.Context) (context.Context, func(), error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closing {
+		return ctx, nil, errShuttingDown
+	}
+	if len(m.pending)+m.reserved >= m.queueLimit {
+		return ctx, nil, errQueueFull
+	}
+	m.reserved++
+	r := &reservation{manager: m}
+	release := func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if !r.used {
+			r.used = true
+			m.reserved--
+			m.checkDrained()
+		}
+	}
+	return context.WithValue(ctx, reservationKey{}, r), release, nil
+}
+
+func (m *manager) submit(ctx context.Context, id int64, work func(context.Context) error) error {
+	r, ok := ctx.Value(reservationKey{}).(*reservation)
+	if !ok || r.manager != m {
+		admitted, release, err := m.reserve(ctx)
+		if err != nil {
+			return err
+		}
+		defer release()
+		return m.submit(admitted, id, work)
+ M docs/planning/step2/codex-round2.log
+?? deploy/
+?? docs/planning/step2/codex-m22.log
+?? docs/planning/step2/codex-review-m17.md
+
+apply patch
+patch: completed
+/Users/pappumishra/Documents/selfproject/patchbot/docs/planning/step2/codex-round2.md
+diff --git a/docs/planning/step2/codex-round2.md b/docs/planning/step2/codex-round2.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..53ab75e6acdd0c4e2fb2e8ee8fa2762db8ec0a3a
+--- /dev/null
++++ b/docs/planning/step2/codex-round2.md
+@@ -0,0 +1,103 @@
++# Step 2 debate: Codex round 2
++
++2026-11-13. Checked round 1 and Claude round 2 against the current implementation.
++This is a planning review; no code or server configuration was changed.
++Mumbai hardware, installed packages, website load and Cloudflare policy are reported premises,
++not facts established by this source review.
++
++## Merged order: amend, then accept
++
++Accept M16 baseline → M17 isolation → M18 deployment rehearsal → M19 live pilot →
++M20 memory → M21 optional reviewer → M22 optional webhooks.
++Memory and review should earn their place through measured pilot evidence.
++Amend M16: a trusted throwaway repository on the Mac is acceptable only as an explicit,
++supervised local-execution risk decision; trusted content is not an OS boundary and dependencies
++also execute. Prefer a disposable VM. This does not authorize unattended Mac execution.
++M18 must pass before admitting real work on the shared server; M19 validates the full workflow.
++Keep exact revision/config/model IDs, approval/spec hashes, test evidence, tokens, priced cost
++or unknown, duration and publication identifiers in the M16 evidence. Failures remain evidence.
++
++## Claims C–G
++
++- **C — amend.** Accept rootless execution under a dedicated account, non-root container UID,
++  network denial, read-only rootfs, dropped capabilities, no-new-privileges and resource limits.
++  No rootful Docker group/socket access. Distinguish the host controller's narrowly scoped access
++  to its rootless runtime from repository processes: the latter must never receive any runtime
++  socket or API access. A controller must launch containers somehow; “never see the socket” cannot
++  prohibit its chosen control channel too. Rootless alone does not prove effective cgroup limits
++  or disk quotas. Current `execx.LocalExecutor` explicitly documents host privileges and escaped
++  process-group descendants; its timeout/output limits are not containment.
++- **D — amend substantially.** Host file tools and host Git are a viable design, not a completed
++  boundary. `runner/phases.go:clone` constructs `workspace.Open`, `execx.NewPolicy`, then the
++  injected executor; the default in `runner.go` is local. `execx/policy.go` resolves absolute
++  executables against the HOST trusted PATH. `tools/run_cmd.go:ExecuteCommand` creates host
++  HOME/TMP outside the checkout. Container executable resolution, working-directory mapping,
++  HOME/TMP and environment therefore need an explicit contract; replacing the factory is insufficient.
++  `gitx/command.go` already restricts token injection to clone/push and disables helpers/hooks;
++  `gitx/gitx.go` enforces the 2.50.1 floor. Keep those controls and private Git directories host-only.
++  However, a writable checkout bind mount exposes `.git` to commands despite file-tool protection.
++  `gitx/integrity.go` checks config/hash and hook entries, not every metadata file or concurrent
++  mutation. Hide/protect metadata or use a separate command tree with validated change import.
++  Stop all container writers before host Git consumes results. Audit symlinks, hardlinks, special
++  files, protected-path changes and host file-tool races; `workspace.Local`'s jail is not a syscall
++  policy for tests. Keeping the token out of the environment alone is insufficient.
++- **E — accept with qualification.** Operator-selected, digest-pinned images with native arm64
++  support are required on the stated target. Image configuration and container execution do not
++  exist in the inspected execution path. Verify the exact selected digest/platform and toolchain;
++  image family names do not prove compatibility. Record image identity with command evidence.
++- **F — accept deferral; amend certainty.** Polling already serves the approval path
++  (`runner/sync.go`); webhooks need not block deployment. Whether Access blocks the route depends
++  on the actual policy, which this code cannot establish. Any future public exception still needs
++  raw-body HMAC, actor/repo authorization and crash-safe receipt/reconciliation. Access is not
++  webhook authentication, and an exception must not expose the UI/API.
++- **G — amend.** Accept one active run globally and at least the proposed site headroom as an
++  initial operational target, subject to measurement. `server/manager.go` has a bounded in-memory
++  queue and defaults to TWO workers; set one explicitly. This is process-local, not a cross-process
++  lock: prevent overlapping service/CLI instances. CPU quotas limit consumption, not guaranteed
++  site reservation. Account for controller, host Git, runtime, page cache, disk and I/O too.
++
++## Remaining disagreements
++
++1. An unrestricted checkout mount plus the existing config hash is not sufficient protection for
++   host Git. M17 needs a concrete metadata and change-transfer design, with adversarial evidence.
++2. M16 on a normal Mac remains an explicit risk exception, not evidence of isolation.
++3. Numerical server headroom and rootless resource enforcement must be demonstrated on Mumbai;
++   capacity figures and flags cannot substitute for a deployment drill.
++The memory trust and opt-in reviewer concessions otherwise resolve round 1's central disputes.
++
++## Final M17 acceptance criteria — container executor
++
++1. All baseline, model command and harness verification execution uses the configured container
++   path, including retries/re-clones. Missing runtime/image/limits fails closed; no local fallback.
++2. Operator-owned image/digest/platform and command-ID policy are frozen and recorded. Resolve
++   executables inside that image without weakening argument restrictions; map workspace and private
++   HOME/TMP correctly. Preserve cancellation/timeout distinctions, output caps and stream redaction.
++3. Non-root/rootless isolation, no privileged mode/host namespaces/devices/runtime sockets,
++   no host home/service data/Git private dirs/provider or GitHub credentials. Only deliberate per-run
++   mounts; protected metadata and safe import/host file access satisfy D. No background writer
++   survives command completion or races host Git/publication.
++4. Default-deny network is exercised, including host services and metadata endpoints. If dependency
++   fetching is needed, define a separate bounded phase and network policy; never silently grant
++   network to tests or execute repository install hooks with service credentials.
++5. Effective CPU, memory/swap, PID, writable disk/inode and tmpfs limits are verified on the target.
++   Include runtime storage/logs and workspace volumes: read-only rootfs alone does not bound disk.
++6. Adversarial integration evidence covers host/secret reads, `.git` tampering, filesystem races,
++   fork/setsid descendants, disk fill, egress, timeout/cancel, runtime failure and service death.
++   Prove cleanup after restart and bounded damage while the controller remains responsive.
++
++## Final M18 acceptance criteria — deployment rehearsal
++
++1. M17 passes on the actual arm64 host. Dedicated account, protected config/data, patched supported
++   Git >=2.50.1 from the configured trusted path, one service process and one active run globally.
++   Verify bounded queue saturation and prevent independent CLI execution from bypassing admission.
++2. systemd and runtime startup/shutdown work without rootful daemon authority; restart reconciles
++   orphan containers and fails/reconciles stale work honestly. No promise of in-memory queue resume.
++3. Exercise loopback binding, tunnel/Access plus application authentication, browser approval and
++   SSE reconnect. Demonstrate unauthorized external access is refused; protect inference transport.
++4. SQLite-consistent online backup plus restricted retention; restore into fresh data, validate
++   migration ledger and stale-run handling. Rehearse compatible upgrade/rollback and credential rotation.
++5. Load and fault drills measure website latency, peak CPU/RAM, disk/inodes and I/O with aggregate
++   Patchbot limits. Demonstrate the agreed site headroom, disk-full behavior and operator stop path.
++6. Document ambiguous push/PR reconciliation before retries, inspect stored/public evidence for
++   secrets, and record reproducible commands/configuration and results. M19 then completes live
++   approval, stale approval, repair, cancellation, restart and publication fault trials.
+
+exec
+/bin/zsh -lc 'wc -l docs/planning/step2/codex-round2.md; git diff --check -- docs/planning/step2/codex-round2.md' in /Users/pappumishra/Documents/selfproject/patchbot
+ succeeded in 0ms:
+     103 docs/planning/step2/codex-round2.md
+
+codex
+Wrote [codex-round2.md](/Users/pappumishra/Documents/selfproject/patchbot/docs/planning/step2/codex-round2.md), 103 lines.
+
+It amends and accepts the milestone order, assesses C–G against the code, lists remaining disagreements, and defines M17/M18 acceptance criteria. No code changed.
+tokens used
+34,326
+Wrote [codex-round2.md](/Users/pappumishra/Documents/selfproject/patchbot/docs/planning/step2/codex-round2.md), 103 lines.
+
+It amends and accepts the milestone order, assesses C–G against the code, lists remaining disagreements, and defines M17/M18 acceptance criteria. No code changed.

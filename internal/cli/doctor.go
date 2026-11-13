@@ -91,6 +91,10 @@ func (a *App) runDoctor(args []string) int {
 		add("FAIL", "tools", "cannot determine working directory")
 	} else {
 		for _, tool := range []string{"go", "git"} {
+			if tool == "go" && cfg.Executor.Container() {
+				add("PASS", "go version", "not required on the host; repository commands run in the container image")
+				continue
+			}
 			output, err := doctorVersion(ctx, root, dirs, tool, r, cfg.DataDir(), filepath.Join(cfg.DataDir(), "workspaces"), opts.Dir)
 			if err == nil {
 				if tool == "git" {
@@ -130,14 +134,20 @@ func (a *App) runDoctor(args []string) int {
 		}
 		doctorStorage(ctx, cfg, add)
 		if rootErr == nil {
+			excluded := []string{filepath.Join(cfg.DataDir(), "workspaces"), opts.Dir}
+			doctorExecutor(ctx, cfg, root, r, lookup, add, excluded...)
+			where := ""
+			if cfg.Executor.Container() {
+				where = " (resolved in the container image)"
+			}
 			for _, name := range sortedNames(cfg.Repos) {
 				for _, id := range sortedNames(cfg.Repos[name].Commands) {
-					p, err := execx.NewPolicy(root, map[string][]string{id: cfg.Repos[name].Commands[id]}, execx.PolicyOptions{TrustedPath: dirs, ExcludedRoots: []string{cfg.DataDir(), filepath.Join(cfg.DataDir(), "workspaces"), opts.Dir}})
+					p, err := execx.NewPolicy(root, map[string][]string{id: cfg.Repos[name].Commands[id]}, cfg.CommandPolicyOptions(excluded...))
 					if err != nil {
 						add("FAIL", name+" / "+id, err.Error())
 					} else {
 						argv, _ := p.Resolve(id, nil)
-						add("PASS", name+" / "+id, argv[0])
+						add("PASS", name+" / "+id, argv[0]+where)
 					}
 				}
 			}
@@ -271,6 +281,53 @@ func doctorVersion(ctx context.Context, root string, dirs []string, tool string,
 		return "", errors.New("version command failed, timed out or exceeded its output limit")
 	}
 	return strings.TrimSpace(result.Output), nil
+}
+
+// doctorExecutor checks the container runtime binary, rootless mode, the
+// digest-pinned image and whether the image is present locally (runs use
+// --pull never). A rootful runtime is a warning: it still works, but the
+// runtime daemon is root-equivalent and must not be reachable by patchbot.
+func doctorExecutor(ctx context.Context, cfg *config.Config, root string, r *secret.Redactor, lookup func(string) (string, bool), add func(string, string, string), excluded ...string) {
+	if !cfg.Executor.Container() {
+		add("PASS", "executor", "local host processes (not a sandbox; use kind = \"container\" for untrusted code)")
+		return
+	}
+	cc, err := cfg.ContainerConfig(lookup, excluded...)
+	if err != nil {
+		add("FAIL", "container runtime", err.Error())
+		return
+	}
+	add("PASS", "container runtime", cc.Runtime)
+	add("PASS", "container image", "digest-pinned "+cc.Image)
+	run := func(args ...string) (string, error) {
+		executor, err := execx.NewLocalExecutor(root)
+		if err != nil {
+			return "", err
+		}
+		result, err := executor.Run(ctx, execx.Spec{Argv: append([]string{cc.Runtime}, args...), Dir: root, Env: cc.HostEnv, Timeout: 15 * time.Second, OutputCap: 4096, Redactor: r})
+		if err != nil || result.ExitCode != 0 || result.TimedOut || result.Cancelled {
+			return "", errors.New("command failed or timed out")
+		}
+		return strings.TrimSpace(result.Output), nil
+	}
+	format := "{{.SecurityOptions}}"
+	if cc.Flavor == execx.RuntimePodman {
+		format = "{{.Host.Security.Rootless}}"
+	}
+	output, err := run("info", "--format", format)
+	switch {
+	case err != nil:
+		add("FAIL", "container rootless", cc.Flavor+" info failed; is the runtime installed and XDG_RUNTIME_DIR/DOCKER_HOST set?")
+	case cc.Flavor == execx.RuntimePodman && output == "true", cc.Flavor == execx.RuntimeDocker && strings.Contains(output, "rootless"):
+		add("PASS", "container rootless", cc.Flavor+" runs rootless")
+	default:
+		add("WARN", "container rootless", cc.Flavor+" is not rootless; its daemon is root-equivalent, so use rootless podman or rootless docker")
+	}
+	if _, err := run("image", "inspect", "--format", "{{.Id}}", cc.Image); err != nil {
+		add("WARN", "container image present", "not found locally; runs use --pull never, so pull it first: "+cc.Flavor+" pull "+cc.Image)
+	} else {
+		add("PASS", "container image present", "available locally")
+	}
 }
 
 func sortedNames[V any](values map[string]V) []string {

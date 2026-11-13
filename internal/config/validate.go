@@ -40,6 +40,7 @@ func (c *Config) Validate() error {
 	c.validateDefaults(&v)
 	c.validateLimits(&v)
 	c.validateFixed(&v)
+	c.validateExecutor(&v)
 	for _, name := range sortedKeys(c.Providers) {
 		c.validateProvider(&v, name, c.Providers[name])
 	}
@@ -155,6 +156,42 @@ func (c *Config) validateFixed(v *validator) {
 	v.check(m.MaxBytes >= 256 && m.MaxBytes <= 65536, "memory.max_bytes: must be between 256 and 65536")
 	v.check(m.MaxPending >= 1 && m.MaxPending <= 1000, "memory.max_pending: must be between 1 and 1000")
 	v.check(m.ObservationTTL > 0, "memory.observation_ttl: must be greater than 0")
+}
+
+func (c *Config) validateExecutor(v *validator) {
+	e := c.Executor
+	v.check(slices.Contains([]string{ExecutorLocal, ExecutorContainer}, e.Kind),
+		"executor.kind: %q is not one of local, container", e.Kind)
+	if !e.Container() {
+		return
+	}
+	v.check(slices.Contains([]string{execx.RuntimePodman, execx.RuntimeDocker}, e.Runtime),
+		"executor.runtime: %q is not one of podman, docker", e.Runtime)
+	if e.Image == "" {
+		v.addf("executor.image: required for kind container; pin it by digest (name@sha256:...)")
+	} else if err := execx.ValidateImage(e.Image); err != nil {
+		v.addf("executor.image: %s", err)
+	}
+	if err := execx.ValidateSize(e.Memory); err != nil {
+		v.addf("executor.memory: %s", err)
+	}
+	if err := execx.ValidateSize(e.TmpfsSize); err != nil {
+		v.addf("executor.tmpfs_size: %s", err)
+	}
+	if err := execx.ValidateCPUs(e.CPUs); err != nil {
+		v.addf("executor.cpus: %s", err)
+	}
+	v.check(e.PidsLimit > 0, "executor.pids_limit: must be greater than 0")
+	v.check(e.WorkspaceMaxBytes > 0, "executor.workspace_max_bytes: must be greater than 0")
+	v.check(e.Network == "none", "executor.network: %q is not allowed; only \"none\" is supported", e.Network)
+	if err := execx.ValidateUser(e.User); err != nil {
+		v.addf("executor.user: %s", err)
+	}
+	v.check(e.UserNS == "" || (e.UserNS == "keep-id" && e.Runtime == execx.RuntimePodman),
+		"executor.userns: %q must be empty or \"keep-id\" with runtime podman", e.UserNS)
+	if err := execx.ValidateContainerPath(e.Path); err != nil {
+		v.addf("executor.path: %s", err)
+	}
 }
 
 func (c *Config) validateProvider(v *validator, name string, p *Provider) {
