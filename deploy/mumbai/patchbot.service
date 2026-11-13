@@ -1,0 +1,34 @@
+[Unit]
+Description=patchbot web UI and runner
+After=network-online.target user@995.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=patchbot
+Group=patchbot
+WorkingDirectory=/srv/patchbot
+Environment=HOME=/srv/patchbot
+Environment=XDG_RUNTIME_DIR=/run/user/995
+EnvironmentFile=/srv/patchbot/patchbot.env
+ExecStart=/srv/patchbot/bin/patchbot serve --config /srv/patchbot/patchbot.toml
+Restart=on-failure
+RestartSec=5
+# Host-side limits; rootless containers are capped by user-995.slice.
+CPUQuota=50%
+MemoryMax=768M
+TasksMax=512
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/srv/patchbot /run/user/995
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
