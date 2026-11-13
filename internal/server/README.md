@@ -83,6 +83,18 @@ The included Vue asset is checked against the shared SHA-384 pin by an offline t
   has no event ID. Lag, replay errors and interrupted connections close without
   `end`; clients must reconnect with their last consumed `Last-Event-ID` and
   backoff until an explicit end frame matches that sequence.
+- `GET /api/memory`: `enabled` and `entries` (newest first, at most 500), each
+  a memory entry plus a one-line `summary`. Filters: `repo`, `kind`
+  (`observation`/`lesson`) and repeated or comma-separated `status`
+  (`active`, `pending`, `approved`, `rejected`, `revoked`).
+- `POST /api/memory`: `{"repo":"owner/name","text":"..."}` adds an operator
+  lesson for an allowlisted repo, approved immediately; returns 201 and `entry`.
+  Text is redacted and must be 1 to 600 bytes of printable text.
+- `POST /api/memory/{id}/approve`, `/reject` (pending lessons only) and
+  `/forget` (any entry not yet revoked; erases lesson text): empty body or
+  `{}`, returns 200 and `entry`; wrong state is 409. Decisions record
+  `approval.local_actor`, channel `ui` and the time. Memory routes use the same
+  bearer auth, host checks and cross-origin protection as run routes.
 
 ## Work and stream ownership
 

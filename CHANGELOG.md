@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add repository memory: typed harness observations, operator-approved lessons,
+  bounded deterministic retrieval as untrusted user-turn data, frozen per-stage
+  selection records, `patchbot memory` commands, API endpoints and a UI panel.
+
 ## v0.1.0 — 2026-11-11
 
 - Refine GitHub issues into versioned specs with explicit approval before code.

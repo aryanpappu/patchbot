@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -226,22 +227,27 @@ func TestStaleRecoveryRollsBackOnEventFailure(t *testing.T) {
 func TestMigrationRollback(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
-	m := migration{version: 3, name: "0003_test.sql", checksum: hashOf("test"), sql: `CREATE TABLE migration_probe(id INTEGER); INSERT INTO missing_table VALUES(1);`}
-	if err := s.applyMigration(t.Context(), m, 3); err == nil {
+	files, err := migrationFiles.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := int64(len(files) + 1)
+	m := migration{version: next, name: fmt.Sprintf("%04d_test.sql", next), checksum: hashOf("test"), sql: `CREATE TABLE migration_probe(id INTEGER); INSERT INTO missing_table VALUES(1);`}
+	if err := s.applyMigration(t.Context(), m, next); err == nil {
 		t.Fatal("broken migration succeeded")
 	}
 	var tables, ledger int
 	if err := s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sqlite_master WHERE name='migration_probe'`).Scan(&tables); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM schema_migrations WHERE version=3`).Scan(&ledger); err != nil {
+	if err := s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM schema_migrations WHERE version=?`, next).Scan(&ledger); err != nil {
 		t.Fatal(err)
 	}
 	if tables != 0 || ledger != 0 {
 		t.Fatal("failed migration left a table or ledger entry behind")
 	}
 	m.sql = `CREATE TABLE migration_probe(id INTEGER);`
-	if err := s.applyMigration(t.Context(), m, 3); err != nil {
+	if err := s.applyMigration(t.Context(), m, next); err != nil {
 		t.Fatal(err)
 	}
 }

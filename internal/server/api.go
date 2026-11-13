@@ -37,6 +37,7 @@ func (s *Server) routes() http.Handler {
 	for _, action := range []string{"approve", "revise", "reject", "cancel", "retry"} {
 		mux.HandleFunc("/api/runs/{id}/"+action, s.action)
 	}
+	s.memoryRoutes(mux)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { s.writeError(w, 404, "not_found", "resource not found") })
 	return mux
 }

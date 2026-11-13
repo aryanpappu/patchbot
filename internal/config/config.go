@@ -39,6 +39,7 @@ type Config struct {
 	Log       Log                  `toml:"log"`
 	Server    Server               `toml:"server"`
 	Data      Data                 `toml:"data"`
+	Memory    Memory               `toml:"memory"`
 	Providers map[string]*Provider `toml:"providers"`
 	Repos     map[string]*Repo     `toml:"repos"`
 
@@ -112,6 +113,18 @@ type Server struct {
 	MaxConcurrentRuns int    `toml:"max_concurrent_runs"`
 	MaxQueuedRuns     int    `toml:"max_queued_runs"`
 	VueSrc            string `toml:"vue_src"` // cdn or local
+}
+
+// Memory configures repository memory. Retrieved memory is unverified context
+// in the user turn; it never changes policy, scope or the approval gate.
+type Memory struct {
+	// Enabled turns retrieval, typed observations and lesson proposals on.
+	Enabled bool `toml:"enabled"`
+	// MaxEntries and MaxBytes bound what one stage receives.
+	MaxEntries int `toml:"max_entries"`
+	MaxBytes   int `toml:"max_bytes"`
+	// ObservationTTL is how long a typed observation stays retrievable.
+	ObservationTTL time.Duration `toml:"observation_ttl"`
 }
 
 // Data says where the database and workspaces live.

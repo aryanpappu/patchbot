@@ -13,6 +13,7 @@ engineering questions together and record them here.
 | 2026-11-10 | Follow-up: `execx.stopGroup` should poll for group exit instead of always waiting the full grace period | Minor latency on cancel; not a safety issue |
 | 2026-11-10 | Add `golang.org/x/text` for Unicode normalization in the path jail | Canonical-equivalent names (e.g. Hangul Jamo) bypassed protected paths on APFS; a hand-rolled table would be worse |
 | 2026-11-10 | Require git >= 2.50.1 and refuse diffs over 5 MiB per file / 50 MiB total | Known clone-time CVEs in older git; git diff memory is unbounded on huge files |
+| 2026-11-13 | M20 memory: only typed harness observations are auto-active; prose lessons need operator approval; all memory is untrusted user-turn data with a frozen, recorded per-stage selection, no FTS or use-count ranking | Codex round 1 section 1: a zero exit status verifies an execution, not a lesson, and remembered prose must never become policy |
 
 ## 2026-11-10: CI fixes and trusted path follow-up
 - The revive `unexported-return` exception for `agent.Check` lives in `.golangci.yml`, scoped to `gate.go`,
