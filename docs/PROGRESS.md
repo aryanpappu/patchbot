@@ -1,6 +1,6 @@
 # Progress
 
-Updated 2026-11-11. M0–M15 implementation is done in this release worktree.
+Updated 2026-11-13. Step 2 plan: docs/planning/step2/PLAN.md. M0–M15 implementation is done in this release worktree.
 No release commit, tag or push was created by M15. See [M15 report](M15-REPORT.md)
 for local checks, audit fixes and external validation limits.
 
@@ -22,6 +22,13 @@ for local checks, audit fixes and external validation limits.
 | M13 JSON API, events, SSE and lifecycle fixes | Done |
 | M14 Embedded web UI and verified Vue asset | Done |
 | M15 Hardening, doctor, offline smoke and release docs | Done |
+| M16 Live baseline | Folded into M19 (owner: no local testing) |
+| M17 Rootless container executor | Done; 9 isolation tests pass on Mumbai |
+| M18 Deploy rehearsal on Oracle Mumbai | Done; see M18 report |
+| M19 Live pilot and fault drills | Waiting for GitHub token on the server |
+| M20 Repository memory | Done |
+| M21 Opt-in reviewer | Done (off by default) |
+| M22 Webhook and label ingress | Done (off by default), review fixes merged |
 
 ## Known limitations
 
