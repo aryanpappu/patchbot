@@ -270,3 +270,53 @@ func TestCheckCountsKeys(t *testing.T) {
 		t.Fatalf("n=%d err=%v", n, err)
 	}
 }
+
+func TestRetiredKeyRejectedAfterMaxAge(t *testing.T) {
+	v, srv, clk, key := setup(t)
+	token := func() string { return sign(t, key, rs("k1"), claimsAt(clk.now())) }
+	if _, err := v.Verify(t.Context(), token()); err != nil {
+		t.Fatal(err)
+	}
+	// k1 is retired upstream; within the max age the cache still serves it.
+	fresh := newKey(t)
+	srv.set(map[string]*rsa.PrivateKey{"k2": fresh})
+	clk.add(30 * time.Minute)
+	if _, err := v.Verify(t.Context(), token()); err != nil {
+		t.Fatalf("within max age: %v", err)
+	}
+	clk.add(31 * time.Minute)
+	if _, err := v.Verify(t.Context(), token()); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("retired key accepted after max age: %v", err)
+	}
+}
+
+func TestStaleKeysFailClosedWhenRefreshFails(t *testing.T) {
+	v, srv, clk, key := setup(t)
+	token := func() string { return sign(t, key, rs("k1"), claimsAt(clk.now())) }
+	if _, err := v.Verify(t.Context(), token()); err != nil {
+		t.Fatal(err)
+	}
+	srv.Close()
+	clk.add(2 * time.Hour)
+	if _, err := v.Verify(t.Context(), token()); err != nil {
+		t.Fatalf("stale but under the hard limit should still verify: %v", err)
+	}
+	clk.add(23 * time.Hour)
+	if _, err := v.Verify(t.Context(), token()); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("keys past the hard stale limit accepted: %v", err)
+	}
+}
+
+func TestCancelledRequestDoesNotBlockRefresh(t *testing.T) {
+	v, srv, clk, key := setup(t)
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, _ = v.Verify(cancelled, sign(t, key, rs("zzz"), claimsAt(clk.now())))
+	// The next legitimate request must not wait out any cooldown.
+	if _, err := v.Verify(t.Context(), sign(t, key, rs("k1"), claimsAt(clk.now()))); err != nil {
+		t.Fatalf("legitimate request blocked after a cancelled one: %v", err)
+	}
+	if srv.fetch.Load() > 2 {
+		t.Fatalf("fetches %d", srv.fetch.Load())
+	}
+}

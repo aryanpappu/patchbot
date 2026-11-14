@@ -26,6 +26,9 @@ const Header = "Cf-Access-Jwt-Assertion"
 const (
 	skew          = 60 * time.Second
 	refreshEvery  = time.Minute
+	failBackoff   = 15 * time.Second
+	keyMaxAge     = time.Hour
+	keyHardStale  = 24 * time.Hour
 	maxTokenBytes = 16 << 10
 	maxJWKSBytes  = 1 << 20
 	minRSABits    = 2048
@@ -62,7 +65,8 @@ type Verifier struct {
 	fetchMu   sync.Mutex
 	mu        sync.Mutex
 	keys      map[string]*rsa.PublicKey
-	lastFetch time.Time
+	fetchedAt time.Time // last successful fetch
+	failedAt  time.Time // last failed fetch
 }
 
 // New builds a verifier. It performs no network I/O.
@@ -173,34 +177,55 @@ func audienceMatches(raw json.RawMessage, want string) bool {
 	return false
 }
 
-// key returns the cached key for kid. An unknown kid triggers at most one
-// refresh per minute, so a flood of forged kids cannot hammer the JWKS URL.
+// key returns the signing key for kid.
+//
+//   - A key set younger than keyMaxAge serves known kids directly.
+//   - An older set is refreshed on demand; if that fails the old keys keep
+//     working until keyHardStale, after which verification fails closed.
+//   - An unknown kid refreshes at most once per refreshEvery after the last
+//     successful fetch, and failed fetches back off for failBackoff, so forged
+//     kids cannot hammer the JWKS URL.
+//
+// The fetch is shared and runs under its own bounded context, so a client that
+// cancels its request can neither abort it nor consume the cooldown.
 func (v *Verifier) key(ctx context.Context, kid string) (*rsa.PublicKey, error) {
-	if k := v.cached(kid); k != nil {
+	if k, fresh := v.lookup(kid); k != nil && fresh {
 		return k, nil
 	}
 	v.fetchMu.Lock()
 	defer v.fetchMu.Unlock()
 	// Another request may have refreshed while this one waited.
-	if k := v.cached(kid); k != nil {
+	k, fresh := v.lookup(kid)
+	if k != nil && fresh {
 		return k, nil
 	}
 	v.mu.Lock()
-	recent := !v.lastFetch.IsZero() && v.now().Sub(v.lastFetch) < refreshEvery
-	if !recent {
-		v.lastFetch = v.now()
-	}
+	now := v.now()
+	age := now.Sub(v.fetchedAt)
+	havekeys := !v.fetchedAt.IsZero()
+	// A known kid in a set past keyMaxAge is due; an unknown kid is due once
+	// the success cooldown has passed. Both wait out a recent failure.
+	due := !havekeys || (k != nil && age >= keyMaxAge) || (k == nil && age >= refreshEvery)
+	backoff := !v.failedAt.IsZero() && now.Sub(v.failedAt) < failBackoff
 	v.mu.Unlock()
-	if recent {
+	if !due || backoff {
+		if k != nil {
+			return k, nil // stale but within the hard limit (lookup enforces it)
+		}
 		return nil, errors.New("unknown key")
 	}
-	keys, err := v.fetch(ctx)
+	keys, err := v.fetch(context.WithoutCancel(ctx))
+	v.mu.Lock()
 	if err != nil {
+		v.failedAt = v.now()
+		v.mu.Unlock()
+		if k != nil {
+			return k, nil
+		}
 		return nil, err
 	}
-	v.mu.Lock()
-	v.keys = keys
-	k := keys[kid]
+	v.keys, v.fetchedAt, v.failedAt = keys, v.now(), time.Time{}
+	k = keys[kid]
 	v.mu.Unlock()
 	if k == nil {
 		return nil, errors.New("unknown key")
@@ -208,10 +233,16 @@ func (v *Verifier) key(ctx context.Context, kid string) (*rsa.PublicKey, error) 
 	return k, nil
 }
 
-func (v *Verifier) cached(kid string) *rsa.PublicKey {
+// lookup returns the cached key and whether the set is within keyMaxAge. A
+// set older than keyHardStale yields no key at all.
+func (v *Verifier) lookup(kid string) (*rsa.PublicKey, bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	return v.keys[kid]
+	age := v.now().Sub(v.fetchedAt)
+	if v.fetchedAt.IsZero() || age >= keyHardStale {
+		return nil, false
+	}
+	return v.keys[kid], age < keyMaxAge
 }
 
 // Check fetches the JWKS once and reports how many RSA keys it holds.

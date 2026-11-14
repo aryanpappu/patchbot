@@ -14,7 +14,7 @@ store free text.
 - **Verifier** (`internal/cfaccess`). RS256 only, against
   `https://<team_domain>/cdn-cgi/access/certs`. Keys are cached by `kid`; an
   unknown `kid` refreshes at most once per minute (also after a failed fetch),
-  and a refresh replaces the whole set so retired keys stop working. Fetches
+  and a refresh replaces the whole set so retired keys stop working. The set is also refreshed after 1 h; if the refresh fails the old keys serve until 24 h, then verification fails closed. The shared fetch runs under its own timeout, so a cancelled client request never consumes the cooldown (failed fetches back off 15 s). Fetches
   have a 5 s client and 10 s context timeout, no redirects, a 1 MiB body cap,
   and accept only RSA keys of at least 2048 bits. Claims: `iss` equals
   `https://<team_domain>`, `aud` contains the AUD tag, `exp` and `iat`
