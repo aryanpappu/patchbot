@@ -167,6 +167,9 @@ default_model = "qwen3-coder"
 price_free = true                    # explicit zero cost; no prices table
 
 # Only repositories in this allowlist can run. Replace this repository.
+# More repositories can be added from the dashboard (Repositories page, stored in
+# the database with an audit trail); tables here are the bootstrap and are
+# read-only there. A dashboard repository cannot reuse a name listed here.
 [repos."aryanpappu/demo-app"]
 # Literal argv, without a shell. The agent selects an ID and cannot add args.
 commands = { test = ["go", "test", "./..."], lint = ["go", "vet", "./..."] }

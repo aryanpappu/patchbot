@@ -10,6 +10,7 @@ whether each call and lifecycle transition is allowed.
 | --- | --- |
 | `cmd/patchbot`, `internal/cli` | Entry point, flags, doctor, synchronous controls and server startup |
 | `internal/config`, `secret`, `logging`, `version` | Layered TOML, credential masking, safe slog and build metadata |
+| `internal/repos` | Effective repository allowlist: config-file repos (read-only) plus dashboard repos (SQLite, audited), thread-safe `Registry` |
 | `internal/runner` | Preflight, workspace lifetime, budgets, approval, recovery and publication |
 | `internal/agent` | Refine/investigate/code loops, typed approval gate, harness and recording |
 | `internal/llm` | Provider interface, ordered parts, retries, schemas, models and integer pricing |
@@ -326,3 +327,22 @@ receipts are pruned after 14 days. Label sweeps run on their own
 issue listing; an issue is touched only when its trigger label is new, unhandled
 or removed. A repository's first sweep records existing labels as a handled
 baseline (`webhook_repos`), so enabling webhooks never mass-starts runs.
+
+## Repository management (M24)
+
+The effective allowlist is the config-file `[repos]` tables (source `config`, read-only in the UI) united with
+dashboard repositories stored in `dashboard_repos` (migration 0010) with an append-only `repo_audit`
+(add/edit/remove, redacted before/after JSON, actor, channel). `internal/repos.Registry` (RWMutex) is consulted by
+the runner, server, webhook ingress, memory and CLI instead of `cfg.Repos`; `Registry.Allowed(name)` is the single
+allowlist question. A dashboard repo is validated by `config.Config.ValidateRepo`, the same code `Validate` runs
+for file repos (name, argv-only commands, test_command, protected paths, digest-pinned image, PATH), plus size
+limits, `workspace.NewPolicy` and a redaction round-trip check. A name defined in the config file is refused
+(config wins). `.github/workflows` is always protected and cannot be removed by any setting. Edits use optimistic
+concurrency (`version`, `If-Match` or body field, 409 on mismatch); removal is refused (409) while the repo has
+active runs, decided in the same transaction as the delete; history and audit stay.
+
+Each run freezes its repository settings in a `repo_settings` artifact at creation (same fail-closed redaction
+check as the M25 `executor` artifact) and every clone, resume, revision, publish and memory digest reads it back, so
+an edit or removal affects only runs that start afterwards. API: `GET/POST /api/repos`,
+`GET/PUT/DELETE /api/repos/{owner}/{name}`, `GET /api/repos/{owner}/{name}/audit`; adding reports (never blocks on)
+whether GitHub can read the repo with the run credential. Doctor lists each repo with its source.

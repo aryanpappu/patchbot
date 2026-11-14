@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add repository management in the dashboard (M24): a Repositories page and
+  `/api/repos` to add, edit and remove allowlisted repositories (commands as argv,
+  test command, protected paths, digest-pinned image and PATH) with an append-only
+  audit of who changed what. Config-file repositories stay read-only; changes apply to
+  new runs without a restart, runs in flight keep the settings they started with,
+  and removal is refused while a repository has active runs. Migration 0010.
+
 - Add "Connect GitHub" (M28): create the GitHub App from the dashboard with the
   App manifest flow (`[github] setup_public_url`), the key is written straight
   to a 0600 file and only the App ID and slug are stored. Without an App the

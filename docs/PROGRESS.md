@@ -30,6 +30,7 @@ for local checks, audit fixes and external validation limits.
 | M21 Opt-in reviewer | Done (off by default) |
 | M22 Webhook and label ingress | Done (off by default), review fixes merged |
 | M23 Login-based dashboard | Done (Cloudflare Access JWT; token mode default) |
+| M24 Repository management | Done (dashboard add/edit/remove, audited, frozen per run; migration 0010) |
 
 ## Known limitations
 
