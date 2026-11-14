@@ -38,7 +38,7 @@ func Gone(err error) bool {
 }
 
 func (r *Runner) reconcileIssue(ctx context.Context, repo string, number int64, comments, labels bool) error {
-	if r.cfg.Repos[repo] == nil || number <= 0 {
+	if !r.repos.Has(repo) || number <= 0 {
 		return nil
 	}
 	meta, err := r.gh.GetRepo(ctx, ref(repo))
@@ -151,11 +151,7 @@ func (r *Runner) SyncLabels(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	repos := make([]string, 0, len(r.cfg.Repos))
-	for repo := range r.cfg.Repos {
-		repos = append(repos, repo)
-	}
-	sort.Strings(repos)
+	repos := r.repos.Names()
 	var errs []error
 	for _, repo := range repos {
 		if err := r.syncRepoLabels(ctx, listing, repo); err != nil {

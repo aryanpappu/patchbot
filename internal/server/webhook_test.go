@@ -41,7 +41,7 @@ func TestWebhookAuthenticationBoundsAndDedupe(t *testing.T) {
 	cfg := config.Default()
 	cfg.Webhook.Enabled = true
 	cfg.Webhook.Secret = secret.New(hookSecret)
-	s := &Server{cfg: cfg, db: f.db, authenticated: true, ingressWake: make(chan struct{}, 1)}
+	s := &Server{cfg: cfg, db: f.db, authenticated: true, ingressWake: make(chan struct{}, 1), repos: f.server.repos}
 	cfg.Repos = f.cfg.Repos
 	body := ` {"action":"labeled","repository":{"full_name":"owner/repo"},"issue":{"number":12},"label":{"name":"ai-fix"}} `
 	for _, signature := range []string{"", "sha256=bad", hookSignature(body + " ")} {
@@ -127,7 +127,7 @@ func TestWebhookPendingBacklogIsBounded(t *testing.T) {
 	cfg.Webhook.Enabled = true
 	cfg.Webhook.Secret = secret.New(hookSecret)
 	cfg.Repos = f.cfg.Repos
-	s := &Server{cfg: cfg, db: f.db, authenticated: true, ingressWake: make(chan struct{}, 1), maxPending: 2}
+	s := &Server{cfg: cfg, db: f.db, authenticated: true, ingressWake: make(chan struct{}, 1), maxPending: 2, repos: f.server.repos}
 	body := `{"action":"created","repository":{"full_name":"owner/repo"},"issue":{"number":12}}`
 	for _, id := range []string{"a", "b"} {
 		requireHookStatus(t, hookRequest(s, body, id, "issue_comment", hookSignature(body)), 202)

@@ -21,8 +21,9 @@ import (
 // memory.selected event exposes the IDs and content hashes.
 const memoryArtifact = "memory_selection"
 
-func (r *Runner) policyDigest(run store.Run) string {
-	return memory.PolicyDigest(r.cfg.Repos[run.Repo], r.cfg.Limits.TrustedPath)
+func (r *Runner) policyDigest(ctx context.Context, run store.Run) string {
+	repo, _ := r.runRepo(ctx, run)
+	return memory.PolicyDigest(repo, r.cfg.Limits.TrustedPath)
 }
 
 // selectMemory freezes the memory for one stage before the model sees it. The
@@ -33,7 +34,7 @@ func (r *Runner) selectMemory(ctx context.Context, run store.Run, stage string) 
 	if !r.cfg.Memory.Enabled {
 		return "", nil
 	}
-	sel, err := memory.Select(ctx, r.db, r.cfg.Memory, run.Repo, stage, r.policyDigest(run), r.now())
+	sel, err := memory.Select(ctx, r.db, r.cfg.Memory, run.Repo, stage, r.policyDigest(ctx, run), r.now())
 	if err != nil {
 		return "", err
 	}
@@ -87,7 +88,7 @@ func (r *Runner) observe(ctx context.Context, run store.Run, command string, res
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	_, err := memory.AddObservation(recordCtx, r.db, memory.ObservationInput{Repo: run.Repo, CommandID: command, ExitCode: result.ExitCode, TimedOut: result.TimedOut,
-		BaseSHA: run.BaseSHA, HeadSHA: head, PolicyDigest: r.policyDigest(run), Evidence: evidence, RunID: run.ID, ObservedAt: r.now()})
+		BaseSHA: run.BaseSHA, HeadSHA: head, PolicyDigest: r.policyDigest(ctx, run), Evidence: evidence, RunID: run.ID, ObservedAt: r.now()})
 	if err != nil {
 		r.memoryWarn(recordCtx, run, "Memory observation could not be recorded; the run continues.")
 	}

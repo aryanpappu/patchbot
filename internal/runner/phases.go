@@ -17,6 +17,7 @@ import (
 	"github.com/aryanpappu/patchbot/internal/execx"
 	"github.com/aryanpappu/patchbot/internal/github"
 	"github.com/aryanpappu/patchbot/internal/gitx"
+	"github.com/aryanpappu/patchbot/internal/repos"
 	"github.com/aryanpappu/patchbot/internal/store"
 	"github.com/aryanpappu/patchbot/internal/tools"
 	"github.com/aryanpappu/patchbot/internal/workspace"
@@ -83,7 +84,11 @@ func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha
 			return nil, err
 		}
 	}
-	ws, err := workspace.Open(repo.Dir(), workspace.Options{Protected: r.cfg.Repos[run.Repo].Protected})
+	frozenRepo, err := r.runRepo(ctx, run)
+	if err != nil {
+		return nil, err
+	}
+	ws, err := workspace.Open(repo.Dir(), workspace.Options{Protected: frozenRepo.Protected})
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +105,7 @@ func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha
 	if r.cfg.Executor.Container() {
 		policyOpts.TrustedPath = slices.Clone(frozen.Path)
 	}
-	policy, err := execx.NewPolicy(ws.Dir(), r.cfg.Repos[run.Repo].Commands, policyOpts)
+	policy, err := execx.NewPolicy(ws.Dir(), frozenRepo.Commands, policyOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +138,11 @@ func (r *Runner) runExecutor(ctx context.Context, run store.Run) (config.RepoExe
 	case !errors.Is(err, store.ErrNotFound):
 		return config.RepoExecutor{}, err
 	}
-	re := r.cfg.RepoExecutor(run.Repo)
+	frozenRepo, err := r.runRepo(ctx, run)
+	if err != nil {
+		return config.RepoExecutor{}, err
+	}
+	re := r.cfg.ExecutorFor(run.Repo, frozenRepo)
 	if re.Image == "" {
 		return config.RepoExecutor{}, fmt.Errorf("no container image for %s: set repos.%q.image or executor.image", run.Repo, run.Repo)
 	}
@@ -151,7 +160,7 @@ func (r *Runner) runExecutor(ctx context.Context, run store.Run) (config.RepoExe
 }
 
 func (r *Runner) preflight(ctx context.Context, run store.Run) (github.Repo, github.Issue, error) {
-	if r.cfg.Repos[run.Repo] == nil {
+	if !r.repos.Has(run.Repo) {
 		return github.Repo{}, github.Issue{}, errors.New("repository is not in configuration allowlist")
 	}
 	meta, err := r.gh.GetRepo(ctx, ref(run.Repo))
@@ -437,7 +446,11 @@ func (r *Runner) code(ctx context.Context, run *store.Run) (err error) {
 	}
 	baseline := "not_run"
 	baselineInfo := baseline
-	command, _ := r.cfg.Repos[run.Repo].TestCommandID()
+	frozenRepo, err := r.runRepo(ctx, *run)
+	if err != nil {
+		return err
+	}
+	command, _ := frozenRepo.TestCommandID()
 	if command != "" && r.cfg.Limits.BaselineTests {
 		test, err := r.baseline(ctx, *run, env, command, limits.Agent.TestTimeout)
 		if err != nil {
@@ -610,4 +623,42 @@ func validateDraft(ctx context.Context, run store.Run, repo *config.Repo, draft 
 		}
 	}
 	return nil
+}
+
+// repoSettingsArtifact records the repository settings (commands, protected
+// paths, test command, image and PATH) a run started with. Like the executor
+// artifact it is written once and read back on every resume and revision, so
+// a dashboard edit or a config reload never changes a run in flight.
+const repoSettingsArtifact = "repo_settings"
+
+// runRepo returns the run's frozen repository settings, freezing the current
+// effective settings on first use. The artifact is redacted on save, so a value
+// that redaction would change is refused (fail closed) instead of being stored
+// and read back corrupted.
+func (r *Runner) runRepo(ctx context.Context, run store.Run) (*config.Repo, error) {
+	r.freezeMu.Lock()
+	defer r.freezeMu.Unlock()
+	saved, err := r.db.GetArtifact(ctx, run.ID, repoSettingsArtifact, 0)
+	switch {
+	case err == nil:
+		var s repos.Settings
+		if err := json.Unmarshal([]byte(saved.Content), &s); err != nil {
+			return nil, errors.New("recorded repository settings are unreadable")
+		}
+		return s.Repo(), nil
+	case !errors.Is(err, store.ErrNotFound):
+		return nil, err
+	}
+	repo, ok := r.repos.Lookup(run.Repo)
+	if !ok {
+		return nil, errors.New("repository is not in configuration allowlist")
+	}
+	content, err := json.Marshal(repos.FromRepo(repo))
+	if err != nil {
+		return nil, err
+	}
+	if r.redactor.Redact(string(content)) != string(content) {
+		return nil, fmt.Errorf("settings of %s look like a credential and cannot be recorded on the run", run.Repo)
+	}
+	return repo, r.artifact(ctx, run.ID, repoSettingsArtifact, string(content))
 }

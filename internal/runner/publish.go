@@ -38,7 +38,11 @@ func (r *Runner) validateChanges(ctx context.Context, run store.Run, env *toolEn
 	if err != nil {
 		return err
 	}
-	policy, err := workspace.NewPolicy(r.cfg.Repos[run.Repo].Protected)
+	frozenRepo, err := r.runRepo(ctx, run)
+	if err != nil {
+		return err
+	}
+	policy, err := workspace.NewPolicy(frozenRepo.Protected)
 	if err != nil {
 		return err
 	}
@@ -160,7 +164,7 @@ func (r *Runner) publish(ctx context.Context, run *store.Run, env *toolEnvironme
 	if err := r.transition(ctx, run, store.StatusRunning, store.PhasePublish, store.RunPatch{HeadSHA: &head}); err != nil {
 		return err
 	}
-	if repo := r.cfg.Repos[run.Repo]; result.LastTest != nil && repo != nil {
+	if repo, rerr := r.runRepo(ctx, *run); result.LastTest != nil && rerr == nil {
 		command, _ := repo.TestCommandID()
 		r.observe(ctx, *run, command, *result.LastTest, head, fmt.Sprintf("run %d verify test attempt %d", run.ID, result.TestAttempts))
 	}

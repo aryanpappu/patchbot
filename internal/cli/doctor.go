@@ -21,6 +21,7 @@ import (
 	"github.com/aryanpappu/patchbot/internal/github"
 	"github.com/aryanpappu/patchbot/internal/gitx"
 	"github.com/aryanpappu/patchbot/internal/llm/providers"
+	"github.com/aryanpappu/patchbot/internal/repos"
 	"github.com/aryanpappu/patchbot/internal/runner"
 	"github.com/aryanpappu/patchbot/internal/secret"
 	"github.com/aryanpappu/patchbot/internal/store"
@@ -85,6 +86,7 @@ func (a *App) runDoctor(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
 	defer cancel()
+	a.doctorRepos(ctx, cfg, add)
 	dirs := config.Default().Limits.TrustedPath
 	if cfg != nil {
 		dirs = cfg.Limits.TrustedPath
@@ -475,4 +477,25 @@ func (a *App) doctorAccess(ctx context.Context, cfg *config.Config, online bool,
 		}
 	}
 	add("FAIL", "access JWKS", "could not fetch usable RSA keys from the team certs URL; check team_domain and network")
+}
+
+// doctorRepos reads the dashboard repositories (M24) from the database without
+// creating or migrating it, adds the valid ones to cfg.Repos so every later
+// per-repository check covers them, and lists each repository with its source.
+func (a *App) doctorRepos(ctx context.Context, cfg *config.Config, add func(string, string, string)) {
+	recs, err := store.ReadDashboardRepos(ctx, cfg.DatabasePath())
+	if err != nil {
+		add("WARN", "dashboard repos", "could not read dashboard repositories from the database")
+	}
+	merged, dashboard, problems := repos.Merge(cfg, recs)
+	for _, name := range sortedNames(problems) {
+		add("FAIL", "repo "+name, "source dashboard: "+problems[name].Error()+" (it is ignored until fixed or removed in the dashboard)")
+	}
+	for _, name := range sortedNames(cfg.Repos) {
+		add("PASS", "repo "+name, "source config (read-only in the dashboard)")
+	}
+	for _, name := range dashboard {
+		add("PASS", "repo "+name, "source dashboard (managed in the UI, audited)")
+	}
+	cfg.Repos = merged
 }

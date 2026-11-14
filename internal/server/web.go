@@ -16,6 +16,8 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 	state := web.State{Page: "runs", AuthRequired: s.authenticated, Email: sessionEmail(r)}
 	if r.URL.Path == "/runs/new" {
 		state.Page = "new"
+	} else if r.URL.Path == "/repos" {
+		state.Page = "repos"
 	} else if value := r.PathValue("id"); value != "" {
 		id, err := strconv.ParseInt(value, 10, 64)
 		if err != nil || id <= 0 {

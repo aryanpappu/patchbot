@@ -64,7 +64,7 @@ func CSP(local bool) string {
 // PublicPath identifies exact shell/asset GET paths that contain no private data.
 func PublicPath(path string) bool {
 	switch path {
-	case "/", "/runs", "/runs/new", "/setup/github", "/assets/app.js", "/assets/app.css", "/assets/setup.js", "/assets/vue.global.prod.js":
+	case "/", "/runs", "/runs/new", "/repos", "/setup/github", "/assets/app.js", "/assets/app.css", "/assets/setup.js", "/assets/vue.global.prod.js":
 		return true
 	}
 	if len(path) > len("/runs/") && path[:len("/runs/")] == "/runs/" {

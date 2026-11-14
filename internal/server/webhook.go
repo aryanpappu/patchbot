@@ -67,7 +67,7 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	if !eligible || payload.Issue.IsPullRequest || payload.Issue.Number <= 0 || s.cfg.Repos[repo] == nil {
+	if !eligible || payload.Issue.IsPullRequest || payload.Issue.Number <= 0 || !s.repos.Has(repo) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
