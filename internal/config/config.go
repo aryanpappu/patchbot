@@ -271,6 +271,12 @@ type Repo struct {
 	Protected []string `toml:"protected"`
 	// TestCommand is the ID of the command that verifies a change.
 	TestCommand string `toml:"test_command"`
+	// Image overrides executor.image for this repository (container mode
+	// only): name[:tag]@sha256:<digest>.
+	Image string `toml:"image"`
+	// Path overrides executor.path (PATH inside the container) for this
+	// repository.
+	Path []string `toml:"path"`
 }
 
 // TestCommandID returns the command that verifies a change: TestCommand, or

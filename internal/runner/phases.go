@@ -2,10 +2,12 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -90,16 +92,62 @@ func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha
 			_ = ws.Close(false)
 		}
 	}()
-	policy, err := execx.NewPolicy(ws.Dir(), r.cfg.Repos[run.Repo].Commands, r.cfg.CommandPolicyOptions())
+	frozen, err := r.runExecutor(ctx, run)
 	if err != nil {
 		return nil, err
 	}
-	executor, err := r.opts.Executor(ws.Dir())
+	policyOpts := r.cfg.CommandPolicyOptions(run.Repo)
+	if r.cfg.Executor.Container() {
+		policyOpts.TrustedPath = slices.Clone(frozen.Path)
+	}
+	policy, err := execx.NewPolicy(ws.Dir(), r.cfg.Repos[run.Repo].Commands, policyOpts)
+	if err != nil {
+		return nil, err
+	}
+	executor, err := r.opts.Executor(ws.Dir(), frozen)
 	if err != nil {
 		return nil, err
 	}
 	limits := r.cfg.Limits
 	return &toolEnvironment{repo: repo, dir: dir, env: &tools.Env{WS: ws, Exec: executor, Policy: policy, RunDir: dir, Redactor: r.redactor, Limits: tools.Limits{CmdTimeout: limits.CmdTimeout, CmdOutputBytes: limits.CmdOutputBytes, CmdStoreBytes: limits.CmdStoreBytes}}}, nil
+}
+
+// executorArtifact is the artifact kind that records the container image a
+// run uses. It is written the first time the run needs an executor and read
+// back afterwards, so the image is frozen on the run: a config change or
+// restart mid-run cannot switch it.
+const executorArtifact = "executor"
+
+func (r *Runner) runExecutor(ctx context.Context, run store.Run) (config.RepoExecutor, error) {
+	if !r.cfg.Executor.Container() {
+		return config.RepoExecutor{}, nil
+	}
+	saved, err := r.db.GetArtifact(ctx, run.ID, executorArtifact, 0)
+	switch {
+	case err == nil:
+		var re config.RepoExecutor
+		if err := json.Unmarshal([]byte(saved.Content), &re); err != nil || re.Image == "" {
+			return config.RepoExecutor{}, errors.New("recorded executor evidence is unreadable")
+		}
+		return re, nil
+	case !errors.Is(err, store.ErrNotFound):
+		return config.RepoExecutor{}, err
+	}
+	re := r.cfg.RepoExecutor(run.Repo)
+	if re.Image == "" {
+		return config.RepoExecutor{}, fmt.Errorf("no container image for %s: set repos.%q.image or executor.image", run.Repo, run.Repo)
+	}
+	content, err := json.Marshal(re)
+	if err != nil {
+		return config.RepoExecutor{}, err
+	}
+	// The artifact is redacted on save and shown in the UI, so a value that
+	// redaction would change cannot be stored losslessly: fail closed rather
+	// than freeze settings that a resume would read back corrupted.
+	if r.redactor.Redact(string(content)) != string(content) {
+		return config.RepoExecutor{}, fmt.Errorf("container image or path for %s looks like a credential and cannot be recorded; use a different image name or path", run.Repo)
+	}
+	return re, r.artifact(ctx, run.ID, executorArtifact, string(content))
 }
 
 func (r *Runner) preflight(ctx context.Context, run store.Run) (github.Repo, github.Issue, error) {

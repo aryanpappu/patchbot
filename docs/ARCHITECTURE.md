@@ -280,6 +280,7 @@ These are the PLAN section 10 boundaries, not features promised in v0.1.0.
 | Webhooks and label polling | `Runner.Start`, `runs.trigger`; add HMAC checks and delivery dedupe |
 | Durable queue and worker leases | Runner `Admit`/`Dispatch` hooks, queued status and heartbeat; current server queue is in memory |
 | Container execution (M17, done) | `execx.Executor`: `LocalExecutor` or `ContainerExecutor` chosen by `[executor] kind`; `PolicyOptions.InContainer` keeps command IDs/allowlist and resolves names in the image; git and file tools stay host-side |
+| Per-repository image (M25, done) | `[repos."o/n"] image`/`path` override `[executor]` for that repo; the runner resolves it once per run and freezes it in the run's `executor` artifact (image, path, source key), so later clones/resumes reuse it; doctor and `config show` report each repo's image |
 | GitHub App tokens (M27, done) | `github.RepoTokenSource`: `StaticRepoTokens` (PAT) or `github.App`; REST selects by `RepoRef`, git uses a per-operation `TokenFunc` |
 | Deployment, login and backup | Server auth wrapper, HTTP handler boundary and on-disk SQLite |
 | Other managed runners and PR follow-ups | `llm.Provider`, constructors and runner lifecycle methods |

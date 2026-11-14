@@ -204,10 +204,12 @@ func (c *Config) validateExecutor(v *validator) {
 	}
 	v.check(slices.Contains([]string{execx.RuntimePodman, execx.RuntimeDocker}, e.Runtime),
 		"executor.runtime: %q is not one of podman, docker", e.Runtime)
-	if e.Image == "" {
+	if e.Image == "" && len(c.Repos) == 0 {
 		v.addf("executor.image: required for kind container; pin it by digest (name@sha256:...)")
-	} else if err := execx.ValidateImage(e.Image); err != nil {
-		v.addf("executor.image: %s", err)
+	} else if e.Image != "" { // else each repository must bring its own image (checked below)
+		if err := execx.ValidateImage(e.Image); err != nil {
+			v.addf("executor.image: %s", err)
+		}
 	}
 	if err := execx.ValidateSize(e.Memory); err != nil {
 		v.addf("executor.memory: %s", err)
@@ -228,6 +230,23 @@ func (c *Config) validateExecutor(v *validator) {
 		"executor.userns: %q must be empty or \"keep-id\" with runtime podman", e.UserNS)
 	if err := execx.ValidateContainerPath(e.Path); err != nil {
 		v.addf("executor.path: %s", err)
+	}
+	for _, name := range sortedKeys(c.Repos) {
+		r := c.Repos[name]
+		at := fmt.Sprintf("repos.%q", name)
+		switch {
+		case r.Image == "" && e.Image == "":
+			v.addf("%s.image: required in container mode because executor.image is not set; pin it by digest (name@sha256:...)", at)
+		case r.Image != "":
+			if err := execx.ValidateImage(r.Image); err != nil {
+				v.addf("%s.image: %s", at, err)
+			}
+		}
+		if r.Path != nil {
+			if err := execx.ValidateContainerPath(r.Path); err != nil {
+				v.addf("%s.path: %s", at, err)
+			}
+		}
 	}
 }
 

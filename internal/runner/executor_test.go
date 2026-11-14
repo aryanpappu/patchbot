@@ -34,7 +34,7 @@ func TestDefaultExecutorFollowsConfig(t *testing.T) {
 		return cfg
 	}
 	workspace := t.TempDir()
-	executor, err := defaultExecutor(load(""))(workspace)
+	executor, err := defaultExecutor(load(""))(workspace, config.RepoExecutor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestDefaultExecutorFollowsConfig(t *testing.T) {
 		t.Fatalf("default executor is %T, want local", executor)
 	}
 	image := "golang@sha256:" + strings.Repeat("0", 64)
-	_, err = defaultExecutor(load("[executor]\nkind=\"container\"\nruntime=\"podman\"\nimage=\"" + image + "\"\n"))(workspace)
+	_, err = defaultExecutor(load("[executor]\nkind=\"container\"\nruntime=\"podman\"\nimage=\""+image+"\"\n"))(workspace, config.RepoExecutor{Image: image})
 	if _, statErr := os.Stat("/usr/bin/podman"); statErr == nil {
 		if err != nil {
 			t.Fatalf("container executor with installed podman: %v", err)

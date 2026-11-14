@@ -18,11 +18,11 @@ func TestExecutorDefaultsAreLocal(t *testing.T) {
 	if c.Executor.Kind != config.ExecutorLocal || c.Executor.Container() {
 		t.Fatalf("default executor = %+v", c.Executor)
 	}
-	opts := c.CommandPolicyOptions()
+	opts := c.CommandPolicyOptions("owner/repo")
 	if opts.InContainer || len(opts.TrustedPath) == 0 {
 		t.Fatalf("local policy options = %+v", opts)
 	}
-	if _, err := c.ContainerConfig(func(string) (string, bool) { return "", false }); err == nil {
+	if _, err := c.ContainerConfig("", func(string) (string, bool) { return "", false }); err == nil {
 		t.Fatal("ContainerConfig succeeded for the local executor")
 	}
 }
@@ -74,7 +74,7 @@ func TestExecutorValidation(t *testing.T) {
 func TestExecutorContainerPolicyOptions(t *testing.T) {
 	t.Parallel()
 	c := loadString(t, validBase+"[executor]\nkind = \"container\"\nimage = \""+pinnedImage+"\"\n", nil)
-	opts := c.CommandPolicyOptions()
+	opts := c.CommandPolicyOptions("owner/repo")
 	if !opts.InContainer || len(opts.TrustedPath) == 0 || opts.TrustedPath[0] != "/usr/local/go/bin" {
 		t.Fatalf("container policy options = %+v", opts)
 	}
@@ -101,5 +101,55 @@ func TestDockerGetsPrivateConfigDir(t *testing.T) {
 	c := loadString(t, validBase+"[executor]\nkind = \"container\"\nruntime = \"docker\"\nimage = \""+pinnedImage+"\"\n", nil)
 	if !strings.HasPrefix(c.DockerConfigDir(), c.DataDir()) {
 		t.Fatalf("docker config dir %q is outside the data dir", c.DockerConfigDir())
+	}
+}
+
+func TestRepoImageValidation(t *testing.T) {
+	t.Parallel()
+	repo := "[repos.\"owner/php\"]\ncommands = {test = [\"phpunit\"]}\n"
+	repoImg := func(img string) string {
+		return "[repos.\"owner/php\"]\nimage = \"" + img + "\"\ncommands = {test = [\"phpunit\"]}\n"
+	}
+	global := "[executor]\nkind = \"container\"\nimage = \"" + pinnedImage + "\"\n"
+	noGlobal := "[executor]\nkind = \"container\"\n"
+	tests := []struct{ name, file, wantErr string }{
+		{"override ok", global + repoImg(pinnedImage), ""},
+		{"local localhost ok", global + repoImg("localhost/php:1@sha256:"+strings.Repeat("a", 64)), ""},
+		{"repo only image", noGlobal + repoImg(pinnedImage), ""},
+		{"missing everywhere names the repo", noGlobal + repo, `repos."owner/php".image: required`},
+		{"tag only", global + repoImg("php:8"), `repos."owner/php".image: image must be digest-pinned`},
+		{"bad path", global + repo + "path = [\"bin\"]\n", `repos."owner/php".path`},
+		{"local mode ignores", repoImg("php:8"), ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := loadString(t, validBase+tt.file, nil).Validate()
+			if tt.wantErr == "" && err != nil || tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("Validate = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestRepoImageShownWithSource(t *testing.T) {
+	t.Parallel()
+	file := validBase + "[executor]\nkind = \"container\"\nimage = \"" + pinnedImage + "\"\n" +
+		"[repos.\"owner/php\"]\nimage = \"" + pinnedImage + "\"\ncommands = {test = [\"x\"]}\n[repos.\"owner/go\"]\ncommands = {test = [\"x\"]}\n"
+	var b strings.Builder
+	if err := loadString(t, file, nil).WriteEffective(&b); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	for _, want := range []string{`# effective container image: ` + pinnedImage + ` (from repos."owner/php".image)`, `# effective container image: ` + pinnedImage + ` (from executor.image)`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("config show lacks %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(strings.Join(strings.Fields(out), " "), `image = "`+pinnedImage+`" # file`) {
+		t.Errorf("repo image has no source:\n%s", out)
+	}
+	if strings.Contains(out, `image = ""`) {
+		t.Errorf("unset repo image printed:\n%s", out)
 	}
 }

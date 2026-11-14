@@ -180,7 +180,7 @@ func newAppFixture(t *testing.T, steps ...fake.Step) (*appFixture, error) {
 		}
 		return gitx.Clone(ctx, clone)
 	}
-	opts.Executor = func(dir string) (execx.Executor, error) {
+	opts.Executor = func(dir string, _ config.RepoExecutor) (execx.Executor, error) {
 		inner, err := execx.NewLocalExecutor(dir)
 		if err != nil {
 			return nil, err
