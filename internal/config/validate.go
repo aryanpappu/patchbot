@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -42,6 +43,7 @@ func (c *Config) Validate() error {
 	c.validateLimits(&v)
 	c.validateFixed(&v)
 	c.validateExecutor(&v)
+	c.validateGitHub(&v)
 	w := c.Webhook
 	v.check(envNameRE.MatchString(w.SecretEnv), "webhook.secret_env: must name an environment variable")
 	v.check(strings.HasPrefix(w.Path, "/") && w.Path != "/" && path.Clean(w.Path) == w.Path && !strings.ContainsAny(w.Path, "{} ?#\\"), "webhook.path: must be a clean literal path starting with /")
@@ -57,6 +59,31 @@ func (c *Config) Validate() error {
 		validateRepo(&v, name, c.Repos[name])
 	}
 	return errors.Join(v.errs...)
+}
+
+// validateGitHub checks [github] statically. The key file's type, mode and
+// owner are checked when it is loaded (startup and doctor), never printed.
+func (c *Config) validateGitHub(v *validator) {
+	g := c.GitHub
+	if g.Auth != GitHubAuthPAT && g.Auth != GitHubAuthApp {
+		v.addf(`github.auth: must be "pat" or "app"`)
+		return
+	}
+	if !g.App() {
+		return
+	}
+	v.check(g.AppID > 0, "github.app_id: app mode requires the numeric GitHub App ID")
+	v.check(g.InstallationID >= 0, "github.installation_id: must be 0 (resolve per repository) or a positive ID")
+	keyPath := g.PrivateKeyFile
+	if keyPath == "" || !filepath.IsAbs(keyPath) || filepath.Clean(keyPath) != keyPath || strings.ContainsRune(keyPath, 0) {
+		v.addf("github.private_key_file: app mode requires a clean absolute path")
+		return
+	}
+	if data := c.DataDir(); data != "" && filepath.IsAbs(data) {
+		if rel, err := filepath.Rel(filepath.Clean(data), keyPath); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+			v.addf("github.private_key_file: must not be inside the data directory or workspaces")
+		}
+	}
 }
 
 type validator struct {

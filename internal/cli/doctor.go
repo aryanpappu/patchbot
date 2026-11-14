@@ -28,7 +28,9 @@ import (
 const doctorUsage = `Usage: patchbot doctor [--config FILE] [--online]
 
 Check tools, config, credentials, private storage, migrations and repo commands.
-Offline by default. --online only lists provider models and calls GitHub /user.
+Offline by default. --online lists provider models and checks GitHub identity:
+/user (PAT mode), or the App, its installations and granted permissions for
+every configured repository (app mode).
 PASS and WARN exit 0; any FAIL exits 1. No secrets are printed.
 `
 
@@ -113,9 +115,16 @@ func (a *App) runDoctor(args []string) int {
 			}
 		}
 	}
-	if strings.TrimSpace(token) == "" {
+	var app *github.App
+	switch {
+	case cfg.GitHub.App():
+		app = doctorAppKey(cfg, a.RunnerOptions, r, add)
+		if strings.TrimSpace(token) != "" {
+			add("WARN", "GitHub credential", "GITHUB_TOKEN is set but ignored in app mode (there is no PAT fallback); unset it")
+		}
+	case strings.TrimSpace(token) == "":
 		add("FAIL", "GitHub credential", "set GITHUB_TOKEN")
-	} else {
+	default:
 		add("PASS", "GitHub credential", "GITHUB_TOKEN is set")
 	}
 	if cfg != nil {
@@ -156,7 +165,7 @@ func (a *App) runDoctor(args []string) int {
 			add("WARN", "config", warning)
 		}
 		if *online {
-			a.doctorOnline(ctx, cfg, token, add)
+			a.doctorOnline(ctx, cfg, token, app, add)
 		}
 	}
 	for _, warning := range a.credentialWarnings() {
@@ -211,7 +220,7 @@ func doctorStorage(ctx context.Context, cfg *config.Config, add func(string, str
 	}
 }
 
-func (a *App) doctorOnline(ctx context.Context, cfg *config.Config, token string, add func(string, string, string)) {
+func (a *App) doctorOnline(ctx context.Context, cfg *config.Config, token string, app *github.App, add func(string, string, string)) {
 	configs, err := cfg.LLMProviders()
 	if err != nil {
 		add("FAIL", "provider models", err.Error())
@@ -236,6 +245,10 @@ func (a *App) doctorOnline(ctx context.Context, cfg *config.Config, token string
 		} else {
 			add("PASS", "models "+p.Name, "ListModels succeeded")
 		}
+	}
+	if cfg.GitHub.App() {
+		doctorAppOnline(ctx, cfg, app, add)
+		return
 	}
 	client := a.RunnerOptions.GitHub
 	if client == nil {
@@ -337,4 +350,76 @@ func sortedNames[V any](values map[string]V) []string {
 	}
 	slices.Sort(names)
 	return names
+}
+
+// doctorAppKey checks the App key file placement and signs a JWT locally.
+// Errors are fixed strings; key material is never printed.
+func doctorAppKey(cfg *config.Config, opts runner.Options, r *secret.Redactor, add func(string, string, string)) *github.App {
+	excluded := []string{cfg.DataDir(), filepath.Join(cfg.DataDir(), "workspaces")}
+	key, err := github.LoadAppPrivateKey(cfg.GitHub.PrivateKeyFile, excluded...)
+	if err != nil {
+		add("FAIL", "GitHub App key", err.Error())
+		return nil
+	}
+	add("PASS", "GitHub App key", "regular file, mode 0600 or stricter, owned by this user, outside the data directory")
+	app, err := github.NewApp(github.AppOptions{AppID: cfg.GitHub.AppID, Key: key, InstallationID: cfg.GitHub.InstallationID,
+		BaseURL: opts.GitHubAPI, HTTPClient: opts.GitHubHTTP, OnMint: func(token string) { r.Add(token, github.GitHeaderForm(token)) }})
+	if err == nil {
+		_, err = app.SignJWT()
+	}
+	if err != nil {
+		add("FAIL", "GitHub App JWT", "cannot sign a JWT with the configured key")
+		return nil
+	}
+	add("PASS", "GitHub App JWT", "signed locally (RS256)")
+	return app
+}
+
+// doctorAppOnline checks the App identity and, for every allowlisted
+// repository, that the App is installed with the permissions runs need and
+// that a single-repository token can be minted.
+func doctorAppOnline(ctx context.Context, cfg *config.Config, app *github.App, add func(string, string, string)) {
+	if app == nil {
+		add("FAIL", "GitHub App", "skipped: the key check failed")
+		return
+	}
+	identity, err := app.Identity(ctx)
+	if err != nil {
+		add("FAIL", "GitHub App identity", err.Error())
+		return
+	}
+	add("PASS", "GitHub App identity", fmt.Sprintf("%s (commit author id %d)", identity.Login, identity.UserID))
+	if len(cfg.Repos) == 0 {
+		add("WARN", "GitHub App installation", "no repositories configured")
+	}
+	for _, name := range sortedNames(cfg.Repos) {
+		owner, repoName, _ := strings.Cut(name, "/")
+		repo := github.RepoRef{Owner: owner, Name: repoName}
+		check := "GitHub App " + name
+		info, err := app.Installation(ctx, repo)
+		if err != nil {
+			add("FAIL", check, "App is not installed on this repository or cannot reach it: "+err.Error())
+			continue
+		}
+		if cfg.GitHub.InstallationID > 0 && info.ID != cfg.GitHub.InstallationID {
+			add("FAIL", check, fmt.Sprintf("repository belongs to installation %d, not the configured installation_id", info.ID))
+			continue
+		}
+		var missing []string
+		for _, perm := range sortedNames(github.RunPermissions) {
+			want, got := github.RunPermissions[perm], info.Permissions[perm]
+			if got != want && (want != "read" || got != "write") {
+				missing = append(missing, perm+":"+want)
+			}
+		}
+		if len(missing) > 0 {
+			add("FAIL", check, "installation lacks permissions: "+strings.Join(missing, ", "))
+			continue
+		}
+		if _, err := app.RepoToken(ctx, repo); err != nil {
+			add("FAIL", check, "cannot mint a single-repository token: "+err.Error())
+			continue
+		}
+		add("PASS", check, fmt.Sprintf("installation %d; contents/issues/pull_requests write, metadata read; token minted", info.ID))
+	}
 }

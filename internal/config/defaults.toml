@@ -76,6 +76,12 @@ userns = ""
 path = ["/usr/local/go/bin", "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
 workspace_max_bytes = 2147483648
 
+[github]
+auth = "pat"                 # "pat" (GITHUB_TOKEN) or "app" (GitHub App)
+app_id = 0                   # app mode: numeric App ID
+private_key_file = ""        # app mode: absolute path, mode 0600, outside data dir
+installation_id = 0          # app mode: 0 resolves the installation per repository
+
 [providers.anthropic]
 kind = "anthropic"
 api_key_env = "ANTHROPIC_API_KEY"

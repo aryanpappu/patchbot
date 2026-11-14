@@ -53,9 +53,14 @@ type CloneOptions struct {
 	Branch        string
 	DefaultBranch string
 	Depth         int
-	Token         string
-	Timeout       time.Duration
-	OutputCap     int
+	// Token is a fixed credential (PAT mode). Prefer TokenFunc.
+	Token string
+	// TokenFunc, when set, is called for every remote operation (clone, fetch,
+	// ls-remote, push) so a long run always uses a fresh, unexpired token.
+	// It wins over Token. Its errors are never quoted.
+	TokenFunc func(context.Context) (string, error)
+	Timeout   time.Duration
+	OutputCap int
 	// TrustedPath is shared with command policies and doctor. Nil selects defaults.
 	TrustedPath []string
 	// ExcludedRoots includes the application data and workspace roots.
@@ -80,6 +85,7 @@ type Repo struct {
 	mu                                                    sync.Mutex
 	dir, git, home, hooks, temp, private                  string
 	host, remote, localRemote, token, base, defaultBranch string
+	tokenFunc                                             func(context.Context) (string, error)
 	configHash                                            string
 	author                                                Author
 	timeout                                               time.Duration
@@ -116,7 +122,7 @@ func Clone(ctx context.Context, opts CloneOptions) (_ *Repo, cloneErr error) {
 	if _, err := os.Lstat(opts.Dir); !errors.Is(err, os.ErrNotExist) {
 		return nil, errors.New("clone destination must not exist")
 	}
-	r := &Repo{dir: opts.Dir, host: opts.Host, token: opts.Token, defaultBranch: opts.DefaultBranch,
+	r := &Repo{dir: opts.Dir, host: opts.Host, token: opts.Token, tokenFunc: opts.TokenFunc, defaultBranch: opts.DefaultBranch,
 		timeout: opts.Timeout, outputCap: opts.OutputCap, localRemote: opts.TestOnlyLocalRemote,
 		author: Author{"patchbot", "patchbot@users.noreply.github.com"}}
 	if r.timeout == 0 {
@@ -223,7 +229,7 @@ func (r *Repo) Dir() string { return r.dir }
 func (r *Repo) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.closed, r.token = true, ""
+	r.closed, r.token, r.tokenFunc = true, "", nil
 	if err := os.RemoveAll(r.private); err != nil {
 		return errors.New("remove private git directories failed")
 	}

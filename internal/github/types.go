@@ -4,13 +4,41 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 )
 
-// TokenSource supplies a PAT today and can supply GitHub App tokens later.
-// Implementations must be safe for concurrent calls.
+// TokenSource supplies one credential that is not bound to a repository: a
+// PAT, or an App JWT for App-level endpoints. Implementations must be safe for
+// concurrent calls.
 type TokenSource interface {
 	Token(context.Context) (string, error)
+}
+
+// RepoTokenSource supplies a credential bound to one repository. The repository
+// is always an explicit argument; there is no mutable "current repository".
+// Implementations must be safe for concurrent calls.
+type RepoTokenSource interface {
+	RepoToken(context.Context, RepoRef) (string, error)
+}
+
+// TokenInvalidator is implemented by repository token sources that cache
+// credentials. Invalidate drops token for repo after GitHub rejected it, so the
+// next RepoToken call mints a fresh one. A different cached token is kept.
+type TokenInvalidator interface {
+	Invalidate(repo RepoRef, token string)
+}
+
+// StaticRepoTokens adapts a single TokenSource (PAT mode) to RepoTokenSource:
+// every repository gets the same credential, exactly as before per-repo routing.
+type StaticRepoTokens struct{ Source TokenSource }
+
+// RepoToken returns the shared credential for any repository.
+func (s StaticRepoTokens) RepoToken(ctx context.Context, _ RepoRef) (string, error) {
+	if s.Source == nil {
+		return "", errors.New("no GitHub credential configured")
+	}
+	return s.Source.Token(ctx)
 }
 
 // Client is the runner's GitHub boundary. Missing branches and open PRs return

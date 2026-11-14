@@ -428,7 +428,7 @@ func TestCredentialEnvironmentAndArgv(t *testing.T) {
 		{true, []string{"ls-remote", "--heads", "--", "https://github.com/owner/repo.git"}},
 		{false, []string{"status", "--porcelain=v1", "-z"}},
 	} {
-		cmd, err := r.command(context.Background(), operation.auth, operation.args...)
+		cmd, err := r.command(context.Background(), operation.auth, r.token, operation.args...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -456,19 +456,19 @@ func TestCredentialEnvironmentAndArgv(t *testing.T) {
 		t.Fatalf("git HOME not empty: %v, %v", entries, err)
 	}
 	for _, local := range []string{"status", "commit", "checkout", "--version"} {
-		if _, err := r.command(context.Background(), true, local); err == nil {
+		if _, err := r.command(context.Background(), true, r.token, local); err == nil {
 			t.Fatalf("credentials permitted for local %s", local)
 		}
 	}
 	for _, remote := range []string{"clone", "fetch", "ls-remote", "push"} {
-		if _, err := r.command(context.Background(), false, remote); err == nil {
+		if _, err := r.command(context.Background(), false, "", remote); err == nil {
 			t.Fatalf("remote %s permitted without the authenticated path", remote)
 		}
 	}
 	// Production uses HTTPS only, and credentials use exactly the host-scoped
 	// ephemeral configuration key, rather than URL or persistent config.
 	r.localRemote = ""
-	cmd, err := r.command(context.Background(), true, "push", "--", "https://github.com/owner/repo.git", "HEAD:refs/heads/patchbot/test")
+	cmd, err := r.command(context.Background(), true, r.token, "push", "--", "https://github.com/owner/repo.git", "HEAD:refs/heads/patchbot/test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +493,7 @@ func TestCredentialEnvironmentAndArgv(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), fakeToken) || strings.Contains(err.Error(), basic) {
 		t.Fatalf("unsafe error: %v", err)
 	}
-	_, err = r.command(context.Background(), false, fakeToken)
+	_, err = r.command(context.Background(), false, r.token, fakeToken)
 	if err == nil || strings.Contains(err.Error(), fakeToken) {
 		t.Fatalf("unsafe argument error: %v", err)
 	}

@@ -52,6 +52,27 @@ patchbot's `posted_comments` record. Every comment patchbot posts carries that
 marker and its ID is recorded right after posting, so either check alone keeps
 patchbot's own text (even a spec starting with `/approve`) from approving.
 
+GitHub App mode (`[github] auth = "app"`): comments by the App bot
+(`<slug>[bot]`) never count, so the shared-identity rule above applies only to
+PAT mode. Each run's REST calls and every git network operation use an
+installation token minted for that repository's immutable ID only, with
+contents/issues/pull_requests write and metadata read, cached in memory, never
+written to SQLite, logs, artifacts or the container environment, and registered
+for redaction (with its git header form) before first use. App failures fail
+closed; there is no fallback to a PAT.
+
+Key custody on a shared host: the App private key is a long-lived credential
+that can mint tokens for every repository the App is installed on. patchbot
+keeps it in a file readable only by the service user (0600, owner checked,
+symlinks refused, never inside the data directory, workspaces or backups) and
+parses it once into memory. This is not a boundary against root, against other
+processes running as the patchbot user, or against debuggers and core dumps of
+the patchbot process. Install the App only on the repositories patchbot needs,
+run repository code with the container executor so it does not run as a process
+that can read the key, and rotate the key after any suspected host compromise
+(outstanding installation tokens stay valid until they expire, at most 1 hour,
+unless the installation is suspended).
+
 In scope: file-tool jail escapes, command-policy bypass, leaks through logs,
 SSE, artifacts, errors or PR text, unsafe git publication, browser protection
 bypass and code execution without valid spec approval. Prompt injection that

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add GitHub App authentication (`[github] auth = "app"`, M27): per-run
+  installation tokens narrowed to one repository ID and four permissions,
+  refreshed per git network operation, bot identity `<slug>[bot]` for comments
+  and commits, and app-mode `doctor` checks. PAT mode is unchanged and remains
+  the default.
+
 - Add repository memory: typed harness observations, operator-approved lessons,
   bounded deterministic retrieval as untrusted user-turn data, frozen per-stage
   selection records, `patchbot memory` commands, API endpoints and a UI panel.

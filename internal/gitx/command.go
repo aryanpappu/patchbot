@@ -22,7 +22,26 @@ var remoteCommands = map[string]bool{"clone": true, "fetch": true, "ls-remote": 
 // command builds the entire environment explicitly. Credentials are deliberately
 // absent from argv, including -c arguments, and from all local calls. They reach
 // git only as an ephemeral, host-scoped http.extraheader via GIT_CONFIG_*.
-func (r *Repo) command(_ context.Context, authenticated bool, args ...string) (*exec.Cmd, error) {
+// credential returns the token for one remote operation: a fresh one from
+// tokenFunc when configured, else the fixed clone-time token.
+func (r *Repo) credential(ctx context.Context) (string, error) {
+	if r.tokenFunc == nil {
+		return r.token, nil
+	}
+	token, err := r.tokenFunc(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("git credential: %w", ctx.Err())
+		}
+		return "", errors.New("git credential unavailable")
+	}
+	if token == "" || strings.ContainsAny(token, "\x00\r\n") {
+		return "", errors.New("invalid git credential")
+	}
+	return token, nil
+}
+
+func (r *Repo) command(_ context.Context, authenticated bool, token string, args ...string) (*exec.Cmd, error) {
 	remote := len(args) > 0 && remoteCommands[args[0]]
 	if authenticated && !remote {
 		return nil, errors.New("credentials are restricted to remote operations")
@@ -31,7 +50,7 @@ func (r *Repo) command(_ context.Context, authenticated bool, args ...string) (*
 		return nil, errors.New("remote operations must use the authenticated path")
 	}
 	for _, arg := range args {
-		if strings.ContainsRune(arg, 0) || (r.token != "" && strings.Contains(arg, r.token)) {
+		if strings.ContainsRune(arg, 0) || (token != "" && strings.Contains(arg, token)) {
 			return nil, errors.New("invalid git argument")
 		}
 	}
@@ -72,8 +91,8 @@ func (r *Repo) command(_ context.Context, authenticated bool, args ...string) (*
 		// Test-only: the fake HTTPS remote uses a self-signed certificate.
 		cmd.Env = append(cmd.Env, "GIT_SSL_NO_VERIFY=1")
 	}
-	if authenticated && r.token != "" {
-		encoded := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + r.token))
+	if authenticated && token != "" {
+		encoded := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
 		cmd.Env = append(cmd.Env, "GIT_CONFIG_COUNT=1",
 			"GIT_CONFIG_KEY_0=http.https://"+r.host+"/.extraheader",
 			"GIT_CONFIG_VALUE_0=AUTHORIZATION: basic "+encoded)
@@ -98,7 +117,14 @@ func (r *Repo) runIndexLimit(ctx context.Context, authenticated bool, index stri
 	}
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
-	cmd, err := r.command(ctx, authenticated, args...)
+	var token string
+	if authenticated {
+		var err error
+		if token, err = r.credential(ctx); err != nil {
+			return "", false, err
+		}
+	}
+	cmd, err := r.command(ctx, authenticated, token, args...)
 	if err != nil {
 		return "", false, err
 	}

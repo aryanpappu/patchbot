@@ -135,6 +135,7 @@ spec version/hash against the approval and current issue hash. It checks expiry,
 mode and lifecycle state too. Revisions and UI edits invalidate old approval.
 GitHub comments count only from configured collaborator approvers and must be
 unedited. The bot's spec comment is checked for tampering, never imported.
+In app mode the bot is `<slug>[bot]` and its comments never count.
 Comments by the token's own login (`/user`) are ignored unless that login is a
 configured approver (a single-user PAT, "shared identity"). Then a comment
 counts only if it has no `<!-- patchbot` marker and its ID is absent from
@@ -233,7 +234,21 @@ or model-directed access. They cannot contain a malicious test executable.
   `execx`, a five-second timeout, 4 KiB output cap and WaitDelay.
   Children that deliberately escape the group are outside
   this model. Repository processes can create files or contact the network.
-- Git requires version 2.50.1 or newer. Credentials appear only in clone/push
+- GitHub credentials are repository-bound. The runner holds a
+  `github.RepoTokenSource`; every REST call takes its token from the call's own
+  `RepoRef`, and git asks `CloneOptions.TokenFunc` for a fresh token on every
+  remote operation (clone, fetch, ls-remote, push). PAT mode returns the one PAT
+  for every repository (`github.StaticRepoTokens`). App mode (`github.App`) signs
+  an RS256 JWT (stdlib only, iat-60s, exp+9m) and mints installation tokens with
+  `repository_ids: [id]` and exactly contents/issues/pull_requests write plus
+  metadata read. The immutable ID is resolved once with a metadata-only token
+  narrowed by name. Tokens are cached per (installation, repo ID, permission
+  set), concurrent mints are coalesced, refreshed with < 5 minutes left, and a
+  REST 401 invalidates and re-mints once. App API calls retry a bounded number
+  of times, honour Retry-After/reset (at most 2 minutes inline) and cancellation;
+  denials are never retried. The bot login comes from `GET /app`, the commit
+  author from `GET /users/<slug>[bot]`; either failing stops startup.
+- Git requires version 2.50.1 or newer. Credentials appear only in clone/fetch/ls-remote/push
   `GIT_CONFIG_*` auth headers, never URLs, argv or `.git/config`. Hooks are off,
   submodules are refused, config is hash-checked, diffs are bounded and pushes
   allow only `patchbot/*`, without force or the default branch.
@@ -265,7 +280,7 @@ These are the PLAN section 10 boundaries, not features promised in v0.1.0.
 | Webhooks and label polling | `Runner.Start`, `runs.trigger`; add HMAC checks and delivery dedupe |
 | Durable queue and worker leases | Runner `Admit`/`Dispatch` hooks, queued status and heartbeat; current server queue is in memory |
 | Container execution (M17, done) | `execx.Executor`: `LocalExecutor` or `ContainerExecutor` chosen by `[executor] kind`; `PolicyOptions.InContainer` keeps command IDs/allowlist and resolves names in the image; git and file tools stay host-side |
-| GitHub App tokens | `github.TokenSource`, shared by git and API |
+| GitHub App tokens (M27, done) | `github.RepoTokenSource`: `StaticRepoTokens` (PAT) or `github.App`; REST selects by `RepoRef`, git uses a per-operation `TokenFunc` |
 | Deployment, login and backup | Server auth wrapper, HTTP handler boundary and on-disk SQLite |
 | Other managed runners and PR follow-ups | `llm.Provider`, constructors and runner lifecycle methods |
 

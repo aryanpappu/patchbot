@@ -55,9 +55,12 @@ func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha
 			_ = os.RemoveAll(dir)
 		}
 	}()
-	token, err := r.opts.Tokens.Token(ctx)
-	if err != nil {
-		return nil, errors.New("GitHub token unavailable; set GITHUB_TOKEN")
+	// git asks for a fresh repository-bound token on every remote operation,
+	// so a run longer than an installation token's lifetime still pushes.
+	repoRef := ref(run.Repo)
+	tokenFunc := func(ctx context.Context) (string, error) { return r.tokens.RepoToken(ctx, repoRef) }
+	if _, err := tokenFunc(ctx); err != nil {
+		return nil, githubCredentialError(err)
 	}
 	var repo *gitx.Repo
 	defer func() {
@@ -67,7 +70,7 @@ func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha
 	}()
 	err = r.operation(ctx, run, "git", "clone", func() error {
 		var cloneErr error
-		repo, cloneErr = r.opts.Clone(ctx, gitx.CloneOptions{Dir: filepath.Join(dir, "repo"), Host: "github.com", Owner: ref(run.Repo).Owner, Name: ref(run.Repo).Name, Branch: meta.DefaultBranch, DefaultBranch: meta.DefaultBranch, Token: token, TrustedPath: r.cfg.Limits.TrustedPath, ExcludedRoots: []string{r.cfg.DataDir()}})
+		repo, cloneErr = r.opts.Clone(ctx, gitx.CloneOptions{Dir: filepath.Join(dir, "repo"), Host: "github.com", Owner: ref(run.Repo).Owner, Name: ref(run.Repo).Name, Branch: meta.DefaultBranch, DefaultBranch: meta.DefaultBranch, TokenFunc: tokenFunc, TrustedPath: r.cfg.Limits.TrustedPath, ExcludedRoots: []string{r.cfg.DataDir()}})
 		return cloneErr
 	})
 	if err != nil {

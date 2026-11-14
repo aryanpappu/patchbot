@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -39,8 +40,20 @@ type Options struct {
 	// Redactor adds CLI/server credentials to model and persistence boundaries.
 	Redactor *secret.Redactor
 
-	GitHub       github.Client
-	Tokens       github.TokenSource
+	GitHub github.Client
+	// Tokens is the PAT used in [github] auth = "pat" mode. It is ignored in
+	// app mode, so an App failure never falls back to a broader PAT.
+	Tokens github.TokenSource
+	// RepoTokens supplies a credential per repository for REST and git. Nil
+	// selects the configured mode: the PAT for every repository, or a GitHub
+	// App source built from [github].
+	RepoTokens github.RepoTokenSource
+	// CommitAuthor is the git identity of patchbot commits. Zero selects
+	// patchbot <patchbot@users.noreply.github.com>; app mode sets the bot.
+	CommitAuthor gitx.Author
+	// GitHubAPI and GitHubHTTP are test seams for the App API endpoint.
+	GitHubAPI    string
+	GitHubHTTP   *http.Client
 	Constructors llm.Constructors
 	Clone        func(context.Context, gitx.CloneOptions) (*gitx.Repo, error)
 	Executor     func(string) (execx.Executor, error)
@@ -73,6 +86,7 @@ type Runner struct {
 	cfg      *config.Config
 	db       store.Store
 	gh       github.Client
+	tokens   github.RepoTokenSource
 	opts     Options
 	redactor *secret.Redactor
 	mu       sync.Mutex
@@ -124,21 +138,10 @@ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) 
 	if opts.StaleAfter <= 0 {
 		opts.StaleAfter = time.Minute
 	}
-	if opts.Tokens == nil {
-		opts.Tokens = Token{Value: secret.New(os.Getenv("GITHUB_TOKEN"))}
-	}
-	gh := opts.GitHub
-	if gh == nil {
-		var err error
-		gh, err = github.New(nil, "", opts.Tokens)
-		if err != nil {
-			return nil, err
-		}
-	}
-	r := &Runner{cfg: cfg, db: db, gh: gh, opts: opts, redactor: cfg.Redactor(), active: make(map[int64]context.CancelFunc), controls: make(map[int64]*sync.Mutex)}
+	r := &Runner{cfg: cfg, db: db, opts: opts, redactor: cfg.Redactor(), active: make(map[int64]context.CancelFunc), controls: make(map[int64]*sync.Mutex)}
 	r.redactor.Extend(opts.Redactor)
-	if token, err := opts.Tokens.Token(ctx); err == nil {
-		r.redactor.AddSecrets(secret.New(token))
+	if err := r.setupGitHub(ctx); err != nil {
+		return nil, err
 	}
 	if err := r.RecoverStale(ctx); err != nil {
 		return nil, err

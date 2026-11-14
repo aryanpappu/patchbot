@@ -43,6 +43,7 @@ type Config struct {
 	Data      Data                 `toml:"data"`
 	Memory    Memory               `toml:"memory"`
 	Executor  Executor             `toml:"executor"`
+	GitHub    GitHub               `toml:"github"`
 	Providers map[string]*Provider `toml:"providers"`
 	Repos     map[string]*Repo     `toml:"repos"`
 
@@ -163,6 +164,31 @@ type Webhook struct {
 	LabelPollInterval time.Duration `toml:"label_poll_interval"`
 	Secret            secret.Secret `toml:"-"`
 }
+
+// GitHub auth modes.
+const (
+	GitHubAuthPAT = "pat"
+	GitHubAuthApp = "app"
+)
+
+// GitHub selects how patchbot authenticates to GitHub. PAT mode reads
+// GITHUB_TOKEN from the environment. App mode signs a JWT with the App's
+// private key file and mints per-run installation tokens narrowed to one
+// repository; it never falls back to a PAT. No credential is ever in the file.
+type GitHub struct {
+	// Auth is "pat" (default) or "app".
+	Auth string `toml:"auth"`
+	// AppID is the numeric GitHub App ID (app mode).
+	AppID int64 `toml:"app_id"`
+	// PrivateKeyFile is the absolute path of the App's PEM private key. It
+	// holds a path, not key material; the file is checked at startup.
+	PrivateKeyFile string `toml:"private_key_file"`
+	// InstallationID is optional; 0 resolves each repository's installation.
+	InstallationID int64 `toml:"installation_id"`
+}
+
+// App reports whether GitHub App authentication is configured.
+func (g GitHub) App() bool { return g.Auth == GitHubAuthApp }
 
 // Data says where the database and workspaces live.
 type Data struct {

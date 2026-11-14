@@ -28,8 +28,15 @@ const (
 type HTTPClient struct {
 	httpClient *http.Client
 	baseURL    *url.URL
-	tokens     TokenSource
-	userAgent  string
+	// tokens authenticates requests without a repository (and, when
+	// repoTokens is nil, every request: PAT mode).
+	tokens TokenSource
+	// repoTokens, when set, authenticates every repository request with a
+	// credential bound to that request's repository.
+	repoTokens RepoTokenSource
+	// anonymous sends no Authorization header (public user lookups only).
+	anonymous bool
+	userAgent string
 }
 
 var _ Client = (*HTTPClient)(nil)
@@ -42,6 +49,22 @@ func New(httpClient *http.Client, baseURL string, tokens TokenSource) (*HTTPClie
 	if tokens == nil {
 		return nil, errors.New("New: token source is required")
 	}
+	return newClient(httpClient, baseURL, tokens, nil)
+}
+
+// NewWithRepoTokens constructs a client whose repository requests use a
+// credential bound to the request's repository (GitHub App mode). Requests
+// without a repository (CurrentUser) are refused unless user is non-nil. A 401
+// on a repository request invalidates that token once and retries with a
+// freshly minted one; there is never a fallback to another credential.
+func NewWithRepoTokens(httpClient *http.Client, baseURL string, repoTokens RepoTokenSource, user TokenSource) (*HTTPClient, error) {
+	if repoTokens == nil {
+		return nil, errors.New("NewWithRepoTokens: repository token source is required")
+	}
+	return newClient(httpClient, baseURL, user, repoTokens)
+}
+
+func newClient(httpClient *http.Client, baseURL string, tokens TokenSource, repoTokens RepoTokenSource) (*HTTPClient, error) {
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
@@ -56,7 +79,7 @@ func New(httpClient *http.Client, baseURL string, tokens TokenSource) (*HTTPClie
 	transport := *httpClient
 	transport.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &HTTPClient{
-		httpClient: &transport, baseURL: base, tokens: tokens, userAgent: "patchbot/" + version.Version,
+		httpClient: &transport, baseURL: base, tokens: tokens, repoTokens: repoTokens, userAgent: "patchbot/" + version.Version,
 	}, nil
 }
 
@@ -90,32 +113,81 @@ type responseMeta struct {
 	status int
 }
 
-func (c *HTTPClient) request(ctx context.Context, method string, target *url.URL, body, out any, statuses ...int) (responseMeta, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-	token, err := c.tokens.Token(ctx)
+// credential returns the token for one request: the repository's own token when
+// a repository source is configured, else the client-wide source.
+func (c *HTTPClient) credential(ctx context.Context, repo *RepoRef) (string, error) {
+	if c.anonymous {
+		return "", nil
+	}
+	var token string
+	var err error
+	switch {
+	case repo != nil && c.repoTokens != nil:
+		token, err = c.repoTokens.RepoToken(ctx, *repo)
+	case c.tokens != nil:
+		token, err = c.tokens.Token(ctx)
+	default:
+		return "", errors.New("no credential for a request without a repository")
+	}
 	if err != nil {
 		if ctx.Err() != nil {
-			return responseMeta{}, ctx.Err()
+			return "", ctx.Err()
 		}
-		// A token source's error can itself contain a credential.
-		return responseMeta{}, errors.New("authentication token unavailable")
+		// A token source's error can itself contain a credential. Typed
+		// minting failures (revoked, rate limited) keep their safe type.
+		var mint *MintError
+		if errors.As(err, &mint) {
+			return "", mint
+		}
+		return "", errors.New("authentication token unavailable")
 	}
 	if token == "" || strings.ContainsAny(token, "\r\n") {
-		return responseMeta{}, errors.New("invalid authentication token")
+		return "", errors.New("invalid authentication token")
 	}
-	for _, secret := range tokenForms(token) {
-		if strings.Contains(target.String(), secret) {
-			return responseMeta{}, errors.New("credential found in request URL")
-		}
-	}
+	return token, nil
+}
+
+// request sends one API call. repo is the repository the call is about (nil for
+// account- or App-level endpoints) and selects the credential.
+func (c *HTTPClient) request(ctx context.Context, repo *RepoRef, method string, target *url.URL, body, out any, statuses ...int) (responseMeta, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
 	var data []byte
 	if body != nil {
+		var err error
 		data, err = json.Marshal(body)
 		if err != nil {
 			return responseMeta{}, errors.New("cannot encode request body")
 		}
 	}
+	meta, token, err := c.attempt(ctx, repo, method, target, data, out, statuses...)
+	// A 401 means GitHub rejected the credential before acting, so a single
+	// retry with a fresh token cannot duplicate a write. Only a caching
+	// repository source is retried; a PAT is not re-read.
+	if invalidator, ok := c.repoTokens.(TokenInvalidator); ok && repo != nil && token != "" {
+		if _, unauthorized := errors.AsType[*ErrUnauthorized](err); unauthorized {
+			invalidator.Invalidate(*repo, token)
+			meta, _, err = c.attempt(ctx, repo, method, target, data, out, statuses...)
+		}
+	}
+	return meta, err
+}
+
+func (c *HTTPClient) attempt(ctx context.Context, repo *RepoRef, method string, target *url.URL, data []byte, out any, statuses ...int) (responseMeta, string, error) {
+	token, err := c.credential(ctx, repo)
+	if err != nil {
+		return responseMeta{}, "", err
+	}
+	for _, secret := range tokenForms(token) {
+		if strings.Contains(target.String(), secret) {
+			return responseMeta{}, "", errors.New("credential found in request URL")
+		}
+	}
+	meta, err := c.send(ctx, token, method, target, data, out, statuses...)
+	return meta, token, err
+}
+
+func (c *HTTPClient) send(ctx context.Context, token, method string, target *url.URL, data []byte, out any, statuses ...int) (responseMeta, error) {
 	req, err := http.NewRequestWithContext(ctx, method, target.String(), bytes.NewReader(data))
 	if err != nil {
 		return responseMeta{}, errors.New("cannot construct API request")
@@ -123,8 +195,10 @@ func (c *HTTPClient) request(ctx context.Context, method string, target *url.URL
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Authorization", "Bearer "+token)
-	if body != nil {
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if data != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if etag, ok := ctx.Value(etagKey{}).(string); ok && etag != "" {

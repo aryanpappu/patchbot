@@ -79,9 +79,15 @@ func Marker(kind string) string { return "<!-- patchbot:" + kind + " -->" }
 // comment IDs and return true on error. Such a comment must also carry no
 // patchbot marker, be unedited and pass the approver and collaborator checks.
 // Every other combination fails closed. Other authors keep the plain rules.
+// In GitHub App mode botLogin is "<slug>[bot]" and its comments never count.
 func EligibleCommand(comment Comment, approvers []string, isCollaborator func(string) bool, botLogin string, postedByPatchbot func(int64) bool) bool {
 	if botLogin == "" || comment.Author == "" || comment.CreatedAt.IsZero() ||
 		!comment.UpdatedAt.Equal(comment.CreatedAt) || isCollaborator == nil {
+		return false
+	}
+	// A GitHub App bot ("<slug>[bot]") is a distinct identity: its comments are
+	// always patchbot's own, so the shared-identity path never applies to it.
+	if strings.EqualFold(comment.Author, botLogin) && strings.HasSuffix(strings.ToLower(botLogin), "[bot]") {
 		return false
 	}
 	if strings.EqualFold(comment.Author, botLogin) &&
