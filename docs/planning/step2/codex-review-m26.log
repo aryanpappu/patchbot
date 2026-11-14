@@ -1,0 +1,3592 @@
+Reading additional input from stdin...
+OpenAI Codex v0.166.0
+--------
+workdir: /Users/pappumishra/Documents/selfproject/patchbot-m26-create-issue
+model: gpt-6.1-sol
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: none
+reasoning summaries: none
+session id: 01a1d9a6-1b9d-7093-8a60-db54db0c06d5
+--------
+user
+Review branch m26-create-issue vs development (git diff development...HEAD): create GitHub issue from patchbot dashboard (POST /api/issues), idempotency table 0011, marker search crash recovery, shared startRun extraction. Focus: duplicate issue creation races, idempotency key abuse, marker spoofing by outsiders (someone else posting an issue containing the marker to hijack the row/run), approval-gate bypass, trust of the created issue as trigger, mention/markdown injection, secrets in errors, regression in POST /api/runs from the refactor. Report only real findings: file:line, severity, scenario, fix. Concise.
+codex
+I’ll review the diff and trace issue creation, crash recovery, approval checks, and the shared run path for concrete vulnerabilities and regressions.
+exec
+/bin/zsh -lc 'git diff --stat development...HEAD && git status --short && rg --files -g AGENTS.md' in /Users/pappumishra/Documents/selfproject/patchbot-m26-create-issue
+ exited 1 in 380ms:
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-xgHWGjDr' (errno=Operation not permitted)
+ CHANGELOG.md                                       |   7 +
+ README.md                                          |   7 +
+ docs/ARCHITECTURE.md                               |  11 +
+ docs/DECISIONS.md                                  |   1 +
+ docs/M26-REPORT.md                                 | 108 +++++
+ docs/PROGRESS.md                                   |   1 +
+ internal/github/http.go                            |   8 +-
+ internal/github/issues.go                          |  53 +++
+ internal/github/issues_test.go                     |  66 +++
+ internal/github/types.go                           |   1 +
+ internal/runner/issues.go                          |  25 +
+ internal/server/access_test.go                     |   9 +-
+ internal/server/api.go                             |  43 +-
+ internal/server/issues.go                          | 348 ++++++++++++++
+ internal/server/issues_test.go                     | 530 +++++++++++++++++++++
+ internal/server/json.go                            |  26 +-
+ internal/server/server.go                          |   2 +
+ internal/store/dashboard_issues.go                 | 125 +++++
+ internal/store/dashboard_issues_test.go            |  81 ++++
+ internal/store/migrations/0010_reserved_m24.sql    |   3 +
+ .../store/migrations/0011_dashboard_issues.sql     |  22 +
+ internal/store/store.go                            |   9 +
+ internal/web/assets/app.css                        |   1 +
+ internal/web/assets/app.js                         |  79 ++-
+ internal/web/web_test.go                           |  33 ++
+ 25 files changed, 1573 insertions(+), 26 deletions(-)
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-ahphAklM' (errno=Operation not permitted)
+
+exec
+/bin/zsh -lc 'git diff development...HEAD' in /Users/pappumishra/Documents/selfproject/patchbot-m26-create-issue
+ succeeded in 0ms:
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-WDLUXvw6' (errno=Operation not permitted)
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index f7c75a9..bbe763f 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,13 @@
+ 
+ ## Unreleased
+ 
++- Add "Create issue from the dashboard" (M26): `POST /api/issues` opens a GitHub
++  issue (with a visible "created via the patchbot dashboard by <actor>" footer
++  and a hidden `patchbot:issue-created` marker) and can start the refine run
++  through the same path as `POST /api/runs`. A client idempotency key makes
++  retries safe, including after a crash mid-request. `/runs/new` gets a "Write a
++  new request" mode. Migration 0011 (`dashboard_issues`); the approval gate is
++  unchanged.
+ - Add "Connect GitHub" (M28): create the GitHub App from the dashboard with the
+   App manifest flow (`[github] setup_public_url`), the key is written straight
+   to a 0600 file and only the App ID and slug are stored. Without an App the
+diff --git a/README.md b/README.md
+index 4e7157b..73ce796 100644
+--- a/README.md
++++ b/README.md
+@@ -251,6 +251,13 @@ approved with review off stay unreviewed.
+ 
+ - `/runs/new`: allowlisted repo, issue, mode, provider/model, optional refine
+   model, budget and dry-run controls. Dry run starts checked.
++- `/runs/new` > **Write a new request**: repo, title and text. patchbot opens the
++  GitHub issue (as the bot or PAT user; the footer names you, and in Access mode
++  that is your login email, visible to anyone who can read the issue) and, with
++  "Start refine now", starts the run. Nothing changes in the repository until
++  you approve the specification. API: `POST /api/issues` with `repo`, `title`
++  (1-256 chars), `body` (up to 64 KiB), `start_run` and a client-generated
++  `idempotency_key`; resubmitting the same key returns the same issue and run.
+ - `/runs`: filters, paging, status, cost, approval count and PR links, plus a
+   repository memory panel to list, approve, reject, forget or add lessons.
+ - `/runs/ID`: spec editor/history, approval controls, timeline, live events,
+diff --git a/docs/ARCHITECTURE.md b/docs/ARCHITECTURE.md
+index 4602d47..9786c73 100644
+--- a/docs/ARCHITECTURE.md
++++ b/docs/ARCHITECTURE.md
+@@ -120,10 +120,21 @@ Times are UTC milliseconds; money is integer micro-USD. NULL means unknown.
+ | `run_artifacts` | Redacted spec/report/diff/test/PR previews and private accounting artifacts |
+ | `actions` | Local and GitHub lifecycle decisions |
+ | `posted_comments` | IDs of GitHub comments patchbot posted (shared-identity approval guard) |
++| `dashboard_issues` | Issues opened from the dashboard: idempotency key, request hash, requester, pending/created state, issue number and node ID, linked run |
+ | `memory_entries` | Per-repo typed observations and prose lessons, status, provenance and content hash |
+ | `memory_actions` | Memory create/approve/reject/forget audit with actor, channel and time |
+ | `schema_migrations` | Applied version, filename, checksum and time |
+ 
++Dashboard issues (`POST /api/issues`, M26) use the runner's GitHub client, so
++the author is the App bot or the PAT user and the requester is stored in
++`dashboard_issues`. A `pending` row is inserted before GitHub is called; the
++body ends with a visible footer and the hidden marker
++`<!-- patchbot:issue-created v1 key=KEY -->`. A retry with the same key returns
++the stored issue and run; a retry of a stale pending row first lists recent
++issues for the marker and only creates when a complete search finds none. The
++run then starts through `startRun`, the same function as `POST /api/runs`, and
++waits at the normal approval gate.
++
+ Status changes use compare-and-set with a generation counter. Decisions and
+ associated events/actions commit atomically. Public artifact downloads allow a
+ fixed set of kinds. Internal accounting artifacts are not exposed.
+diff --git a/docs/DECISIONS.md b/docs/DECISIONS.md
+index 4e09b74..d3c57bb 100644
+--- a/docs/DECISIONS.md
++++ b/docs/DECISIONS.md
+@@ -78,4 +78,5 @@ engineering questions together and record them here.
+ - M23: Cloudflare Access login (`[server.auth] mode = "cloudflare_access"`) verifies `Cf-Access-Jwt-Assertion` with stdlib RS256 against the team JWKS and records the verified email as the ui actor; token mode stays the default; no local user/password login and no schema change.
+ - M27: GitHub App auth (`[github] auth = "app"`) mints per-run installation tokens narrowed to one repository ID with contents/issues/pull_requests write + metadata read, routed by explicit `RepoRef` (REST) and a per-operation `TokenFunc` (git); PAT mode unchanged and explicit; no fallback from App to PAT; key file only, never env/DB.
+ - M25: `[repos."owner/name"] image`/`path` override the global `[executor]` values (same digest-pin validation); the image is frozen per run in an `executor` artifact (no migration), a container-mode repo with no image anywhere is a config error naming the repo, and doctor/`config show` report images per repo.
++- M26: dashboard issues are created through the runner's own GitHub client (App installation token or PAT, so the author is the bot/PAT user) and the requester is stored in `dashboard_issues` (migration 0011) keyed by a client idempotency key; a pending row is written before the GitHub call and a retry searches for the hidden `patchbot:issue-created` marker before it may create again; the run starts through the unchanged `POST /api/runs` path and is never auto-approved.
+ - M28: "Connect GitHub" uses the App manifest flow; the callback is authenticated by a single-use 10-minute random state (browser redirects cannot send the bearer), the pem goes straight to a 0600 no-clobber key file, only app_id/slug are stored (migration 0009), client/webhook secrets are discarded, and the server starts in a refuse-runs setup mode until connected; activation after connecting needs a restart.
+diff --git a/docs/M26-REPORT.md b/docs/M26-REPORT.md
+new file mode 100644
+index 0000000..8975dc6
+--- /dev/null
++++ b/docs/M26-REPORT.md
+@@ -0,0 +1,108 @@
++# M26: Create issue from the dashboard
++
++Write a feature request in the dashboard; patchbot opens the GitHub issue and
++can start the refine run. No new Go dependencies; tests use an in-memory fake
++GitHub only.
++
++## What changed
++
++- **API** `POST /api/issues` (`internal/server/issues.go`), behind the existing
++  auth (Access JWT or bearer), cross-origin check and 1 MiB body limit.
++  Fields: `repo`, `title`, `body`, `start_run`, `idempotency_key` (required,
++  8-128 of `[A-Za-z0-9_-]`, a UUID from the UI) and, when `start_run`, the same
++  run options as `POST /api/runs` (`mode`, `provider`, `model`, `refine_model`,
++  `code_model`, `dry_run`, `max_cost_micros`).
++  - Validation: repo must pass `Server.repoAllowed` (the single allowlist
++    accessor, also used by `POST /api/runs`, so M24's registry replaces one
++    function); title 1-256 runes after trim with no control characters at all;
++    body at most 64 KiB (CRLF normalised) with no control characters except
++    newline and tab; valid UTF-8; no `<!-- patchbot` marker in title or body
++    (blocks spoofing the marker).
++  - Response `201` (created now) or `200` (replay):
++    `{"issue":{repo,number,node_id,html_url,requested_by,created},"run":{...}}`.
++- **GitHub** (`internal/github/issues.go`): `CreateIssue` and `ListIssuesSince`
++  on `HTTPClient` through the same `request` path as every other call, so the
++  credential is the App installation token for that repository or the PAT.
++  Exposed to the server as `runner.IssueWriter()` (optional interface; returns
++  `ErrGitHubNotConnected` in setup mode). Title and body are mention-neutralized
++  like all other patchbot text. `Issue` now decodes `node_id`.
++- **Attribution.** GitHub shows the bot or PAT user as author. The body ends with
++  `---`, a visible line "Created from the patchbot dashboard by `<actor>`" and the
++  hidden `<!-- patchbot:issue-created v1 key=KEY -->`. The actor, issue number and
++  node ID are stored in `dashboard_issues`; `GET /api/runs/ID` adds
++  `dashboard_issue.requested_by`. patchbot never trusts an issue by its author,
++  and comment commands keep the existing marker/`posted_comments` rules (the
++  marker is in the issue body, not a comment).
++- **Migration** `0011_dashboard_issues.sql`: `idempotency_key` unique,
++  `request_hash`, `repo`, `actor`, `state` (`pending`/`created`), `issue_number`
++  (unique per repo), `issue_node_id`, `issue_url`, `run_id`, timestamps.
++  `0010_reserved_m24.sql` is an empty placeholder so numbering stays contiguous
++  on this branch (see Open issues).
++- **Idempotency and the crash window.**
++  1. The pending row is inserted before GitHub is called. Same key + different
++     content is `422 idempotency_conflict`.
++  2. A created row is returned as is (`200`), never creating a second issue.
++  3. A pending row younger than 2 minutes means another request may still be in
++     flight: `409 issue_creation_in_progress`. An older one is atomically claimed
++     by one retry, which lists recent issues (any state, up to 300) for the exact
++     marker at the end of a body. Found: the row is completed, nothing is created.
++     A complete search that finds nothing: the issue is created. A failed or
++     truncated search: `502 issue_state_unknown` ("may have been created, check
++     the repo"), never a blind create.
++  4. A GitHub 4xx, a missing credential or a token-mint failure certainly created
++     nothing, so the pending row is deleted and the key can be reused at once. A
++     5xx, transport error or timeout leaves the row pending (outcome unknown).
++  5. The GitHub call and bookkeeping use a context detached from the HTTP client,
++     so a disconnecting browser cannot abandon them midway.
++- **Run start.** `start_run` calls `Server.startRun`, extracted from the
++  `POST /api/runs` handler together with `validStartOptions`; there is no second
++  lifecycle path. The run is created with channel `ui` and the dashboard actor,
++  lands in `awaiting_approval` and is never approved. A retry resumes at the run
++  step (adopting an existing run for that brand-new issue instead of starting a
++  second). If the run cannot start the response carries both the error and the
++  `issue`, and the same key resumes.
++- **Errors** (fixed messages; GitHub bodies and tokens never relayed):
++  `github_not_connected` 409; `github_permission_denied` 403 (GitHub 401/403/404
++  all map here, never 401, which the UI reads as "sign in again"); `issues_disabled`
++  422 (GitHub 410); `github_rejected` 422; `github_rate_limited` 429;
++  `github_unavailable` 502; `issue_state_unknown` 502; `not_supported` 501.
++- **UI** (`/runs/new`): a "Write a new request" toggle (`aria-pressed`) with repo,
++  title, request text, "Start refine now", and the existing mode/provider/model/
++  budget/dry-run controls when checked. The key stays the same while the content
++  is unchanged and renews when it changes. The created issue is linked through
++  `link()` (https only) and the page navigates to the run after 1.5 s. Render
++  functions, text nodes and CSP are unchanged.
++
++## Tests
++
++`internal/server/issues_test.go` (all under `-race`): marker, footer, actor and
++row; idempotent retry and key reuse conflict; six concurrent identical requests
++create once; crash window recovery by marker, in-progress guard, create-when-
++nothing-found, unverifiable search never creates; `start_run` through the run
++path ending in `awaiting_approval` with no approvals, linked run and no second
++run on retry, requester in run detail; resume after an earlier failure; repo
++allowlist; validation table and boundaries; safe GitHub error mapping and
++immediate retry after a definite failure; `github_not_connected`; unsupported
++client; auth, wrong token, cross-site refused; body limit; Cloudflare Access email
++recorded in the footer, row and run actions; hostile text stays inert data (JSON,
++nosniff, not in the page shell). Plus `internal/github/issues_test.go`,
++`internal/store/dashboard_issues_test.go` and `TestWriteRequestFormUsesSafeSinks`
++in `internal/web`. No tokens appear in any response (the fixture asserts it).
++
++## Open issues
++
++- **Migration 0010 placeholder.** M24 owns 0010. At merge, delete
++  `0010_reserved_m24.sql` and keep M24's real file; 0011 follows unchanged.
++  Also swap `repoAllowed` for M24's registry lookup.
++- **Actor email is public.** In Access mode the footer shows the login email in
++  the issue, readable by anyone who can read the repository.
++- **Marker search window** is 300 issues updated since shortly before the pending
++  row; in a very busy repo it reports `issue_state_unknown` instead of guessing.
++- **Eventual consistency.** The marker search uses the issues list (not the
++  search API), which is read-after-write consistent, but a pending row stays
++  unrecoverable for 2 minutes after an unknown failure by design.
++- **Run start error after issue creation** with an existing failed run row
++  returns the run (failed) with 200/201 rather than an error.
++- No labels or assignees are set; no edit/close of dashboard issues.
++- UI was not checked in Chrome on Mumbai (no browser or network here); the form
++  is covered by the static sink test only.
+diff --git a/docs/PROGRESS.md b/docs/PROGRESS.md
+index cc96ec0..ba5e4a3 100644
+--- a/docs/PROGRESS.md
++++ b/docs/PROGRESS.md
+@@ -30,6 +30,7 @@ for local checks, audit fixes and external validation limits.
+ | M21 Opt-in reviewer | Done (off by default) |
+ | M22 Webhook and label ingress | Done (off by default), review fixes merged |
+ | M23 Login-based dashboard | Done (Cloudflare Access JWT; token mode default) |
++| M26 Create issue from the dashboard | Done (`POST /api/issues`, migration 0011; approval gate unchanged) |
+ 
+ ## Known limitations
+ 
+diff --git a/internal/github/http.go b/internal/github/http.go
+index 662ecc2..266197f 100644
+--- a/internal/github/http.go
++++ b/internal/github/http.go
+@@ -113,6 +113,10 @@ type responseMeta struct {
+ 	status int
+ }
+ 
++// ErrCredentialUnavailable means no usable credential existed, so no request
++// was sent. Callers may treat the operation as not performed.
++var ErrCredentialUnavailable = errors.New("authentication token unavailable")
++
+ // credential returns the token for one request: the repository's own token when
+ // a repository source is configured, else the client-wide source.
+ func (c *HTTPClient) credential(ctx context.Context, repo *RepoRef) (string, error) {
+@@ -139,10 +143,10 @@ func (c *HTTPClient) credential(ctx context.Context, repo *RepoRef) (string, err
+ 		if errors.As(err, &mint) {
+ 			return "", mint
+ 		}
+-		return "", errors.New("authentication token unavailable")
++		return "", ErrCredentialUnavailable
+ 	}
+ 	if token == "" || strings.ContainsAny(token, "\r\n") {
+-		return "", errors.New("invalid authentication token")
++		return "", ErrCredentialUnavailable
+ 	}
+ 	return token, nil
+ }
+diff --git a/internal/github/issues.go b/internal/github/issues.go
+new file mode 100644
+index 0000000..c823b2c
+--- /dev/null
++++ b/internal/github/issues.go
+@@ -0,0 +1,53 @@
++package github
++
++import (
++	"context"
++	"net/http"
++	"net/url"
++	"strconv"
++	"time"
++)
++
++// NewIssue is the content of an issue to create. Title and body have mentions
++// neutralized before sending, like every other text patchbot writes.
++type NewIssue struct {
++	Title string `json:"title"`
++	Body  string `json:"body"`
++}
++
++// IssueWriter is the optional issue-creation seam of the REST client (M26). It
++// is separate from Client so clients that predate it stay usable.
++type IssueWriter interface {
++	CreateIssue(context.Context, RepoRef, NewIssue) (Issue, error)
++	// ListIssuesSince returns one page (1-based) of issues of any state updated
++	// at or after since, newest first. Pull requests are included; callers skip
++	// them with Issue.IsPullRequest.
++	ListIssuesSince(ctx context.Context, repo RepoRef, since time.Time, page int) ([]Issue, error)
++}
++
++var _ IssueWriter = (*HTTPClient)(nil)
++
++// CreateIssue opens an issue as the credential's identity (the App bot, or the
++// PAT's user). Mentions in the title and body are neutralized.
++func (c *HTTPClient) CreateIssue(ctx context.Context, repo RepoRef, in NewIssue) (Issue, error) {
++	in.Title, in.Body = NeutralizeMentions(in.Title), NeutralizeMentions(in.Body)
++	var issue Issue
++	_, err := c.call(ctx, repo, []string{"issues"}, http.MethodPost, in, &issue, http.StatusCreated)
++	return issue, operationError("CreateIssue", err)
++}
++
++// ListIssuesSince lists issues of any state updated since the given time.
++func (c *HTTPClient) ListIssuesSince(ctx context.Context, repo RepoRef, since time.Time, page int) ([]Issue, error) {
++	u, err := c.endpoint(repo, "issues")
++	if err != nil {
++		return nil, operationError("ListIssuesSince", err)
++	}
++	q := url.Values{"state": {"all"}, "sort": {"created"}, "direction": {"desc"}, "per_page": {"100"}, "page": {strconv.Itoa(max(page, 1))}}
++	if !since.IsZero() {
++		q.Set("since", since.UTC().Format(time.RFC3339))
++	}
++	u.RawQuery = q.Encode()
++	var issues []Issue
++	_, err = c.request(ctx, &repo, http.MethodGet, u, nil, &issues, http.StatusOK)
++	return issues, operationError("ListIssuesSince", err)
++}
+diff --git a/internal/github/issues_test.go b/internal/github/issues_test.go
+new file mode 100644
+index 0000000..792c50e
+--- /dev/null
++++ b/internal/github/issues_test.go
+@@ -0,0 +1,66 @@
++package github
++
++import (
++	"encoding/json"
++	"errors"
++	"net/http"
++	"strings"
++	"testing"
++	"time"
++)
++
++func TestCreateIssuePostsNeutralizedContent(t *testing.T) {
++	t.Parallel()
++	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
++		if r.Method != http.MethodPost || r.URL.Path != "/api/v3/repos/owner/repo/issues" {
++			t.Errorf("request %s %s", r.Method, r.URL.Path)
++		}
++		var in map[string]string
++		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
++			t.Error(err)
++		}
++		if strings.Contains(in["title"], "@octo") && !strings.Contains(in["title"], "@\u200d") || !strings.Contains(in["body"], "@\u200dteam") || !strings.Contains(in["body"], "me@example.com") {
++			t.Errorf("mentions not neutralized: %v", in)
++		}
++		w.WriteHeader(http.StatusCreated)
++		writeJSON(t, w, map[string]any{"number": 9, "node_id": "I_kw", "html_url": "https://github.com/owner/repo/issues/9", "title": in["title"], "body": in["body"], "state": "open", "user": map[string]string{"login": "bot[bot]"}})
++	})
++	issue, err := client.CreateIssue(t.Context(), RepoRef{Owner: "owner", Name: "repo"}, NewIssue{Title: "ping @octocat", Body: "hi @team and me@example.com"})
++	if err != nil || issue.Number != 9 || issue.NodeID != "I_kw" || issue.Author != "bot[bot]" {
++		t.Fatalf("issue %+v: %v", issue, err)
++	}
++}
++
++func TestCreateIssueErrorsAreTyped(t *testing.T) {
++	t.Parallel()
++	for status, check := range map[int]func(error) bool{
++		403: func(err error) bool { var e *ErrForbidden; return errors.As(err, &e) },
++		404: func(err error) bool { var e *ErrNotFound; return errors.As(err, &e) },
++		410: func(err error) bool { var e *APIError; return errors.As(err, &e) && e.StatusCode == 410 },
++		422: func(err error) bool { var e *ErrValidation; return errors.As(err, &e) },
++	} {
++		client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
++			w.WriteHeader(status)
++			_, _ = w.Write([]byte(`{"message":"nope ` + testToken + `"}`))
++		})
++		_, err := client.CreateIssue(t.Context(), RepoRef{Owner: "owner", Name: "repo"}, NewIssue{Title: "t"})
++		if err == nil || !check(err) || strings.Contains(err.Error(), testToken) {
++			t.Errorf("status %d: %v", status, err)
++		}
++	}
++}
++
++func TestListIssuesSinceQuery(t *testing.T) {
++	t.Parallel()
++	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
++		q := r.URL.Query()
++		if q.Get("state") != "all" || q.Get("sort") != "created" || q.Get("direction") != "desc" || q.Get("page") != "2" || q.Get("since") != "2026-11-14T10:00:00Z" {
++			t.Errorf("query %v", q)
++		}
++		writeJSON(t, w, []map[string]any{{"number": 3, "body": "b"}, {"number": 2, "pull_request": map[string]string{}}})
++	})
++	issues, err := client.ListIssuesSince(t.Context(), RepoRef{Owner: "owner", Name: "repo"}, time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC), 2)
++	if err != nil || len(issues) != 2 || issues[0].Body != "b" || !issues[1].IsPullRequest {
++		t.Fatalf("%+v %v", issues, err)
++	}
++}
+diff --git a/internal/github/types.go b/internal/github/types.go
+index 2ef5add..49dc4df 100644
+--- a/internal/github/types.go
++++ b/internal/github/types.go
+@@ -89,6 +89,7 @@ type Label struct {
+ // Issue includes the current issue text used to invalidate stale approvals.
+ type Issue struct {
+ 	Number            int       `json:"number"`
++	NodeID            string    `json:"node_id"`
+ 	Title             string    `json:"title"`
+ 	Body              string    `json:"body"`
+ 	State             string    `json:"state"`
+diff --git a/internal/runner/issues.go b/internal/runner/issues.go
+new file mode 100644
+index 0000000..9257984
+--- /dev/null
++++ b/internal/runner/issues.go
+@@ -0,0 +1,25 @@
++package runner
++
++import (
++	"errors"
++
++	"github.com/aryanpappu/patchbot/internal/github"
++)
++
++// ErrIssueCreationUnsupported means the configured GitHub client cannot open issues.
++var ErrIssueCreationUnsupported = errors.New("the GitHub client cannot create issues")
++
++// IssueWriter returns the runner's GitHub issue-creation seam. It uses the
++// same client, and so the same credential path (App installation token for the
++// repository, or the PAT), as every other runner GitHub call. It fails with
++// ErrGitHubNotConnected in app-mode setup.
++func (r *Runner) IssueWriter() (github.IssueWriter, error) {
++	if r.notConnected {
++		return nil, ErrGitHubNotConnected
++	}
++	writer, ok := r.gh.(github.IssueWriter)
++	if !ok {
++		return nil, ErrIssueCreationUnsupported
++	}
++	return writer, nil
++}
+diff --git a/internal/server/access_test.go b/internal/server/access_test.go
+index 022d480..7302835 100644
+--- a/internal/server/access_test.go
++++ b/internal/server/access_test.go
+@@ -32,7 +32,7 @@ type accessFixture struct {
+ 	key *rsa.PrivateKey
+ }
+ 
+-func newAccessFixture(t *testing.T, p *fake.Provider) *accessFixture {
++func newAccessFixture(t *testing.T, p *fake.Provider, adjust ...func(*Options)) *accessFixture {
+ 	t.Helper()
+ 	key, err := rsa.GenerateKey(rand.Reader, 2048)
+ 	if err != nil {
+@@ -47,7 +47,12 @@ func newAccessFixture(t *testing.T, p *fake.Provider) *accessFixture {
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+-	f := newFixtureConfig(t, p, func(o *Options) { o.Access = verifier }, func(c *config.Config) {
++	f := newFixtureConfig(t, p, func(o *Options) {
++		o.Access = verifier
++		for _, a := range adjust {
++			a(o)
++		}
++	}, func(c *config.Config) {
+ 		c.Server.Auth = config.ServerAuth{Mode: config.AuthCloudflareAccess, TeamDomain: accessTeam, Audience: accessAud, AllowedEmails: []string{accessOwner}}
+ 	})
+ 	return &accessFixture{f, key}
+diff --git a/internal/server/api.go b/internal/server/api.go
+index f8e70ff..c7e75b2 100644
+--- a/internal/server/api.go
++++ b/internal/server/api.go
+@@ -32,6 +32,7 @@ func (s *Server) routes() http.Handler {
+ 	mux.HandleFunc("/api/providers", s.providers)
+ 	mux.HandleFunc("/api/providers/{id}/models", s.providerModels)
+ 	mux.HandleFunc("/api/runs", s.runs)
++	mux.HandleFunc("/api/issues", s.createIssue)
+ 	mux.HandleFunc("/api/runs/{id}", s.runDetail)
+ 	mux.HandleFunc("/api/runs/{id}/spec", s.editSpec)
+ 	mux.HandleFunc("/api/runs/{id}/events", s.events)
+@@ -133,15 +134,15 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
+ 		return
+ 	}
+ 	input.Repo = strings.ToLower(strings.TrimSpace(input.Repo))
+-	if s.cfg.Repos[input.Repo] == nil || input.Issue <= 0 || (input.Mode != "" && input.Mode != config.ModeFix && input.Mode != config.ModeRefine && input.Mode != config.ModeInvestigate) || input.MaxCostMicros < 0 || !validModels(input.Model, input.RefineModel, input.CodeModel) {
+-		s.writeError(w, 400, "invalid_request", "require an allowlisted repo, positive issue, valid mode, models and budget")
++	if !s.repoAllowed(input.Repo) || input.Issue <= 0 {
++		s.writeError(w, 400, "invalid_request", startInvalid)
+ 		return
+ 	}
+-	if input.Provider != "" && s.cfg.Providers[input.Provider] == nil {
+-		s.writeError(w, 400, "invalid_request", "unknown provider")
++	if message := s.validStartOptions(input); message != "" {
++		s.writeError(w, 400, "invalid_request", message)
+ 		return
+ 	}
+-	run, err := s.runner.Start(r.Context(), runner.Request{Repo: input.Repo, Issue: input.Issue, Mode: input.Mode, Provider: input.Provider, Model: input.Model, RefineModel: input.RefineModel, CodeModel: input.CodeModel, DryRun: input.DryRun, MaxCostMicros: input.MaxCostMicros})
++	run, err := s.startRun(r.Context(), input)
+ 	if err != nil {
+ 		s.respondError(w, err)
+ 		return
+@@ -150,6 +151,30 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
+ 	s.writeJSON(w, http.StatusAccepted, map[string]any{"run": publicRun(run)})
+ }
+ 
++const startInvalid = "require an allowlisted repo, positive issue, valid mode, models and budget"
++
++// repoAllowed is the single allowlist check for requests naming a repository.
++// repo must already be trimmed and lower-cased.
++func (s *Server) repoAllowed(repo string) bool { return s.cfg.Repos[repo] != nil }
++
++// validStartOptions checks everything in a start request except repo and
++// issue. It returns a client-safe message, or "" when the request is valid.
++func (s *Server) validStartOptions(input startRequest) string {
++	if (input.Mode != "" && input.Mode != config.ModeFix && input.Mode != config.ModeRefine && input.Mode != config.ModeInvestigate) || input.MaxCostMicros < 0 || !validModels(input.Model, input.RefineModel, input.CodeModel) {
++		return startInvalid
++	}
++	if input.Provider != "" && s.cfg.Providers[input.Provider] == nil {
++		return "unknown provider"
++	}
++	return ""
++}
++
++// startRun is the one place a dashboard request becomes a run. POST /api/runs
++// and POST /api/issues both use it, so lifecycle rules live only in the runner.
++func (s *Server) startRun(ctx context.Context, input startRequest) (store.Run, error) {
++	return s.runner.Start(ctx, runner.Request{Repo: input.Repo, Issue: input.Issue, Mode: input.Mode, Provider: input.Provider, Model: input.Model, RefineModel: input.RefineModel, CodeModel: input.CodeModel, DryRun: input.DryRun, MaxCostMicros: input.MaxCostMicros})
++}
++
+ func validModels(models ...string) bool {
+ 	for _, model := range models {
+ 		if len(model) > 512 || strings.ContainsAny(model, "\r\n\x00") || (model != "" && strings.TrimSpace(model) == "") {
+@@ -290,7 +315,13 @@ func (s *Server) detailData(ctx context.Context, id int64) (map[string]any, erro
+ 	if len(specs) > 0 {
+ 		latest = &specs[len(specs)-1]
+ 	}
+-	return map[string]any{"run": publicRun(run), "capabilities": s.runner.ActionCapabilities(run, latest), "latest_spec": latest, "spec_versions": specs, "approvals": approvals, "steps": steps, "artifacts": publicArtifacts, "reviews": reviews}, nil
++	data := map[string]any{"run": publicRun(run), "capabilities": s.runner.ActionCapabilities(run, latest), "latest_spec": latest, "spec_versions": specs, "approvals": approvals, "steps": steps, "artifacts": publicArtifacts, "reviews": reviews}
++	// An issue opened from the dashboard is authored by the bot or PAT user; the
++	// requester is recorded here.
++	if issue, ok, err := s.db.DashboardIssueByNumber(ctx, run.Repo, run.IssueNumber); err == nil && ok {
++		data["dashboard_issue"] = map[string]any{"requested_by": issue.Actor, "created_at": issue.CreatedAt}
++	}
++	return data, nil
+ }
+ 
+ func (s *Server) editSpec(w http.ResponseWriter, r *http.Request) {
+diff --git a/internal/server/issues.go b/internal/server/issues.go
+new file mode 100644
+index 0000000..5c3048a
+--- /dev/null
++++ b/internal/server/issues.go
+@@ -0,0 +1,348 @@
++package server
++
++import (
++	"context"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"net/http"
++	"net/url"
++	"regexp"
++	"strconv"
++	"strings"
++	"time"
++	"unicode"
++	"unicode/utf8"
++
++	"github.com/aryanpappu/patchbot/internal/github"
++	"github.com/aryanpappu/patchbot/internal/runner"
++	"github.com/aryanpappu/patchbot/internal/store"
++)
++
++const (
++	maxIssueTitleRunes = 256
++	maxIssueBodyBytes  = 64 << 10
++	// issuePendingGrace is how long a pending row is presumed to belong to a
++	// request still talking to GitHub; only an older row is reconciled by a retry.
++	issuePendingGrace = 2 * time.Minute
++	issueCallTimeout  = 90 * time.Second
++	// issueSearchPages bounds the marker search (100 issues per page).
++	issueSearchPages = 3
++)
++
++var issueKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{8,128}$`)
++
++// issueRequest is the POST /api/issues body. The run options mirror
++// POST /api/runs and are used only when start_run is true.
++type issueRequest struct {
++	Repo           string `json:"repo"`
++	Title          string `json:"title"`
++	Body           string `json:"body"`
++	StartRun       bool   `json:"start_run"`
++	IdempotencyKey string `json:"idempotency_key"`
++	Mode           string `json:"mode"`
++	Provider       string `json:"provider"`
++	Model          string `json:"model"`
++	RefineModel    string `json:"refine_model"`
++	CodeModel      string `json:"code_model"`
++	DryRun         bool   `json:"dry_run"`
++	MaxCostMicros  int64  `json:"max_cost_micros"`
++}
++
++func (in issueRequest) start(issue int64) startRequest {
++	return startRequest{Repo: in.Repo, Issue: issue, Mode: in.Mode, Provider: in.Provider, Model: in.Model, RefineModel: in.RefineModel, CodeModel: in.CodeModel, DryRun: in.DryRun, MaxCostMicros: in.MaxCostMicros}
++}
++
++// hash identifies the request content, so one key cannot be reused for a
++// different issue.
++func (in issueRequest) hash() string {
++	in.IdempotencyKey = ""
++	raw, _ := json.Marshal(in)
++	sum := sha256.Sum256(raw)
++	return hex.EncodeToString(sum[:])
++}
++
++type apiError struct {
++	status        int
++	kind, message string
++}
++
++// validIssueText rejects control characters other than newline and tab (and
++// those too when multiline is false) and anything that is not valid UTF-8.
++func validIssueText(value string, multiline bool) bool {
++	if !utf8.ValidString(value) {
++		return false
++	}
++	for _, r := range value {
++		if r == '\n' || r == '\t' {
++			if !multiline {
++				return false
++			}
++			continue
++		}
++		if unicode.IsControl(r) {
++			return false
++		}
++	}
++	return true
++}
++
++// normalize trims and validates in place, returning a client-safe message.
++func (s *Server) normalizeIssue(in *issueRequest) string {
++	in.Repo = strings.ToLower(strings.TrimSpace(in.Repo))
++	in.Title = strings.TrimSpace(in.Title)
++	in.Body = strings.TrimSpace(strings.ReplaceAll(in.Body, "\r\n", "\n"))
++	switch {
++	case !s.repoAllowed(in.Repo):
++		return "repository is not in the allowlist"
++	case !issueKeyPattern.MatchString(in.IdempotencyKey):
++		return "idempotency_key must be 8-128 letters, digits, '-' or '_'"
++	case utf8.RuneCountInString(in.Title) < 1 || utf8.RuneCountInString(in.Title) > maxIssueTitleRunes:
++		return "title must be 1-256 characters"
++	case len(in.Body) > maxIssueBodyBytes:
++		return "body must be at most 64 KiB"
++	case !validIssueText(in.Title, false) || !validIssueText(in.Body, true):
++		return "title and body may not contain control characters"
++	case github.HasPatchbotMarker(in.Title) || github.HasPatchbotMarker(in.Body):
++		return "title and body may not contain patchbot markers"
++	}
++	if in.StartRun {
++		if message := s.validStartOptions(in.start(1)); message != "" {
++			return message
++		}
++	}
++	return ""
++}
++
++func issueMarker(key string) string { return "<!-- patchbot:issue-created v1 key=" + key + " -->" }
++
++// issueBody is the user's text, a visible footer naming the dashboard actor
++// (GitHub shows only the bot or PAT user) and the hidden marker that lets a
++// retry find the issue after a crash.
++func issueBody(body, actor, key string) string {
++	clean := strings.Map(func(r rune) rune {
++		if r == '`' || unicode.IsControl(r) {
++			return -1
++		}
++		return r
++	}, actor)
++	if len(clean) > 200 {
++		clean = clean[:200]
++	}
++	footer := "---\n_Created from the patchbot dashboard by `" + clean + "`. Nothing runs until the specification is approved._\n" + issueMarker(key)
++	if body == "" {
++		return footer
++	}
++	return body + "\n\n" + footer
++}
++
++// notCreated reports whether a failed GitHub call certainly created nothing:
++// no request was sent, or GitHub answered with a 4xx.
++func notCreated(err error) bool {
++	if errors.Is(err, github.ErrCredentialUnavailable) {
++		return true
++	}
++	var mint *github.MintError
++	if errors.As(err, &mint) {
++		return true
++	}
++	var api *github.APIError
++	return errors.As(err, &api) && api.StatusCode >= 400 && api.StatusCode < 500
++}
++
++// githubIssueError maps a failed create to a fixed message: neither a token nor
++// GitHub's response text is ever relayed. A GitHub 401 is not returned as 401,
++// which the dashboard would read as "sign in again".
++func githubIssueError(err error) apiError {
++	var limited *github.ErrRateLimited
++	var api *github.APIError
++	switch {
++	case errors.As(err, &limited):
++		return apiError{http.StatusTooManyRequests, "github_rate_limited", "GitHub rate limit reached; try again later"}
++	case errors.As(err, &api) && api.StatusCode == http.StatusGone:
++		return apiError{http.StatusUnprocessableEntity, "issues_disabled", "issues are disabled for this repository"}
++	case errors.As(err, &api) && (api.StatusCode == http.StatusUnauthorized || api.StatusCode == http.StatusForbidden || api.StatusCode == http.StatusNotFound):
++		return apiError{http.StatusForbidden, "github_permission_denied", "GitHub refused to create the issue: the token or App needs Issues write permission on this repository"}
++	case errors.As(err, &api) && api.StatusCode == http.StatusUnprocessableEntity:
++		return apiError{http.StatusUnprocessableEntity, "github_rejected", "GitHub rejected the issue content"}
++	default:
++		return apiError{http.StatusBadGateway, "github_unavailable", "could not reach GitHub to create the issue"}
++	}
++}
++
++var errIssueUnknown = apiError{http.StatusBadGateway, "issue_state_unknown", "the issue may have been created; check the repository on GitHub, then retry with the same idempotency key"}
++
++func issueURL(repo string, issue github.Issue) string {
++	if u, err := url.Parse(issue.HTMLURL); err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil {
++		return u.String()
++	}
++	return "https://github.com/" + repo + "/issues/" + strconv.Itoa(issue.Number)
++}
++
++func (s *Server) pendingGrace() time.Duration {
++	if s.issueGrace > 0 {
++		return s.issueGrace
++	}
++	return issuePendingGrace
++}
++
++func (s *Server) createIssue(w http.ResponseWriter, r *http.Request) {
++	if !s.method(w, r, http.MethodPost) {
++		return
++	}
++	var in issueRequest
++	if !s.decode(w, r, &in, false) {
++		return
++	}
++	if message := s.normalizeIssue(&in); message != "" {
++		s.writeError(w, http.StatusBadRequest, "invalid_request", message)
++		return
++	}
++	writer, err := s.runner.IssueWriter()
++	if err != nil {
++		if errors.Is(err, runner.ErrGitHubNotConnected) {
++			s.respondError(w, err)
++		} else {
++			s.writeError(w, http.StatusNotImplemented, "not_supported", "this GitHub client cannot create issues")
++		}
++		return
++	}
++	actor := s.actor(r)
++	// The GitHub call and its bookkeeping outlive a client that disconnects:
++	// abandoning them midway is exactly the crash window the pending row covers.
++	work, cancel := context.WithTimeout(context.WithoutCancel(runner.WithActor(r.Context(), actor)), issueCallTimeout)
++	defer cancel()
++	row, inserted, err := s.db.BeginDashboardIssue(work, store.DashboardIssue{IdempotencyKey: in.IdempotencyKey, RequestHash: in.hash(), Repo: in.Repo, Actor: actor, CreatedAt: time.Now()})
++	if err != nil {
++		s.respondError(w, err)
++		return
++	}
++	if row.RequestHash != in.hash() || row.Repo != in.Repo {
++		s.writeError(w, http.StatusUnprocessableEntity, "idempotency_conflict", "this idempotency key was already used for a different request")
++		return
++	}
++	created := inserted
++	if row.Pending {
++		var failure *apiError
++		row, created, failure = s.ensureIssue(work, writer, row, inserted, in)
++		if failure != nil {
++			s.writeError(w, failure.status, failure.kind, failure.message)
++			return
++		}
++	}
++	response := map[string]any{"issue": issueView(row, created)}
++	status := http.StatusOK
++	if created {
++		status = http.StatusCreated
++	}
++	if in.StartRun {
++		run, err := s.issueRun(r.Context(), work, row, in)
++		if run.ID > 0 {
++			response["run"] = publicRun(run)
++			w.Header().Set("Location", fmt.Sprintf("/api/runs/%d", run.ID))
++		}
++		if err != nil && run.ID == 0 {
++			// The issue exists; a retry with the same key resumes at the run.
++			code, kind, message := errorEnvelope(err)
++			response["error"] = map[string]string{"kind": kind, "message": message}
++			s.writeJSON(w, code, response)
++			return
++		}
++	}
++	s.writeJSON(w, status, response)
++}
++
++func issueView(row store.DashboardIssue, created bool) map[string]any {
++	return map[string]any{"repo": row.Repo, "number": row.Number, "node_id": row.NodeID, "html_url": row.URL, "requested_by": row.Actor, "created": created}
++}
++
++// ensureIssue turns a pending row into a created issue. A fresh row creates the
++// issue. A row left by an earlier request is first reconciled: the hidden marker
++// is searched for, and only a complete search that finds nothing may create.
++func (s *Server) ensureIssue(ctx context.Context, writer github.IssueWriter, row store.DashboardIssue, fresh bool, in issueRequest) (store.DashboardIssue, bool, *apiError) {
++	repo := github.RepoRef{Owner: strings.SplitN(row.Repo, "/", 2)[0], Name: strings.SplitN(row.Repo, "/", 2)[1]}
++	fail := func(e apiError) (store.DashboardIssue, bool, *apiError) { return row, false, &e }
++	if !fresh {
++		claimed, err := s.db.ClaimPendingDashboardIssue(ctx, row.IdempotencyKey, time.Now().Add(-s.pendingGrace()), time.Now())
++		if err != nil {
++			return fail(apiError{http.StatusInternalServerError, "internal", "could not complete request"})
++		}
++		if !claimed {
++			return fail(apiError{http.StatusConflict, "issue_creation_in_progress", "a request with this idempotency key is still in progress; retry in a minute"})
++		}
++		found, err := s.findIssueByMarker(ctx, writer, repo, row)
++		if err != nil {
++			return fail(errIssueUnknown)
++		}
++		if found != nil {
++			return s.completeIssue(ctx, row, *found, false)
++		}
++	}
++	issue, err := writer.CreateIssue(ctx, repo, github.NewIssue{Title: in.Title, Body: issueBody(in.Body, row.Actor, row.IdempotencyKey)})
++	if err != nil {
++		if notCreated(err) {
++			// Nothing was created, so the same key may be submitted again.
++			_ = s.db.DeletePendingDashboardIssue(ctx, row.IdempotencyKey)
++			return fail(githubIssueError(err))
++		}
++		return fail(errIssueUnknown)
++	}
++	return s.completeIssue(ctx, row, issue, true)
++}
++
++func (s *Server) completeIssue(ctx context.Context, row store.DashboardIssue, issue github.Issue, created bool) (store.DashboardIssue, bool, *apiError) {
++	url := issueURL(row.Repo, issue)
++	if err := s.db.CompleteDashboardIssue(ctx, row.IdempotencyKey, int64(issue.Number), issue.NodeID, url, time.Now()); err != nil {
++		// The issue exists but could not be recorded: leave the row pending so a
++		// retry finds it by marker instead of creating another.
++		return row, false, &errIssueUnknown
++	}
++	row.Pending, row.Number, row.NodeID, row.URL = false, int64(issue.Number), issue.NodeID, url
++	return row, created, nil
++}
++
++// findIssueByMarker lists recent issues of any state looking for this key's
++// marker at the end of a body. A search that cannot cover every candidate is an
++// error, never "not found".
++func (s *Server) findIssueByMarker(ctx context.Context, writer github.IssueWriter, repo github.RepoRef, row store.DashboardIssue) (*github.Issue, error) {
++	marker := issueMarker(row.IdempotencyKey)
++	since := row.CreatedAt.Add(-time.Minute)
++	for page := 1; page <= issueSearchPages; page++ {
++		issues, err := writer.ListIssuesSince(ctx, repo, since, page)
++		if err != nil {
++			return nil, err
++		}
++		for i := range issues {
++			if !issues[i].IsPullRequest && strings.HasSuffix(strings.TrimSpace(issues[i].Body), marker) {
++				return &issues[i], nil
++			}
++		}
++		if len(issues) < 100 {
++			return nil, nil
++		}
++	}
++	return nil, errors.New("issue search incomplete")
++}
++
++// issueRun starts (or finds) the run for a created issue through the same start
++// path as POST /api/runs. Creating an issue never approves anything: the run
++// stops at awaiting_approval like any other.
++func (s *Server) issueRun(ctx, work context.Context, row store.DashboardIssue, in issueRequest) (store.Run, error) {
++	if row.RunID > 0 {
++		return s.db.GetRun(work, row.RunID)
++	}
++	// A crash after the run was created but before it was linked must not start
++	// a second run: any run on this brand-new issue is ours.
++	if page, err := s.db.ListRuns(work, store.RunFilter{Repo: row.Repo, IssueNumber: row.Number, Limit: 1}); err == nil && len(page.Runs) > 0 {
++		_ = s.db.SetDashboardIssueRun(work, row.IdempotencyKey, page.Runs[0].ID)
++		return page.Runs[0], nil
++	}
++	ctx = runner.WithActor(ctx, row.Actor)
++	run, err := s.startRun(ctx, in.start(row.Number))
++	if run.ID > 0 {
++		_ = s.db.SetDashboardIssueRun(work, row.IdempotencyKey, run.ID)
++	}
++	return run, err
++}
+diff --git a/internal/server/issues_test.go b/internal/server/issues_test.go
+new file mode 100644
+index 0000000..2437770
+--- /dev/null
++++ b/internal/server/issues_test.go
+@@ -0,0 +1,530 @@
++package server
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"strconv"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/aryanpappu/patchbot/internal/github"
++	"github.com/aryanpappu/patchbot/internal/llm/fake"
++	"github.com/aryanpappu/patchbot/internal/secret"
++	"github.com/aryanpappu/patchbot/internal/store"
++)
++
++// issueGitHub is a fake GitHub that can also open and list issues.
++type issueGitHub struct {
++	*fakeGitHub
++	imu    sync.Mutex
++	issues []github.Issue
++	// createErr fails CreateIssue before anything is created.
++	createErr error
++	// lostReply creates the issue but reports a transport failure (the crash window).
++	lostReply bool
++	listErr   error
++	lists     int
++	attempts  int
++}
++
++func newIssueGitHub() *issueGitHub { return &issueGitHub{fakeGitHub: &fakeGitHub{}} }
++
++func (g *issueGitHub) CreateIssue(_ context.Context, repo github.RepoRef, in github.NewIssue) (github.Issue, error) {
++	g.imu.Lock()
++	defer g.imu.Unlock()
++	g.attempts++
++	if g.createErr != nil {
++		return github.Issue{}, g.createErr
++	}
++	n := len(g.issues) + 1
++	issue := github.Issue{Number: n, NodeID: "I_node" + strconv.Itoa(n), Title: in.Title, Body: in.Body, State: "open",
++		HTMLURL: "https://github.com/" + repo.Owner + "/" + repo.Name + "/issues/" + strconv.Itoa(n)}
++	g.issues = append(g.issues, issue)
++	if g.lostReply {
++		return github.Issue{}, errors.New("CreateIssue: API request failed")
++	}
++	return issue, nil
++}
++
++func (g *issueGitHub) ListIssuesSince(_ context.Context, _ github.RepoRef, _ time.Time, page int) ([]github.Issue, error) {
++	g.imu.Lock()
++	defer g.imu.Unlock()
++	g.lists++
++	if g.listErr != nil {
++		return nil, g.listErr
++	}
++	if page > 1 {
++		return nil, nil
++	}
++	out := make([]github.Issue, 0, len(g.issues))
++	for i := len(g.issues) - 1; i >= 0; i-- {
++		out = append(out, g.issues[i])
++	}
++	return out, nil
++}
++
++func (g *issueGitHub) GetIssue(_ context.Context, _ github.RepoRef, n int) (github.Issue, error) {
++	g.imu.Lock()
++	defer g.imu.Unlock()
++	if n < 1 || n > len(g.issues) {
++		return github.Issue{}, &github.ErrNotFound{APIError: github.APIError{StatusCode: 404, Message: "Not Found"}}
++	}
++	return g.issues[n-1], nil
++}
++
++func (g *issueGitHub) count() int {
++	g.imu.Lock()
++	defer g.imu.Unlock()
++	return len(g.issues)
++}
++
++func newIssueFixture(t *testing.T, p *fake.Provider) (*fixture, *issueGitHub) {
++	t.Helper()
++	g := newIssueGitHub()
++	f := newFixture(t, p, func(o *Options) { o.Runner.GitHub = g })
++	f.gh = g.fakeGitHub
++	return f, g
++}
++
++const goodKey = "0b0f4a52-7a38-4a54-9d1e-5d0c8a1f3c11"
++
++func issueJSON(t *testing.T, fields map[string]any) string {
++	t.Helper()
++	body := map[string]any{"repo": "owner/repo", "title": "Add dark mode", "body": "Please add a dark theme.", "idempotency_key": goodKey}
++	for k, v := range fields {
++		if v == nil {
++			delete(body, k)
++		} else {
++			body[k] = v
++		}
++	}
++	raw, err := json.Marshal(body)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return string(raw)
++}
++
++type issueResponse struct {
++	Issue struct {
++		Repo        string `json:"repo"`
++		Number      int64  `json:"number"`
++		NodeID      string `json:"node_id"`
++		HTMLURL     string `json:"html_url"`
++		RequestedBy string `json:"requested_by"`
++		Created     bool   `json:"created"`
++	} `json:"issue"`
++	Run   *store.Run `json:"run"`
++	Error struct{ Kind, Message string }
++}
++
++func decodeIssue(t *testing.T, w *httptest.ResponseRecorder) issueResponse {
++	t.Helper()
++	var out issueResponse
++	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
++		t.Fatalf("bad JSON %q: %v", w.Body.String(), err)
++	}
++	return out
++}
++
++func TestCreateIssueWritesMarkerFooterAndRecordsActor(t *testing.T) {
++	f, g := newIssueFixture(t, nil)
++	w := f.request("POST", "/api/issues", issueJSON(t, nil))
++	requireStatus(t, w, http.StatusCreated)
++	out := decodeIssue(t, w)
++	if out.Issue.Number != 1 || out.Issue.NodeID != "I_node1" || !out.Issue.Created || out.Issue.RequestedBy != "operator" || out.Run != nil {
++		t.Fatalf("response: %+v", out)
++	}
++	if out.Issue.HTMLURL != "https://github.com/owner/repo/issues/1" {
++		t.Fatalf("url %q", out.Issue.HTMLURL)
++	}
++	if g.count() != 1 {
++		t.Fatalf("issues created: %d", g.count())
++	}
++	issue := g.issues[0]
++	marker := "<!-- patchbot:issue-created v1 key=" + goodKey + " -->"
++	if issue.Title != "Add dark mode" || !strings.HasPrefix(issue.Body, "Please add a dark theme.") || !strings.HasSuffix(issue.Body, marker) ||
++		!strings.Contains(issue.Body, "Created from the patchbot dashboard by `operator`") {
++		t.Fatalf("issue content: %q", issue.Body)
++	}
++	row, err := f.db.DashboardIssue(t.Context(), goodKey)
++	if err != nil || row.Pending || row.Number != 1 || row.NodeID != "I_node1" || row.Actor != "operator" || row.Repo != "owner/repo" || row.RunID != 0 {
++		t.Fatalf("row: %+v %v", row, err)
++	}
++	if byNumber, ok, err := f.db.DashboardIssueByNumber(t.Context(), "owner/repo", 1); err != nil || !ok || byNumber.IdempotencyKey != goodKey {
++		t.Fatalf("lookup by number: %+v %v %v", byNumber, ok, err)
++	}
++	if !github.HasPatchbotMarker(issue.Body) {
++		t.Fatal("issue body must carry the patchbot marker")
++	}
++}
++
++func TestCreateIssueIsIdempotent(t *testing.T) {
++	f, g := newIssueFixture(t, nil)
++	first := decodeIssue(t, f.request("POST", "/api/issues", issueJSON(t, nil)))
++	w := f.request("POST", "/api/issues", issueJSON(t, nil))
++	requireStatus(t, w, http.StatusOK)
++	second := decodeIssue(t, w)
++	if second.Issue.Number != first.Issue.Number || second.Issue.Created || g.count() != 1 || g.attempts != 1 {
++		t.Fatalf("retry created again: %+v attempts=%d", second, g.attempts)
++	}
++	// The same key with different content is refused, not silently reused.
++	w = f.request("POST", "/api/issues", issueJSON(t, map[string]any{"title": "Something else"}))
++	requireStatus(t, w, http.StatusUnprocessableEntity)
++	if decodeIssue(t, w).Error.Kind != "idempotency_conflict" || g.count() != 1 {
++		t.Fatal("conflicting reuse of a key")
++	}
++	// A different key opens a different issue.
++	w = f.request("POST", "/api/issues", issueJSON(t, map[string]any{"idempotency_key": "another-key-1234"}))
++	requireStatus(t, w, http.StatusCreated)
++	if g.count() != 2 {
++		t.Fatal("second key should create a second issue")
++	}
++}
++
++func TestCreateIssueConcurrentSameKeyCreatesOnce(t *testing.T) {
++	f, g := newIssueFixture(t, nil)
++	var wg sync.WaitGroup
++	codes := make(chan int, 6)
++	for range 6 {
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			codes <- f.request("POST", "/api/issues", issueJSON(t, nil)).Code
++		}()
++	}
++	wg.Wait()
++	close(codes)
++	for code := range codes {
++		if code != 200 && code != 201 && code != 409 {
++			t.Fatalf("unexpected status %d", code)
++		}
++	}
++	if g.count() != 1 {
++		t.Fatalf("created %d issues", g.count())
++	}
++}
++
++func TestCreateIssueCrashWindowRecoversByMarker(t *testing.T) {
++	f, g := newIssueFixture(t, nil)
++	g.lostReply = true
++	w := f.request("POST", "/api/issues", issueJSON(t, nil))
++	requireStatus(t, w, http.StatusBadGateway)
++	if decodeIssue(t, w).Error.Kind != "issue_state_unknown" {
++		t.Fatalf("body: %s", w.Body.String())
++	}
++	row, err := f.db.DashboardIssue(t.Context(), goodKey)
++	if err != nil || !row.Pending {
++		t.Fatalf("expected a pending row: %+v %v", row, err)
++	}
++	g.lostReply = false
++	// While the first request may still be in flight a retry must wait.
++	w = f.request("POST", "/api/issues", issueJSON(t, nil))
++	requireStatus(t, w, http.StatusConflict)
++	if decodeIssue(t, w).Error.Kind != "issue_creation_in_progress" || g.count() != 1 {
++		t.Fatalf("early retry: %s", w.Body.String())
++	}
++	f.server.issueGrace = time.Millisecond
++	time.Sleep(5 * time.Millisecond)
++	w = f.request("POST", "/api/issues", issueJSON(t, nil))
++	requireStatus(t, w, http.StatusOK)
++	out := decodeIssue(t, w)
++	if out.Issue.Number != 1 || out.Issue.Created || g.count() != 1 {
++		t.Fatalf("recovery created a duplicate: %+v count=%d", out, g.count())
++	}
++	if row, _ := f.db.DashboardIssue(t.Context(), goodKey); row.Pending || row.Number != 1 || row.NodeID != "I_node1" {
++		t.Fatalf("row not completed: %+v", row)
++	}
++}
++
++func TestCreateIssueCrashWindowCreatesWhenSearchFindsNothing(t *testing.T) {
++	f, g := newIssueFixture(t, nil)
++	g.createErr = &github.APIError{StatusCode: 502, Message: "bad gateway"}
++	requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, nil)), http.StatusBadGateway)
++	g.createErr = nil
++	f.server.issueGrace = time.Millisecond
++	time.Sleep(5 * time.Millisecond)
++	requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, nil)), http.StatusCreated)
++	if g.count() != 1 || g.lists == 0 {
++		t.Fatalf("count=%d lists=%d", g.count(), g.lists)
++	}
++}
++
++func TestCreateIssueUnverifiableRecoveryNeverCreates(t *testing.T) {
++	f, g := newIssueFixture(t, nil)
++	g.lostReply = true
++	requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, nil)), http.StatusBadGateway)
++	g.lostReply, g.listErr = false, errors.New("list failed")
++	f.server.issueGrace = time.Millisecond
++	time.Sleep(5 * time.Millisecond)
++	w := f.request("POST", "/api/issues", issueJSON(t, nil))
++	requireStatus(t, w, http.StatusBadGateway)
++	if decodeIssue(t, w).Error.Kind != "issue_state_unknown" || g.attempts != 1 {
++		t.Fatalf("a failed search must not create: attempts=%d %s", g.attempts, w.Body.String())
++	}
++}
++
++func TestCreateIssueStartRunUsesRunPathAndNeverApproves(t *testing.T) {
++	f, g := newIssueFixture(t, fake.New("anthropic", specStep()))
++	f.withRepo()
++	w := f.request("POST", "/api/issues", issueJSON(t, map[string]any{"start_run": true, "mode": "refine", "dry_run": true}))
++	requireStatus(t, w, http.StatusCreated)
++	out := decodeIssue(t, w)
++	if out.Run == nil || out.Run.IssueNumber != out.Issue.Number || out.Run.Repo != "owner/repo" {
++		t.Fatalf("run: %s", w.Body.String())
++	}
++	if w.Header().Get("Location") != fmt.Sprintf("/api/runs/%d", out.Run.ID) {
++		t.Fatalf("location %q", w.Header().Get("Location"))
++	}
++	waiting := f.waitFor(out.Run.ID, store.StatusAwaitingApproval)
++	if waiting.Trigger != "ui" || waiting.Mode != "refine" || !waiting.DryRun {
++		t.Fatalf("run not started like POST /api/runs: %+v", waiting)
++	}
++	if approvals, err := f.db.ListApprovals(t.Context(), out.Run.ID); err != nil || len(approvals) != 0 {
++		t.Fatalf("creating an issue must not approve: %+v %v", approvals, err)
++	}
++	row, _ := f.db.DashboardIssue(t.Context(), goodKey)
++	if row.RunID != out.Run.ID {
++		t.Fatalf("run not linked: %+v", row)
++	}
++	// Retry: same issue, same run, no second run.
++	w = f.request("POST", "/api/issues", issueJSON(t, map[string]any{"start_run": true, "mode": "refine", "dry_run": true}))
++	requireStatus(t, w, http.StatusOK)
++	again := decodeIssue(t, w)
++	if again.Run == nil || again.Run.ID != out.Run.ID || g.count() != 1 {
++		t.Fatalf("retry: %s", w.Body.String())
++	}
++	if page, _ := f.db.ListRuns(t.Context(), store.RunFilter{}); len(page.Runs) != 1 {
++		t.Fatalf("runs: %d", len(page.Runs))
++	}
++	// The run detail names the dashboard requester.
++	w = f.request("GET", fmt.Sprintf("/api/runs/%d", out.Run.ID), "")
++	requireStatus(t, w, 200)
++	if !strings.Contains(w.Body.String(), `"requested_by":"operator"`) {
++		t.Fatalf("detail lacks requester: %s", w.Body.String())
++	}
++}
++
++func TestCreateIssueResumesRunAfterEarlierRunFailure(t *testing.T) {
++	f, g := newIssueFixture(t, fake.New("anthropic", specStep()))
++	f.withRepo()
++	req := issueJSON(t, map[string]any{"start_run": true, "mode": "refine", "dry_run": true})
++	// Pre-create the row as if the first request died after the issue existed.
++	g.issues = append(g.issues, github.Issue{Number: 1, Title: "x", State: "open"})
++	in := issueRequest{Repo: "owner/repo", Title: "Add dark mode", Body: "Please add a dark theme.", StartRun: true, IdempotencyKey: goodKey, Mode: "refine", DryRun: true}
++	if _, _, err := f.db.BeginDashboardIssue(t.Context(), store.DashboardIssue{IdempotencyKey: goodKey, RequestHash: in.hash(), Repo: "owner/repo", Actor: "operator"}); err != nil {
++		t.Fatal(err)
++	}
++	if err := f.db.CompleteDashboardIssue(t.Context(), goodKey, 1, "I_node1", "https://github.com/owner/repo/issues/1", time.Now()); err != nil {
++		t.Fatal(err)
++	}
++	w := f.request("POST", "/api/issues", req)
++	requireStatus(t, w, http.StatusOK)
++	out := decodeIssue(t, w)
++	if out.Run == nil || out.Issue.Created || g.attempts != 0 {
++		t.Fatalf("resume: %s attempts=%d", w.Body.String(), g.attempts)
++	}
++	f.waitFor(out.Run.ID, store.StatusAwaitingApproval)
++}
++
++func TestCreateIssueRefusesNotAllowlistedRepo(t *testing.T) {
++	f, g := newIssueFixture(t, nil)
++	for _, repo := range []string{"other/repo", "", "owner/repo/extra", "../etc"} {
++		requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, map[string]any{"repo": repo})), http.StatusBadRequest)
++	}
++	if g.attempts != 0 {
++		t.Fatal("GitHub must not be called for a repo outside the allowlist")
++	}
++	if _, err := f.db.DashboardIssue(t.Context(), goodKey); !errors.Is(err, store.ErrNotFound) {
++		t.Fatalf("a row was recorded: %v", err)
++	}
++	// Case differences resolve like POST /api/runs.
++	requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, map[string]any{"repo": " Owner/Repo "})), http.StatusCreated)
++}
++
++func TestCreateIssueValidation(t *testing.T) {
++	f, g := newIssueFixture(t, nil)
++	long := strings.Repeat("é", 257)
++	for name, fields := range map[string]map[string]any{
++		"empty title":      {"title": "   "},
++		"missing title":    {"title": nil},
++		"long title":       {"title": long},
++		"title newline":    {"title": "a\nb"},
++		"title tab":        {"title": "a\tb"},
++		"control in title": {"title": "a\x07b"},
++		"nul in body":      {"body": "a\x00b"},
++		"escape in body":   {"body": "a\x1bb"},
++		"big body":         {"body": strings.Repeat("a", 64<<10+1)},
++		"marker in body":   {"body": "x <!--  PatchBot:issue-created -->"},
++		"marker in title":  {"title": "<!-- patchbot:x -->"},
++		"missing key":      {"idempotency_key": nil},
++		"short key":        {"idempotency_key": "abc"},
++		"odd key":          {"idempotency_key": "key with spaces!!"},
++		"unknown provider": {"start_run": true, "provider": "nope"},
++		"bad mode":         {"start_run": true, "mode": "yolo"},
++		"negative budget":  {"start_run": true, "max_cost_micros": -1},
++	} {
++		w := f.request("POST", "/api/issues", issueJSON(t, fields))
++		if w.Code != http.StatusBadRequest {
++			t.Errorf("%s: status %d: %s", name, w.Code, w.Body.String())
++		}
++	}
++	requireStatus(t, f.request("POST", "/api/issues", `{"repo":"owner/repo","title":"t","idempotency_key":"`+goodKey+`","unknown":1}`), http.StatusBadRequest)
++	requireStatus(t, f.request("POST", "/api/issues", `null`), http.StatusBadRequest)
++	if g.attempts != 0 {
++		t.Fatalf("invalid requests reached GitHub: %d", g.attempts)
++	}
++	// Boundaries are accepted: 256-rune title, 64 KiB body, tabs and newlines.
++	requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, map[string]any{"title": strings.Repeat("é", 256), "body": strings.Repeat("a", 64<<10), "idempotency_key": "boundary-key-1"})), http.StatusCreated)
++	requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, map[string]any{"body": "line1\n\tline2\r\nline3", "idempotency_key": "boundary-key-2"})), http.StatusCreated)
++	requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, map[string]any{"body": "", "idempotency_key": "boundary-key-3"})), http.StatusCreated)
++	if got := g.issues[2].Body; !strings.HasPrefix(got, "---\n") {
++		t.Fatalf("empty body: %q", got)
++	}
++	requireStatus(t, f.request("GET", "/api/issues", ""), http.StatusMethodNotAllowed)
++}
++
++func TestCreateIssueGitHubErrorsAreSafeAndRetryable(t *testing.T) {
++	leak := "ghp_" + testCredential + " raw GitHub body"
++	for name, tc := range map[string]struct {
++		err    error
++		status int
++		kind   string
++	}{
++		"forbidden":     {&github.ErrForbidden{APIError: github.APIError{StatusCode: 403, Message: leak}}, 403, "github_permission_denied"},
++		"unauthorized":  {&github.ErrUnauthorized{APIError: github.APIError{StatusCode: 401, Message: leak}}, 403, "github_permission_denied"},
++		"not found":     {&github.ErrNotFound{APIError: github.APIError{StatusCode: 404, Message: leak}}, 403, "github_permission_denied"},
++		"disabled":      {&github.APIError{StatusCode: 410, Message: leak}, 422, "issues_disabled"},
++		"validation":    {&github.ErrValidation{APIError: github.APIError{StatusCode: 422, Message: leak}}, 422, "github_rejected"},
++		"rate limited":  {&github.ErrRateLimited{APIError: github.APIError{StatusCode: 429, Message: leak}}, 429, "github_rate_limited"},
++		"no credential": {github.ErrCredentialUnavailable, 502, "github_unavailable"},
++	} {
++		t.Run(name, func(t *testing.T) {
++			f, g := newIssueFixture(t, nil)
++			g.createErr = tc.err
++			w := f.request("POST", "/api/issues", issueJSON(t, nil))
++			requireStatus(t, w, tc.status)
++			if decodeIssue(t, w).Error.Kind != tc.kind || strings.Contains(w.Body.String(), "raw GitHub body") || strings.Contains(w.Body.String(), "ghp_") {
++				t.Fatalf("response: %s", w.Body.String())
++			}
++			// Nothing was created, so the same key is free to retry immediately.
++			g.createErr = nil
++			requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, nil)), http.StatusCreated)
++			if g.count() != 1 {
++				t.Fatal("retry after a definite failure must create once")
++			}
++		})
++	}
++}
++
++func TestCreateIssueNotConnected(t *testing.T) {
++	f := newSetupFixture(t, setupUIToken, nil)
++	r := httptest.NewRequest("POST", "http://"+f.cfg.Server.Addr+"/api/issues", strings.NewReader(issueJSON(t, nil)))
++	r.Header.Set("Authorization", "Bearer "+setupUIToken)
++	w := httptest.NewRecorder()
++	f.server.ServeHTTP(w, r)
++	if w.Code != 409 || !strings.Contains(w.Body.String(), "github_not_connected") || !strings.Contains(w.Body.String(), "/setup/github") {
++		t.Fatalf("issue before connect: %d %s", w.Code, w.Body.String())
++	}
++	if _, err := f.db.DashboardIssue(t.Context(), goodKey); !errors.Is(err, store.ErrNotFound) {
++		t.Fatalf("a row was recorded: %v", err)
++	}
++}
++
++func TestCreateIssueUnsupportedClient(t *testing.T) {
++	f := newFixture(t, nil, nil)
++	requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, nil)), http.StatusNotImplemented)
++}
++
++func TestCreateIssueRequiresAuthAndSameOrigin(t *testing.T) {
++	g := newIssueGitHub()
++	f := newFixture(t, nil, func(o *Options) {
++		o.Token = secret.New("ui-secret-fixture-token")
++		o.Runner.GitHub = g
++	})
++	for _, auth := range []string{"", "Bearer wrong", "Basic " + f.token} {
++		r := httptest.NewRequest("POST", "http://"+f.cfg.Server.Addr+"/api/issues", strings.NewReader(issueJSON(t, nil)))
++		r.Header.Set("Authorization", auth)
++		w := httptest.NewRecorder()
++		f.server.ServeHTTP(w, r)
++		requireStatus(t, w, http.StatusUnauthorized)
++	}
++	r := httptest.NewRequest("POST", "http://"+f.cfg.Server.Addr+"/api/issues", strings.NewReader(issueJSON(t, nil)))
++	r.Header.Set("Authorization", "Bearer "+f.token)
++	r.Header.Set("Sec-Fetch-Site", "cross-site")
++	w := httptest.NewRecorder()
++	f.server.ServeHTTP(w, r)
++	if w.Code != http.StatusForbidden {
++		t.Fatalf("cross-site request: %d", w.Code)
++	}
++	if g.attempts != 0 {
++		t.Fatal("unauthenticated request reached GitHub")
++	}
++	f.gh = g.fakeGitHub
++	requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, nil)), http.StatusCreated)
++}
++
++func TestCreateIssueBodyLimit(t *testing.T) {
++	f, g := newIssueFixture(t, nil)
++	huge := `{"repo":"owner/repo","title":"t","body":"` + strings.Repeat("a", 2<<20) + `","idempotency_key":"` + goodKey + `"}`
++	requireStatus(t, f.request("POST", "/api/issues", huge), http.StatusRequestEntityTooLarge)
++	if g.attempts != 0 {
++		t.Fatal("oversized request reached GitHub")
++	}
++}
++
++func TestCreateIssueAccessModeRecordsEmail(t *testing.T) {
++	g := newIssueGitHub()
++	a := newAccessFixture(t, fake.New("anthropic", specStep()), func(o *Options) { o.Runner.GitHub = g })
++	a.gh = g.fakeGitHub
++	a.withRepo()
++	jwt := a.token(nil)
++	requireStatus(t, a.do("POST", "/api/issues", issueJSON(t, nil), ""), http.StatusUnauthorized)
++	w := a.do("POST", "/api/issues", issueJSON(t, map[string]any{"start_run": true, "mode": "refine", "dry_run": true}), jwt)
++	requireStatus(t, w, http.StatusCreated)
++	out := decodeIssue(t, w)
++	if out.Issue.RequestedBy != accessOwner || !strings.Contains(g.issues[0].Body, "`"+accessOwner+"`") {
++		t.Fatalf("actor not recorded: %s / %q", w.Body.String(), g.issues[0].Body)
++	}
++	row, _ := a.db.DashboardIssue(t.Context(), goodKey)
++	if row.Actor != accessOwner {
++		t.Fatalf("row actor %q", row.Actor)
++	}
++	a.waitFor(out.Run.ID, store.StatusAwaitingApproval)
++	actions, err := a.db.ListActions(t.Context(), out.Run.ID)
++	if err != nil || len(actions) == 0 {
++		t.Fatal(err)
++	}
++	for _, action := range actions {
++		if action.Actor != accessOwner || action.Channel != "ui" {
++			t.Fatalf("run action audit: %+v", action)
++		}
++	}
++}
++
++func TestCreateIssueHostileTextIsInertData(t *testing.T) {
++	f, g := newIssueFixture(t, nil)
++	payload := `<script>alert(1)</script><img src=x onerror=alert(1)>`
++	w := f.request("POST", "/api/issues", issueJSON(t, map[string]any{"title": payload, "body": payload}))
++	requireStatus(t, w, http.StatusCreated)
++	if !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") || w.Header().Get("X-Content-Type-Options") != "nosniff" {
++		t.Fatalf("headers: %v", w.Header())
++	}
++	if strings.Contains(w.Body.String(), "<script>") {
++		t.Fatalf("markup in response: %s", w.Body.String())
++	}
++	if g.issues[0].Title != payload || !strings.HasPrefix(g.issues[0].Body, payload+"\n\n---") {
++		t.Fatalf("sent to GitHub: %q / %q", g.issues[0].Title, g.issues[0].Body)
++	}
++	// The page shell never embeds issue text.
++	page := f.request("GET", "/runs/new", "")
++	if strings.Contains(page.Body.String(), "alert(1)") {
++		t.Fatal("issue text reached the page shell")
++	}
++}
+diff --git a/internal/server/json.go b/internal/server/json.go
+index ac018ea..743f41b 100644
+--- a/internal/server/json.go
++++ b/internal/server/json.go
+@@ -61,27 +61,33 @@ func (s *Server) writeError(w http.ResponseWriter, status int, kind, message str
+ }
+ 
+ func (s *Server) respondError(w http.ResponseWriter, err error) {
++	status, kind, message := errorEnvelope(err)
++	s.writeError(w, status, kind, message)
++}
++
++// errorEnvelope maps an internal error to a client-safe status, kind and message.
++func errorEnvelope(err error) (int, string, string) {
+ 	switch {
+ 	case errors.Is(err, errQueueFull):
+-		s.writeError(w, http.StatusTooManyRequests, "queue_full", errQueueFull.Error())
++		return http.StatusTooManyRequests, "queue_full", errQueueFull.Error()
+ 	case errors.Is(err, runner.ErrInvalidRequest):
+-		s.writeError(w, http.StatusBadRequest, "invalid_request", "invalid specification content or paths")
++		return http.StatusBadRequest, "invalid_request", "invalid specification content or paths"
+ 	case errors.Is(err, store.ErrNotFound):
+-		s.writeError(w, http.StatusNotFound, "not_found", "run or resource not found")
++		return http.StatusNotFound, "not_found", "run or resource not found"
+ 	case errors.Is(err, store.ErrActiveRunExists):
+-		s.writeError(w, http.StatusConflict, "active_run_exists", "an active run already exists for this issue")
++		return http.StatusConflict, "active_run_exists", "an active run already exists for this issue"
+ 	case errors.Is(err, store.ErrConflict), errors.Is(err, agent.ErrApprovalDenied):
+-		s.writeError(w, http.StatusConflict, "conflict", "action is not valid for the current run or specification")
++		return http.StatusConflict, "conflict", "action is not valid for the current run or specification"
+ 	case errors.Is(err, runner.ErrGitHubNotConnected):
+-		s.writeError(w, http.StatusConflict, "github_not_connected", err.Error())
++		return http.StatusConflict, "github_not_connected", err.Error()
+ 	case errors.Is(err, errShuttingDown):
+-		s.writeError(w, http.StatusServiceUnavailable, "unavailable", "server is shutting down")
++		return http.StatusServiceUnavailable, "unavailable", "server is shutting down"
+ 	case errors.Is(err, llm.ErrUnknownProvider):
+-		s.writeError(w, http.StatusBadRequest, "invalid_request", "unknown provider")
++		return http.StatusBadRequest, "invalid_request", "unknown provider"
+ 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+-		s.writeError(w, http.StatusRequestTimeout, "timeout", "request timed out")
++		return http.StatusRequestTimeout, "timeout", "request timed out"
+ 	default:
+-		s.writeError(w, http.StatusInternalServerError, "internal", "could not complete request")
++		return http.StatusInternalServerError, "internal", "could not complete request"
+ 	}
+ }
+ 
+diff --git a/internal/server/server.go b/internal/server/server.go
+index 0ed53a4..ce51421 100644
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -75,6 +75,8 @@ type Server struct {
+ 	// setup holds Connect GitHub states; setupMu serializes the callback.
+ 	setup   setupStates
+ 	setupMu sync.Mutex
++	// issueGrace overrides issuePendingGrace in tests when positive.
++	issueGrace time.Duration
+ }
+ 
+ // ValidateAddress refuses public or wildcard binds without a UI credential.
+diff --git a/internal/store/dashboard_issues.go b/internal/store/dashboard_issues.go
+new file mode 100644
+index 0000000..306ecfe
+--- /dev/null
++++ b/internal/store/dashboard_issues.go
+@@ -0,0 +1,125 @@
++package store
++
++import (
++	"context"
++	"errors"
++	"time"
++)
++
++// DashboardIssue records an issue created from the dashboard. Actor is the
++// dashboard user who asked; GitHub shows the bot or PAT user as the author.
++type DashboardIssue struct {
++	IdempotencyKey string
++	RequestHash    string
++	Repo           string
++	Actor          string
++	// Pending is true until GitHub confirmed the issue (Number is then zero).
++	Pending   bool
++	Number    int64
++	NodeID    string
++	URL       string
++	RunID     int64
++	CreatedAt time.Time
++	UpdatedAt time.Time
++}
++
++const dashboardIssueColumns = `idempotency_key,request_hash,repo,actor,state,coalesce(issue_number,0),issue_node_id,issue_url,coalesce(run_id,0),created_at,updated_at`
++
++func scanDashboardIssue(row interface{ Scan(...any) error }) (DashboardIssue, error) {
++	var d DashboardIssue
++	var state string
++	var created, updated int64
++	if err := row.Scan(&d.IdempotencyKey, &d.RequestHash, &d.Repo, &d.Actor, &state, &d.Number, &d.NodeID, &d.URL, &d.RunID, &created, &updated); err != nil {
++		return DashboardIssue{}, mapError(err)
++	}
++	d.Pending = state == "pending"
++	d.CreatedAt, d.UpdatedAt = time.UnixMilli(created).UTC(), time.UnixMilli(updated).UTC()
++	return d, nil
++}
++
++// BeginDashboardIssue inserts a pending row for the key. When the key already
++// exists nothing changes: the stored row is returned with inserted false.
++func (s *SQLite) BeginDashboardIssue(ctx context.Context, d DashboardIssue) (DashboardIssue, bool, error) {
++	if d.IdempotencyKey == "" || len(d.RequestHash) != 64 || d.Repo == "" || d.Actor == "" {
++		return DashboardIssue{}, false, errors.New("invalid dashboard issue")
++	}
++	now := timestamp(d.CreatedAt).UnixMilli()
++	res, err := s.db.ExecContext(ctx, `INSERT INTO dashboard_issues(idempotency_key,request_hash,repo,actor,state,created_at,updated_at)
++		VALUES(?,?,?,?,'pending',?,?) ON CONFLICT(idempotency_key) DO NOTHING`, d.IdempotencyKey, d.RequestHash, d.Repo, d.Actor, now, now)
++	if err != nil {
++		return DashboardIssue{}, false, mapError(err)
++	}
++	n, err := res.RowsAffected()
++	if err != nil {
++		return DashboardIssue{}, false, mapError(err)
++	}
++	got, err := s.DashboardIssue(ctx, d.IdempotencyKey)
++	return got, n == 1, err
++}
++
++// DashboardIssue returns the row for an idempotency key.
++func (s *SQLite) DashboardIssue(ctx context.Context, key string) (DashboardIssue, error) {
++	return scanDashboardIssue(s.db.QueryRowContext(ctx, `SELECT `+dashboardIssueColumns+` FROM dashboard_issues WHERE idempotency_key=?`, key))
++}
++
++// DashboardIssueByNumber finds the dashboard record of a GitHub issue, so an
++// issue patchbot opened itself is recognised and attributed to its requester.
++func (s *SQLite) DashboardIssueByNumber(ctx context.Context, repo string, number int64) (DashboardIssue, bool, error) {
++	d, err := scanDashboardIssue(s.db.QueryRowContext(ctx, `SELECT `+dashboardIssueColumns+` FROM dashboard_issues WHERE repo=? AND issue_number=?`, repo, number))
++	if errors.Is(err, ErrNotFound) {
++		return DashboardIssue{}, false, nil
++	}
++	return d, err == nil, err
++}
++
++// ClaimPendingDashboardIssue lets exactly one retry reconcile a pending row.
++// It succeeds only when the row is pending and untouched since staleBefore, so
++// a request that is still talking to GitHub is never raced.
++func (s *SQLite) ClaimPendingDashboardIssue(ctx context.Context, key string, staleBefore, now time.Time) (bool, error) {
++	res, err := s.db.ExecContext(ctx, `UPDATE dashboard_issues SET updated_at=? WHERE idempotency_key=? AND state='pending' AND updated_at<=?`,
++		timestamp(now).UnixMilli(), key, staleBefore.UnixMilli())
++	if err != nil {
++		return false, mapError(err)
++	}
++	n, err := res.RowsAffected()
++	return n == 1, mapError(err)
++}
++
++// CompleteDashboardIssue records the GitHub issue behind a pending row. A
++// repeat with the same issue number succeeds; a different number conflicts.
++func (s *SQLite) CompleteDashboardIssue(ctx context.Context, key string, number int64, nodeID, url string, now time.Time) error {
++	if number <= 0 {
++		return errors.New("invalid issue number")
++	}
++	res, err := s.db.ExecContext(ctx, `UPDATE dashboard_issues SET state='created',issue_number=?,issue_node_id=?,issue_url=?,updated_at=?
++		WHERE idempotency_key=? AND (state='pending' OR issue_number=?)`, number, nodeID, url, timestamp(now).UnixMilli(), key, number)
++	if err != nil {
++		return mapError(err)
++	}
++	if n, _ := res.RowsAffected(); n != 1 {
++		return ErrConflict
++	}
++	return nil
++}
++
++// SetDashboardIssueRun links the run started for the issue.
++func (s *SQLite) SetDashboardIssueRun(ctx context.Context, key string, runID int64) error {
++	if runID <= 0 {
++		return errors.New("invalid run ID")
++	}
++	res, err := s.db.ExecContext(ctx, `UPDATE dashboard_issues SET run_id=? WHERE idempotency_key=? AND state='created' AND (run_id IS NULL OR run_id=?)`, runID, key, runID)
++	if err != nil {
++		return mapError(err)
++	}
++	if n, _ := res.RowsAffected(); n != 1 {
++		return ErrConflict
++	}
++	return nil
++}
++
++// DeletePendingDashboardIssue forgets a row whose GitHub call definitely did
++// not create an issue, so the same key can be submitted again.
++func (s *SQLite) DeletePendingDashboardIssue(ctx context.Context, key string) error {
++	_, err := s.db.ExecContext(ctx, `DELETE FROM dashboard_issues WHERE idempotency_key=? AND state='pending'`, key)
++	return mapError(err)
++}
+diff --git a/internal/store/dashboard_issues_test.go b/internal/store/dashboard_issues_test.go
+new file mode 100644
+index 0000000..c21bff4
+--- /dev/null
++++ b/internal/store/dashboard_issues_test.go
+@@ -0,0 +1,81 @@
++package store
++
++import (
++	"errors"
++	"strings"
++	"testing"
++	"time"
++)
++
++func TestDashboardIssueLifecycle(t *testing.T) {
++	t.Parallel()
++	s := openTestStore(t)
++	ctx := t.Context()
++	hash := strings.Repeat("a", 64)
++	d := DashboardIssue{IdempotencyKey: "key-12345678", RequestHash: hash, Repo: "owner/repo", Actor: "me@example.com", CreatedAt: time.Now().Add(-time.Hour)}
++	row, inserted, err := s.BeginDashboardIssue(ctx, d)
++	if err != nil || !inserted || !row.Pending || row.Number != 0 {
++		t.Fatalf("begin: %+v %v %v", row, inserted, err)
++	}
++	again, inserted, err := s.BeginDashboardIssue(ctx, d)
++	if err != nil || inserted || again.Actor != "me@example.com" {
++		t.Fatalf("second begin: %+v %v %v", again, inserted, err)
++	}
++	// A fresh pending row cannot be claimed; a stale one can, once at a time.
++	if ok, err := s.ClaimPendingDashboardIssue(ctx, d.IdempotencyKey, time.Now().Add(-2*time.Hour), time.Now()); err != nil || ok {
++		t.Fatalf("claimed a fresh row: %v %v", ok, err)
++	}
++	if ok, err := s.ClaimPendingDashboardIssue(ctx, d.IdempotencyKey, time.Now(), time.Now()); err != nil || !ok {
++		t.Fatalf("stale claim: %v %v", ok, err)
++	}
++	if ok, _ := s.ClaimPendingDashboardIssue(ctx, d.IdempotencyKey, time.Now().Add(-time.Minute), time.Now()); ok {
++		t.Fatal("a claimed row was claimed twice")
++	}
++	if err := s.SetDashboardIssueRun(ctx, d.IdempotencyKey, 5); !errors.Is(err, ErrConflict) {
++		t.Fatalf("run linked to a pending row: %v", err)
++	}
++	if err := s.CompleteDashboardIssue(ctx, d.IdempotencyKey, 7, "I_x", "https://github.com/owner/repo/issues/7", time.Now()); err != nil {
++		t.Fatal(err)
++	}
++	if err := s.CompleteDashboardIssue(ctx, d.IdempotencyKey, 7, "I_x", "u", time.Now()); err != nil {
++		t.Fatalf("idempotent completion: %v", err)
++	}
++	if err := s.CompleteDashboardIssue(ctx, d.IdempotencyKey, 8, "I_y", "u", time.Now()); !errors.Is(err, ErrConflict) {
++		t.Fatalf("completion changed the issue: %v", err)
++	}
++	if err := s.SetDashboardIssueRun(ctx, d.IdempotencyKey, 5); err != nil {
++		t.Fatal(err)
++	}
++	if err := s.SetDashboardIssueRun(ctx, d.IdempotencyKey, 6); !errors.Is(err, ErrConflict) {
++		t.Fatalf("run relinked: %v", err)
++	}
++	got, ok, err := s.DashboardIssueByNumber(ctx, "owner/repo", 7)
++	if err != nil || !ok || got.RunID != 5 || got.NodeID != "I_x" || got.Pending {
++		t.Fatalf("by number: %+v %v %v", got, ok, err)
++	}
++	if _, ok, err := s.DashboardIssueByNumber(ctx, "owner/repo", 99); err != nil || ok {
++		t.Fatalf("unknown issue: %v %v", ok, err)
++	}
++	// Created rows are never deleted; pending rows are.
++	if err := s.DeletePendingDashboardIssue(ctx, d.IdempotencyKey); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := s.DashboardIssue(ctx, d.IdempotencyKey); err != nil {
++		t.Fatalf("created row removed: %v", err)
++	}
++	p := DashboardIssue{IdempotencyKey: "key-87654321", RequestHash: hash, Repo: "owner/repo", Actor: "a"}
++	if _, _, err := s.BeginDashboardIssue(ctx, p); err != nil {
++		t.Fatal(err)
++	}
++	if err := s.DeletePendingDashboardIssue(ctx, p.IdempotencyKey); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := s.DashboardIssue(ctx, p.IdempotencyKey); !errors.Is(err, ErrNotFound) {
++		t.Fatalf("pending row survived: %v", err)
++	}
++	for _, bad := range []DashboardIssue{{}, {IdempotencyKey: "short", RequestHash: hash, Repo: "r", Actor: "a"}, {IdempotencyKey: "key-00000000", RequestHash: "x", Repo: "r", Actor: "a"}} {
++		if _, _, err := s.BeginDashboardIssue(ctx, bad); err == nil {
++			t.Fatalf("invalid row accepted: %+v", bad)
++		}
++	}
++}
+diff --git a/internal/store/migrations/0010_reserved_m24.sql b/internal/store/migrations/0010_reserved_m24.sql
+new file mode 100644
+index 0000000..ed7965e
+--- /dev/null
++++ b/internal/store/migrations/0010_reserved_m24.sql
+@@ -0,0 +1,3 @@
++-- Reserved for M24 (dashboard-managed repositories) so migration numbering stays
++-- contiguous while M26 is developed on its own branch. Intentionally empty.
++-- At merge, drop this file in favour of M24's real 0010 migration.
+diff --git a/internal/store/migrations/0011_dashboard_issues.sql b/internal/store/migrations/0011_dashboard_issues.sql
+new file mode 100644
+index 0000000..45c3f0c
+--- /dev/null
++++ b/internal/store/migrations/0011_dashboard_issues.sql
+@@ -0,0 +1,22 @@
++-- Issues created from the dashboard (M26). One row per client idempotency key.
++-- A row is inserted as 'pending' BEFORE GitHub is called, so a crash between
++-- the API call and the commit leaves evidence; a retry searches GitHub for the
++-- hidden marker (which embeds the key) before it may create another issue.
++-- actor is the dashboard user who asked (the GitHub author is the bot or PAT
++-- user). No foreign key on run_id: the record must outlive run cleanup.
++CREATE TABLE dashboard_issues (
++    id INTEGER PRIMARY KEY,
++    idempotency_key TEXT NOT NULL UNIQUE CHECK (length(idempotency_key) BETWEEN 8 AND 128),
++    request_hash TEXT NOT NULL CHECK (length(request_hash) = 64),
++    repo TEXT NOT NULL CHECK (length(repo) > 0),
++    actor TEXT NOT NULL CHECK (length(actor) > 0),
++    state TEXT NOT NULL CHECK (state IN ('pending', 'created')),
++    issue_number INTEGER CHECK (issue_number IS NULL OR issue_number > 0),
++    issue_node_id TEXT NOT NULL DEFAULT '',
++    issue_url TEXT NOT NULL DEFAULT '',
++    run_id INTEGER CHECK (run_id IS NULL OR run_id > 0),
++    created_at INTEGER NOT NULL CHECK (created_at >= 0),
++    updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
++    CHECK ((state = 'pending') = (issue_number IS NULL))
++) STRICT;
++CREATE UNIQUE INDEX dashboard_issues_issue ON dashboard_issues(repo, issue_number) WHERE issue_number IS NOT NULL;
+diff --git a/internal/store/store.go b/internal/store/store.go
+index a687660..3e45878 100644
+--- a/internal/store/store.go
++++ b/internal/store/store.go
+@@ -336,6 +336,15 @@ type Store interface {
+ 	// IsPostedComment reports whether patchbot recorded posting this comment.
+ 	IsPostedComment(ctx context.Context, commentID int64) (bool, error)
+ 
++	// Dashboard issues (M26): rows keyed by client idempotency key.
++	BeginDashboardIssue(context.Context, DashboardIssue) (DashboardIssue, bool, error)
++	DashboardIssue(ctx context.Context, key string) (DashboardIssue, error)
++	DashboardIssueByNumber(ctx context.Context, repo string, number int64) (DashboardIssue, bool, error)
++	ClaimPendingDashboardIssue(ctx context.Context, key string, staleBefore, now time.Time) (bool, error)
++	CompleteDashboardIssue(ctx context.Context, key string, number int64, nodeID, url string, now time.Time) error
++	SetDashboardIssueRun(ctx context.Context, key string, runID int64) error
++	DeletePendingDashboardIssue(ctx context.Context, key string) error
++
+ 	// GitHubApp returns the App created by the Connect GitHub flow, if any.
+ 	GitHubApp(context.Context) (GitHubApp, bool, error)
+ 	// SaveGitHubApp records it once; a second call returns ErrConflict.
+diff --git a/internal/web/assets/app.css b/internal/web/assets/app.css
+index d7cfb24..fe3624c 100644
+--- a/internal/web/assets/app.css
++++ b/internal/web/assets/app.css
+@@ -8,6 +8,7 @@ a { color: #246bc2; text-underline-offset: .2em; overflow-wrap: anywhere; }
+ button, input, select, textarea { font: inherit; padding: .55rem; border: 1px solid var(--edge); border-radius: .3rem; max-width: 100%; }
+ button { cursor: pointer; }
+ button:disabled { cursor: default; opacity: .55; }
++button[aria-pressed="true"] { border-color: var(--accent); border-width: 2px; font-weight: 700; }
+ :focus-visible { outline: 3px solid #bd7b00; outline-offset: 3px; }
+ .field { display: flex; flex-direction: column; gap: .25rem; margin: .8rem 0; flex: 1 1 13rem; min-width: 0; }
+ .field > span, legend { font-weight: 600; }
+diff --git a/internal/web/assets/app.js b/internal/web/assets/app.js
+index 307b62e..388c392 100644
+--- a/internal/web/assets/app.js
++++ b/internal/web/assets/app.js
+@@ -72,10 +72,13 @@
+       const query = new URLSearchParams(location.search);
+       const filters = reactive({ repo: query.get("repo") || "", issue: query.get("issue") || "", status: query.get("status") || "" });
+       const form = reactive({ repo: "", issue: "", mode: "fix", budget: "2", dry: true, provider: "", model: "", separate: false, refine: "" });
++      // "Write a new request" mode: key is the idempotency key of the current
++      // attempt; it changes only when the content does, so a retry is safe.
++      const draft = reactive({ write: false, title: "", body: "", start: true, key: "", print: "", created: null });
+       const memoryFilters = reactive({ repo: "", status: "pending" });
+       const memoryForm = reactive({ repo: "", text: "" });
+       let stopStream = null, refreshTimer = null, pollTimer = null, lastID = 0, modelRequest = 0;
+-      let refreshing = null, disposed = false;
++      let refreshing = null, disposed = false, redirectTimer = null;
+ 
+       function forgetToken() {
+         token = "";
+@@ -101,8 +104,9 @@
+         }
+         if (!response.ok) {
+           let message = `Request failed (${response.status}).`;
+-          try { const body = await response.json(); message = body.error?.message || message; } catch { /* Use status if the response is not JSON. */ }
+-          throw new Error(message);
++          let failure = null;
++          try { failure = await response.json(); message = failure.error?.message || message; } catch { /* Use status if the response is not JSON. */ }
++          throw Object.assign(new Error(message), { body: failure });
+         }
+         return plain ? response.text() : response.json();
+       }
+@@ -333,6 +337,43 @@
+           navigateRun(result.run);
+         });
+       }
++      const freshKey = () => {
++        if (window.crypto?.randomUUID) return window.crypto.randomUUID();
++        return Array.from(window.crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
++      };
++      function submitIssue(event) {
++        event.preventDefault();
++        void work(async () => {
++          const budget = Number(form.budget);
++          if (!draft.title.trim()) throw new Error("Enter a title.");
++          if (draft.start && (!Number.isFinite(budget) || budget <= 0 || !Number.isSafeInteger(Math.round(budget * 1000000)))) {
++            throw new Error("Enter a positive budget.");
++          }
++          const payload = { repo: form.repo, title: draft.title, body: draft.body, start_run: draft.start };
++          if (draft.start) {
++            Object.assign(payload, { mode: form.mode, provider: form.provider, code_model: form.model,
++              refine_model: form.separate ? form.refine : form.model, max_cost_micros: Math.round(budget * 1000000), dry_run: form.dry });
++          }
++          // Same content keeps the key, so pressing the button again after a
++          // timeout cannot open a second issue.
++          const print = JSON.stringify(payload);
++          if (print !== draft.print || !draft.key) { draft.key = freshKey(); draft.print = print; }
++          let result;
++          try { result = await send("/api/issues", { ...payload, idempotency_key: draft.key }); }
++          catch (error) {
++            // The issue can exist even when starting its run failed.
++            if (error.body?.issue) draft.created = error.body.issue;
++            throw error;
++          }
++          draft.created = result.issue;
++          s.notice = result.issue.created ? "Issue created." : "Issue already created for this request.";
++          draft.title = ""; draft.body = ""; draft.key = ""; draft.print = "";
++          if (result.run) {
++            const target = result.run;
++            redirectTimer = setTimeout(() => navigateRun(target), 1500);
++          }
++        });
++      }
+       function action(name, body = {}) {
+         if (!can(name) || s.busy) return;
+         void work(async () => {
+@@ -378,7 +419,15 @@
+         });
+       }
+       function newView() {
+-        return [h("h1", "New run"), h("form", { class: "panel", onSubmit: start }, [
++        return [h("h1", "New run"),
++          h("div", { class: "actions", role: "group", "aria-label": "Request type" }, [
++            h("button", { type: "button", "aria-pressed": String(!draft.write), onClick: () => { draft.write = false; } }, "Existing issue"),
++            h("button", { type: "button", "aria-pressed": String(draft.write), onClick: () => { draft.write = true; } }, "Write a new request")
++          ]),
++          draft.write ? requestForm() : existingForm()];
++      }
++      function existingForm() {
++        return h("form", { class: "panel", onSubmit: start }, [
+           field("Repository", select(form, "repo", s.repos.map(repo => [repo, repo]))),
+           field("Issue number", input(form, "issue", { type: "number", min: 1, step: 1, required: true })),
+           field("Mode", select(form, "mode", ["fix", "refine", "investigate"].map(mode => [mode, mode]))),
+@@ -386,7 +435,25 @@
+           field("Run budget (USD)", input(form, "budget", { type: "number", min: "0.000001", step: "0.000001", required: true })),
+           h("label", { class: "check" }, [h("input", { type: "checkbox", checked: form.dry, onChange: e => { form.dry = e.target.checked; } }), "Dry run — produce artifacts without publishing"]),
+           h("button", { type: "submit", disabled: s.busy || !s.repos.length || !form.provider }, "Start run")
+-        ])];
++        ]);
++      }
++      function requestForm() {
++        const made = draft.created;
++        return h("form", { class: "panel", onSubmit: submitIssue }, [
++          h("p", "patchbot opens a GitHub issue with this text and, if chosen, starts the refine step. Nothing changes in the repository until you approve the specification."),
++          field("Repository", select(form, "repo", s.repos.map(repo => [repo, repo]))),
++          field("Title", input(draft, "title", { required: true, maxlength: 256 })),
++          field("Request", area(draft, "body", { rows: 8, maxlength: 65536 })),
++          h("label", { class: "check" }, [h("input", { type: "checkbox", checked: draft.start, onChange: e => { draft.start = e.target.checked; } }), "Start refine now"]),
++          ...(draft.start ? [
++            field("Mode", select(form, "mode", ["fix", "refine"].map(mode => [mode, mode]))),
++            ...modelFields(true),
++            field("Run budget (USD)", input(form, "budget", { type: "number", min: "0.000001", step: "0.000001", required: true })),
++            h("label", { class: "check" }, [h("input", { type: "checkbox", checked: form.dry, onChange: e => { form.dry = e.target.checked; } }), "Dry run — produce artifacts without publishing"])
++          ] : []),
++          h("button", { type: "submit", disabled: s.busy || !s.repos.length || (draft.start && !form.provider) }, "Create issue"),
++          made ? h("p", { role: "status" }, [`Created ${made.repo} #${made.number}: `, link(made.html_url, "open on GitHub")]) : null
++        ]);
+       }
+       function listView() {
+         return [h("h1", "Runs"), h("p", { class: "badge" }, `Awaiting approval: ${s.awaiting == null ? "loading" : s.awaiting}`),
+@@ -524,7 +591,7 @@
+       onUnmounted(() => {
+         disposed = true;
+         if (stopStream) stopStream.abort();
+-        clearInterval(pollTimer); clearTimeout(refreshTimer);
++        clearInterval(pollTimer); clearTimeout(refreshTimer); clearTimeout(redirectTimer);
+       });
+       return () => h("div", [
+         s.error ? h("p", { class: "error", role: "alert" }, s.error) : null,
+diff --git a/internal/web/web_test.go b/internal/web/web_test.go
+index 716290a..fc50ba5 100644
+--- a/internal/web/web_test.go
++++ b/internal/web/web_test.go
+@@ -95,3 +95,36 @@ func TestVendoredVueMatchesIntegrity(t *testing.T) {
+ 		t.Fatalf("embedded Vue SRI: got %s, want %s", actual, VueIntegrity)
+ 	}
+ }
++
++// The request form renders user text only through value bindings and text
++// nodes, and links only through the validated link() helper.
++func TestWriteRequestFormUsesSafeSinks(t *testing.T) {
++	data, err := files.ReadFile("assets/app.js")
++	if err != nil {
++		t.Fatal(err)
++	}
++	js := string(data)
++	start := strings.Index(js, "function requestForm()")
++	end := strings.Index(js, "function listView()")
++	if start < 0 || end < start {
++		t.Fatal("requestForm not found")
++	}
++	form := js[start:end]
++	for _, want := range []string{`input(draft, "title"`, `area(draft, "body"`, "link(made.html_url", `"Create issue"`} {
++		if !strings.Contains(form, want) {
++			t.Errorf("request form lacks %q", want)
++		}
++	}
++	for _, bad := range []string{"innerHTML", "v-html", "href:", "template:"} {
++		if strings.Contains(form, bad) {
++			t.Errorf("request form uses %q", bad)
++		}
++	}
++	// The created-issue link must come from the server's https URL only through link().
++	if !strings.Contains(js, `["http:", "https:"].includes(parsed.protocol)`) {
++		t.Fatal("link helper protocol check missing")
++	}
++	if !strings.Contains(js, "/api/issues") || !strings.Contains(js, "idempotency_key") {
++		t.Fatal("form must post to /api/issues with an idempotency key")
++	}
++}
+
+exec
+/bin/zsh -lc 'nl -ba internal/server/issues.go' in /Users/pappumishra/Documents/selfproject/patchbot-m26-create-issue
+ succeeded in 0ms:
+     1	package server
+     2	
+     3	import (
+     4		"context"
+     5		"crypto/sha256"
+     6		"encoding/hex"
+     7		"encoding/json"
+     8		"errors"
+     9		"fmt"
+    10		"net/http"
+    11		"net/url"
+    12		"regexp"
+    13		"strconv"
+    14		"strings"
+    15		"time"
+    16		"unicode"
+    17		"unicode/utf8"
+    18	
+    19		"github.com/aryanpappu/patchbot/internal/github"
+    20		"github.com/aryanpappu/patchbot/internal/runner"
+    21		"github.com/aryanpappu/patchbot/internal/store"
+    22	)
+    23	
+    24	const (
+    25		maxIssueTitleRunes = 256
+    26		maxIssueBodyBytes  = 64 << 10
+    27		// issuePendingGrace is how long a pending row is presumed to belong to a
+    28		// request still talking to GitHub; only an older row is reconciled by a retry.
+    29		issuePendingGrace = 2 * time.Minute
+    30		issueCallTimeout  = 90 * time.Second
+    31		// issueSearchPages bounds the marker search (100 issues per page).
+    32		issueSearchPages = 3
+    33	)
+    34	
+    35	var issueKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{8,128}$`)
+    36	
+    37	// issueRequest is the POST /api/issues body. The run options mirror
+    38	// POST /api/runs and are used only when start_run is true.
+    39	type issueRequest struct {
+    40		Repo           string `json:"repo"`
+    41		Title          string `json:"title"`
+    42		Body           string `json:"body"`
+    43		StartRun       bool   `json:"start_run"`
+    44		IdempotencyKey string `json:"idempotency_key"`
+    45		Mode           string `json:"mode"`
+    46		Provider       string `json:"provider"`
+    47		Model          string `json:"model"`
+    48		RefineModel    string `json:"refine_model"`
+    49		CodeModel      string `json:"code_model"`
+    50		DryRun         bool   `json:"dry_run"`
+    51		MaxCostMicros  int64  `json:"max_cost_micros"`
+    52	}
+    53	
+    54	func (in issueRequest) start(issue int64) startRequest {
+    55		return startRequest{Repo: in.Repo, Issue: issue, Mode: in.Mode, Provider: in.Provider, Model: in.Model, RefineModel: in.RefineModel, CodeModel: in.CodeModel, DryRun: in.DryRun, MaxCostMicros: in.MaxCostMicros}
+    56	}
+    57	
+    58	// hash identifies the request content, so one key cannot be reused for a
+    59	// different issue.
+    60	func (in issueRequest) hash() string {
+    61		in.IdempotencyKey = ""
+    62		raw, _ := json.Marshal(in)
+    63		sum := sha256.Sum256(raw)
+    64		return hex.EncodeToString(sum[:])
+    65	}
+    66	
+    67	type apiError struct {
+    68		status        int
+    69		kind, message string
+    70	}
+    71	
+    72	// validIssueText rejects control characters other than newline and tab (and
+    73	// those too when multiline is false) and anything that is not valid UTF-8.
+    74	func validIssueText(value string, multiline bool) bool {
+    75		if !utf8.ValidString(value) {
+    76			return false
+    77		}
+    78		for _, r := range value {
+    79			if r == '\n' || r == '\t' {
+    80				if !multiline {
+    81					return false
+    82				}
+    83				continue
+    84			}
+    85			if unicode.IsControl(r) {
+    86				return false
+    87			}
+    88		}
+    89		return true
+    90	}
+    91	
+    92	// normalize trims and validates in place, returning a client-safe message.
+    93	func (s *Server) normalizeIssue(in *issueRequest) string {
+    94		in.Repo = strings.ToLower(strings.TrimSpace(in.Repo))
+    95		in.Title = strings.TrimSpace(in.Title)
+    96		in.Body = strings.TrimSpace(strings.ReplaceAll(in.Body, "\r\n", "\n"))
+    97		switch {
+    98		case !s.repoAllowed(in.Repo):
+    99			return "repository is not in the allowlist"
+   100		case !issueKeyPattern.MatchString(in.IdempotencyKey):
+   101			return "idempotency_key must be 8-128 letters, digits, '-' or '_'"
+   102		case utf8.RuneCountInString(in.Title) < 1 || utf8.RuneCountInString(in.Title) > maxIssueTitleRunes:
+   103			return "title must be 1-256 characters"
+   104		case len(in.Body) > maxIssueBodyBytes:
+   105			return "body must be at most 64 KiB"
+   106		case !validIssueText(in.Title, false) || !validIssueText(in.Body, true):
+   107			return "title and body may not contain control characters"
+   108		case github.HasPatchbotMarker(in.Title) || github.HasPatchbotMarker(in.Body):
+   109			return "title and body may not contain patchbot markers"
+   110		}
+   111		if in.StartRun {
+   112			if message := s.validStartOptions(in.start(1)); message != "" {
+   113				return message
+   114			}
+   115		}
+   116		return ""
+   117	}
+   118	
+   119	func issueMarker(key string) string { return "<!-- patchbot:issue-created v1 key=" + key + " -->" }
+   120	
+   121	// issueBody is the user's text, a visible footer naming the dashboard actor
+   122	// (GitHub shows only the bot or PAT user) and the hidden marker that lets a
+   123	// retry find the issue after a crash.
+   124	func issueBody(body, actor, key string) string {
+   125		clean := strings.Map(func(r rune) rune {
+   126			if r == '`' || unicode.IsControl(r) {
+   127				return -1
+   128			}
+   129			return r
+   130		}, actor)
+   131		if len(clean) > 200 {
+   132			clean = clean[:200]
+   133		}
+   134		footer := "---\n_Created from the patchbot dashboard by `" + clean + "`. Nothing runs until the specification is approved._\n" + issueMarker(key)
+   135		if body == "" {
+   136			return footer
+   137		}
+   138		return body + "\n\n" + footer
+   139	}
+   140	
+   141	// notCreated reports whether a failed GitHub call certainly created nothing:
+   142	// no request was sent, or GitHub answered with a 4xx.
+   143	func notCreated(err error) bool {
+   144		if errors.Is(err, github.ErrCredentialUnavailable) {
+   145			return true
+   146		}
+   147		var mint *github.MintError
+   148		if errors.As(err, &mint) {
+   149			return true
+   150		}
+   151		var api *github.APIError
+   152		return errors.As(err, &api) && api.StatusCode >= 400 && api.StatusCode < 500
+   153	}
+   154	
+   155	// githubIssueError maps a failed create to a fixed message: neither a token nor
+   156	// GitHub's response text is ever relayed. A GitHub 401 is not returned as 401,
+   157	// which the dashboard would read as "sign in again".
+   158	func githubIssueError(err error) apiError {
+   159		var limited *github.ErrRateLimited
+   160		var api *github.APIError
+   161		switch {
+   162		case errors.As(err, &limited):
+   163			return apiError{http.StatusTooManyRequests, "github_rate_limited", "GitHub rate limit reached; try again later"}
+   164		case errors.As(err, &api) && api.StatusCode == http.StatusGone:
+   165			return apiError{http.StatusUnprocessableEntity, "issues_disabled", "issues are disabled for this repository"}
+   166		case errors.As(err, &api) && (api.StatusCode == http.StatusUnauthorized || api.StatusCode == http.StatusForbidden || api.StatusCode == http.StatusNotFound):
+   167			return apiError{http.StatusForbidden, "github_permission_denied", "GitHub refused to create the issue: the token or App needs Issues write permission on this repository"}
+   168		case errors.As(err, &api) && api.StatusCode == http.StatusUnprocessableEntity:
+   169			return apiError{http.StatusUnprocessableEntity, "github_rejected", "GitHub rejected the issue content"}
+   170		default:
+   171			return apiError{http.StatusBadGateway, "github_unavailable", "could not reach GitHub to create the issue"}
+   172		}
+   173	}
+   174	
+   175	var errIssueUnknown = apiError{http.StatusBadGateway, "issue_state_unknown", "the issue may have been created; check the repository on GitHub, then retry with the same idempotency key"}
+   176	
+   177	func issueURL(repo string, issue github.Issue) string {
+   178		if u, err := url.Parse(issue.HTMLURL); err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil {
+   179			return u.String()
+   180		}
+   181		return "https://github.com/" + repo + "/issues/" + strconv.Itoa(issue.Number)
+   182	}
+   183	
+   184	func (s *Server) pendingGrace() time.Duration {
+   185		if s.issueGrace > 0 {
+   186			return s.issueGrace
+   187		}
+   188		return issuePendingGrace
+   189	}
+   190	
+   191	func (s *Server) createIssue(w http.ResponseWriter, r *http.Request) {
+   192		if !s.method(w, r, http.MethodPost) {
+   193			return
+   194		}
+   195		var in issueRequest
+   196		if !s.decode(w, r, &in, false) {
+   197			return
+   198		}
+   199		if message := s.normalizeIssue(&in); message != "" {
+   200			s.writeError(w, http.StatusBadRequest, "invalid_request", message)
+   201			return
+   202		}
+   203		writer, err := s.runner.IssueWriter()
+   204		if err != nil {
+   205			if errors.Is(err, runner.ErrGitHubNotConnected) {
+   206				s.respondError(w, err)
+   207			} else {
+   208				s.writeError(w, http.StatusNotImplemented, "not_supported", "this GitHub client cannot create issues")
+   209			}
+   210			return
+   211		}
+   212		actor := s.actor(r)
+   213		// The GitHub call and its bookkeeping outlive a client that disconnects:
+   214		// abandoning them midway is exactly the crash window the pending row covers.
+   215		work, cancel := context.WithTimeout(context.WithoutCancel(runner.WithActor(r.Context(), actor)), issueCallTimeout)
+   216		defer cancel()
+   217		row, inserted, err := s.db.BeginDashboardIssue(work, store.DashboardIssue{IdempotencyKey: in.IdempotencyKey, RequestHash: in.hash(), Repo: in.Repo, Actor: actor, CreatedAt: time.Now()})
+   218		if err != nil {
+   219			s.respondError(w, err)
+   220			return
+   221		}
+   222		if row.RequestHash != in.hash() || row.Repo != in.Repo {
+   223			s.writeError(w, http.StatusUnprocessableEntity, "idempotency_conflict", "this idempotency key was already used for a different request")
+   224			return
+   225		}
+   226		created := inserted
+   227		if row.Pending {
+   228			var failure *apiError
+   229			row, created, failure = s.ensureIssue(work, writer, row, inserted, in)
+   230			if failure != nil {
+   231				s.writeError(w, failure.status, failure.kind, failure.message)
+   232				return
+   233			}
+   234		}
+   235		response := map[string]any{"issue": issueView(row, created)}
+   236		status := http.StatusOK
+   237		if created {
+   238			status = http.StatusCreated
+   239		}
+   240		if in.StartRun {
+   241			run, err := s.issueRun(r.Context(), work, row, in)
+   242			if run.ID > 0 {
+   243				response["run"] = publicRun(run)
+   244				w.Header().Set("Location", fmt.Sprintf("/api/runs/%d", run.ID))
+   245			}
+   246			if err != nil && run.ID == 0 {
+   247				// The issue exists; a retry with the same key resumes at the run.
+   248				code, kind, message := errorEnvelope(err)
+   249				response["error"] = map[string]string{"kind": kind, "message": message}
+   250				s.writeJSON(w, code, response)
+   251				return
+   252			}
+   253		}
+   254		s.writeJSON(w, status, response)
+   255	}
+   256	
+   257	func issueView(row store.DashboardIssue, created bool) map[string]any {
+   258		return map[string]any{"repo": row.Repo, "number": row.Number, "node_id": row.NodeID, "html_url": row.URL, "requested_by": row.Actor, "created": created}
+   259	}
+   260	
+   261	// ensureIssue turns a pending row into a created issue. A fresh row creates the
+   262	// issue. A row left by an earlier request is first reconciled: the hidden marker
+   263	// is searched for, and only a complete search that finds nothing may create.
+   264	func (s *Server) ensureIssue(ctx context.Context, writer github.IssueWriter, row store.DashboardIssue, fresh bool, in issueRequest) (store.DashboardIssue, bool, *apiError) {
+   265		repo := github.RepoRef{Owner: strings.SplitN(row.Repo, "/", 2)[0], Name: strings.SplitN(row.Repo, "/", 2)[1]}
+   266		fail := func(e apiError) (store.DashboardIssue, bool, *apiError) { return row, false, &e }
+   267		if !fresh {
+   268			claimed, err := s.db.ClaimPendingDashboardIssue(ctx, row.IdempotencyKey, time.Now().Add(-s.pendingGrace()), time.Now())
+   269			if err != nil {
+   270				return fail(apiError{http.StatusInternalServerError, "internal", "could not complete request"})
+   271			}
+   272			if !claimed {
+   273				return fail(apiError{http.StatusConflict, "issue_creation_in_progress", "a request with this idempotency key is still in progress; retry in a minute"})
+   274			}
+   275			found, err := s.findIssueByMarker(ctx, writer, repo, row)
+   276			if err != nil {
+   277				return fail(errIssueUnknown)
+   278			}
+   279			if found != nil {
+   280				return s.completeIssue(ctx, row, *found, false)
+   281			}
+   282		}
+   283		issue, err := writer.CreateIssue(ctx, repo, github.NewIssue{Title: in.Title, Body: issueBody(in.Body, row.Actor, row.IdempotencyKey)})
+   284		if err != nil {
+   285			if notCreated(err) {
+   286				// Nothing was created, so the same key may be submitted again.
+   287				_ = s.db.DeletePendingDashboardIssue(ctx, row.IdempotencyKey)
+   288				return fail(githubIssueError(err))
+   289			}
+   290			return fail(errIssueUnknown)
+   291		}
+   292		return s.completeIssue(ctx, row, issue, true)
+   293	}
+   294	
+   295	func (s *Server) completeIssue(ctx context.Context, row store.DashboardIssue, issue github.Issue, created bool) (store.DashboardIssue, bool, *apiError) {
+   296		url := issueURL(row.Repo, issue)
+   297		if err := s.db.CompleteDashboardIssue(ctx, row.IdempotencyKey, int64(issue.Number), issue.NodeID, url, time.Now()); err != nil {
+   298			// The issue exists but could not be recorded: leave the row pending so a
+   299			// retry finds it by marker instead of creating another.
+   300			return row, false, &errIssueUnknown
+   301		}
+   302		row.Pending, row.Number, row.NodeID, row.URL = false, int64(issue.Number), issue.NodeID, url
+   303		return row, created, nil
+   304	}
+   305	
+   306	// findIssueByMarker lists recent issues of any state looking for this key's
+   307	// marker at the end of a body. A search that cannot cover every candidate is an
+   308	// error, never "not found".
+   309	func (s *Server) findIssueByMarker(ctx context.Context, writer github.IssueWriter, repo github.RepoRef, row store.DashboardIssue) (*github.Issue, error) {
+   310		marker := issueMarker(row.IdempotencyKey)
+   311		since := row.CreatedAt.Add(-time.Minute)
+   312		for page := 1; page <= issueSearchPages; page++ {
+   313			issues, err := writer.ListIssuesSince(ctx, repo, since, page)
+   314			if err != nil {
+   315				return nil, err
+   316			}
+   317			for i := range issues {
+   318				if !issues[i].IsPullRequest && strings.HasSuffix(strings.TrimSpace(issues[i].Body), marker) {
+   319					return &issues[i], nil
+   320				}
+   321			}
+   322			if len(issues) < 100 {
+   323				return nil, nil
+   324			}
+   325		}
+   326		return nil, errors.New("issue search incomplete")
+   327	}
+   328	
+   329	// issueRun starts (or finds) the run for a created issue through the same start
+   330	// path as POST /api/runs. Creating an issue never approves anything: the run
+   331	// stops at awaiting_approval like any other.
+   332	func (s *Server) issueRun(ctx, work context.Context, row store.DashboardIssue, in issueRequest) (store.Run, error) {
+   333		if row.RunID > 0 {
+   334			return s.db.GetRun(work, row.RunID)
+   335		}
+   336		// A crash after the run was created but before it was linked must not start
+   337		// a second run: any run on this brand-new issue is ours.
+   338		if page, err := s.db.ListRuns(work, store.RunFilter{Repo: row.Repo, IssueNumber: row.Number, Limit: 1}); err == nil && len(page.Runs) > 0 {
+   339			_ = s.db.SetDashboardIssueRun(work, row.IdempotencyKey, page.Runs[0].ID)
+   340			return page.Runs[0], nil
+   341		}
+   342		ctx = runner.WithActor(ctx, row.Actor)
+   343		run, err := s.startRun(ctx, in.start(row.Number))
+   344		if run.ID > 0 {
+   345			_ = s.db.SetDashboardIssueRun(work, row.IdempotencyKey, run.ID)
+   346		}
+   347		return run, err
+   348	}
+
+exec
+/bin/zsh -lc "rg -n 'func .*Start|Trusted|trusted|Trigger|approval|CreateRun' internal/runner/runner.go; sed -n '150,390p' internal/github/http.go; rg -n 'func .*Start|func .*start|CreateRun|Trusted' internal/runner; rg -n 'NeutralizeMentions|HasPatchbotMarker' internal/github; rg -n 'active.*UNIQUE|UNIQUE.*active|active_run' internal/store; sed -n '1,120p' internal/github/types.go" in /Users/pappumishra/Documents/selfproject/patchbot-m26-create-issue
+ succeeded in 0ms:
+1:// Package runner orchestrates durable issue runs and their approval boundary.
+30:// Options supplies trusted infrastructure. Clone, Executor and Constructors are
+294:// run (or a completed investigation). It never bypasses approval, even dry-run.
+295:func (r *Runner) Start(ctx context.Context, req Request) (store.Run, error) {
+323:	run.Trigger = r.actionChannel()
+328:	run, err = r.db.CreateRun(ctx, run)
+	}
+	return token, nil
+}
+
+// request sends one API call. repo is the repository the call is about (nil for
+// account- or App-level endpoints) and selects the credential.
+func (c *HTTPClient) request(ctx context.Context, repo *RepoRef, method string, target *url.URL, body, out any, statuses ...int) (responseMeta, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	var data []byte
+	if body != nil {
+		var err error
+		data, err = json.Marshal(body)
+		if err != nil {
+			return responseMeta{}, errors.New("cannot encode request body")
+		}
+	}
+	meta, token, err := c.attempt(ctx, repo, method, target, data, out, statuses...)
+	// A 401 means GitHub rejected the credential before acting, so a single
+	// retry with a fresh token cannot duplicate a write. Only a caching
+	// repository source is retried; a PAT is not re-read.
+	if invalidator, ok := c.repoTokens.(TokenInvalidator); ok && repo != nil && token != "" {
+		if _, unauthorized := errors.AsType[*ErrUnauthorized](err); unauthorized {
+			invalidator.Invalidate(*repo, token)
+			meta, _, err = c.attempt(ctx, repo, method, target, data, out, statuses...)
+		}
+	}
+	return meta, err
+}
+
+func (c *HTTPClient) attempt(ctx context.Context, repo *RepoRef, method string, target *url.URL, data []byte, out any, statuses ...int) (responseMeta, string, error) {
+	token, err := c.credential(ctx, repo)
+	if err != nil {
+		return responseMeta{}, "", err
+	}
+	for _, secret := range tokenForms(token) {
+		if strings.Contains(target.String(), secret) {
+			return responseMeta{}, "", errors.New("credential found in request URL")
+		}
+	}
+	meta, err := c.send(ctx, token, method, target, data, out, statuses...)
+	return meta, token, err
+}
+
+func (c *HTTPClient) send(ctx context.Context, token, method string, target *url.URL, data []byte, out any, statuses ...int) (responseMeta, error) {
+	req, err := http.NewRequestWithContext(ctx, method, target.String(), bytes.NewReader(data))
+	if err != nil {
+		return responseMeta{}, errors.New("cannot construct API request")
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", c.userAgent)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if data != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if etag, ok := ctx.Value(etagKey{}).(string); ok && etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return responseMeta{}, safeIOError(ctx, err, "API request failed")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	meta := responseMeta{header: resp.Header, status: resp.StatusCode}
+	if !slices.Contains(statuses, resp.StatusCode) {
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+		if readErr != nil {
+			return meta, safeIOError(ctx, readErr, "cannot read API error response")
+		}
+		return meta, responseError(resp.StatusCode, resp.Header, data, token)
+	}
+	data, err = io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
+	if err != nil {
+		return meta, safeIOError(ctx, err, "cannot read API response")
+	}
+	if len(data) > maxResponseBody {
+		return meta, errors.New("API response exceeds 10 MB")
+	}
+	if out != nil && resp.StatusCode != http.StatusNotModified {
+		if err := json.Unmarshal(data, out); err != nil {
+			// Decoder errors can quote response data, including echoed credentials.
+			return meta, errors.New("invalid API JSON response")
+		}
+	}
+	return meta, nil
+}
+
+func safeIOError(ctx context.Context, err error, message string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	return errors.New(message)
+}
+
+// nextPage accepts only links to the same API endpoint, preventing pagination
+// from sending authorization to another host or an unrelated API path.
+func nextPage(current *url.URL, header http.Header) (*url.URL, error) {
+	for _, line := range header.Values("Link") {
+		for _, link := range strings.Split(line, ",") {
+			parts := strings.Split(link, ";")
+			next := false
+			for _, parameter := range parts[1:] {
+				key, value, ok := strings.Cut(strings.TrimSpace(parameter), "=")
+				if ok && strings.EqualFold(key, "rel") && slices.Contains(strings.Fields(strings.Trim(value, "\"")), "next") {
+					next = true
+				}
+			}
+			if !next {
+				continue
+			}
+			ref, err := url.Parse(strings.Trim(strings.TrimSpace(parts[0]), "<>"))
+			if err != nil {
+				return nil, errors.New("invalid pagination URL")
+			}
+			u := current.ResolveReference(ref)
+			if u.Scheme != current.Scheme || u.Host != current.Host || u.EscapedPath() != current.EscapedPath() ||
+				u.User != nil || u.Fragment != "" || u.Opaque != "" {
+				return nil, errors.New("unsafe pagination URL")
+			}
+			return u, nil
+		}
+	}
+	return nil, nil
+}
+
+func operationError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", operation, err)
+}
+internal/runner/runner.go:295:func (r *Runner) Start(ctx context.Context, req Request) (store.Run, error) {
+internal/runner/runner.go:317:func (r *Runner) start(ctx context.Context, run store.Run, reuse *store.Spec) (store.Run, error) {
+internal/runner/runner.go:328:	run, err = r.db.CreateRun(ctx, run)
+internal/runner/accounting.go:76:func (r *Runner) saveAccounting(ctx context.Context, run store.Run, session *agent.Session, prior accounting, start time.Time) error {
+internal/runner/runner_test.go:277:func (f *fixture) start(mode string, dry bool) store.Run {
+internal/runner/executor_repo_test.go:98:	if opts := cfg.CommandPolicyOptions("owner/php"); !opts.InContainer || opts.TrustedPath[0] != "/opt/php/bin" {
+internal/runner/executor_repo_test.go:113:	run, err := db.CreateRun(t.Context(), store.Run{Repo: "owner/php", IssueNumber: 1, Mode: "fix", Provider: "anthropic", Status: store.StatusRunning})
+internal/runner/executor_repo_test.go:162:	run, err := db.CreateRun(t.Context(), store.Run{Repo: "owner/php", IssueNumber: 1, Mode: "fix", Provider: "anthropic", Status: store.StatusRunning})
+internal/runner/recovery_test.go:90:func TestExpiryAndStartupRecovery(t *testing.T) {
+internal/runner/recovery_test.go:93:	waiting, err := f.db.CreateRun(t.Context(), store.Run{Repo: "owner/repo", IssueNumber: 1, Mode: "fix", Provider: "anthropic", Status: store.StatusAwaitingApproval, CreatedAt: old, WaitingSince: &old})
+internal/runner/recovery_test.go:97:	stale, err := f.db.CreateRun(t.Context(), store.Run{Repo: "owner/repo", IssueNumber: 2, Mode: "fix", Provider: "anthropic", Status: store.StatusRunning, CreatedAt: old, HeartbeatAt: &old})
+internal/runner/recovery_test.go:102:	healthy, err := f.db.CreateRun(t.Context(), store.Run{Repo: "owner/repo", IssueNumber: 3, Mode: "fix", Provider: "anthropic", Status: store.StatusRunning, HeartbeatAt: &recent})
+internal/runner/recovery_test.go:322:	run, err := f.db.CreateRun(t.Context(), store.Run{Repo: "owner/repo", IssueNumber: 12, Mode: "fix", Provider: "anthropic", Status: store.StatusApproved, Phase: store.PhaseBaseline, HeartbeatAt: &old})
+internal/runner/app_auth_test.go:325:func TestAppModeStartupFailsClosed(t *testing.T) {
+internal/runner/smoke_test.go:31:	dirs := append([]string{filepath.Join(runtime.GOROOT(), "bin")}, f.cfg.Limits.TrustedPath...)
+internal/runner/memory.go:25:	return memory.PolicyDigest(r.cfg.Repos[run.Repo], r.cfg.Limits.TrustedPath)
+internal/runner/phases.go:75:		repo, cloneErr = r.opts.Clone(ctx, gitx.CloneOptions{Dir: filepath.Join(dir, "repo"), Host: "github.com", Owner: ref(run.Repo).Owner, Name: ref(run.Repo).Name, Branch: meta.DefaultBranch, DefaultBranch: meta.DefaultBranch, TokenFunc: tokenFunc, TrustedPath: r.cfg.Limits.TrustedPath, ExcludedRoots: []string{r.cfg.DataDir()}})
+internal/runner/phases.go:101:		policyOpts.TrustedPath = slices.Clone(frozen.Path)
+internal/github/mentions.go:9:// NeutralizeMentions inserts a zero-width joiner after @ in user and team
+internal/github/mentions.go:12:func NeutralizeMentions(text string) string {
+internal/github/mentions_test.go:5:func TestNeutralizeMentions(t *testing.T) {
+internal/github/mentions_test.go:31:			got := NeutralizeMentions(tt.in)
+internal/github/mentions_test.go:33:				t.Fatalf("NeutralizeMentions(%q) = %q; want %q", tt.in, got, tt.want)
+internal/github/mentions_test.go:35:			if twice := NeutralizeMentions(got); twice != got {
+internal/github/commands.go:64:// HasPatchbotMarker reports whether a body carries a hidden patchbot marker.
+internal/github/commands.go:66:func HasPatchbotMarker(body string) bool { return markerPattern.MatchString(body) }
+internal/github/commands.go:94:		(comment.ID <= 0 || HasPatchbotMarker(comment.Body) || postedByPatchbot == nil || postedByPatchbot(comment.ID)) {
+internal/github/issues.go:33:	in.Title, in.Body = NeutralizeMentions(in.Title), NeutralizeMentions(in.Body)
+internal/github/commands_test.go:167:func TestHasPatchbotMarker(t *testing.T) {
+internal/github/commands_test.go:176:		if got := HasPatchbotMarker(body); got != want {
+internal/github/commands_test.go:177:			t.Errorf("HasPatchbotMarker(%q) = %v, want %v", body, got, want)
+internal/github/operations.go:116:	}{NeutralizeMentions(body)}
+internal/github/operations.go:125:	}{NeutralizeMentions(body)}
+internal/github/operations.go:163:	in.Title, in.Body = NeutralizeMentions(in.Title), NeutralizeMentions(in.Body)
+internal/github/README.md:60:`<!-- patchbot` marker (`HasPatchbotMarker`), and `postedByPatchbot(id)` is false;
+internal/github/README.md:69:`NeutralizeMentions`. It preserves email addresses and Markdown code spans and
+internal/store/migrations/0001_init.sql:41:CREATE UNIQUE INDEX runs_one_active_per_issue ON runs(repo, issue_number)
+internal/store/migrations/0004_review.sql:65:CREATE UNIQUE INDEX runs_one_active_per_issue ON runs(repo, issue_number)
+// Package github provides the GitHub REST operations needed by the runner.
+package github
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"time"
+)
+
+// TokenSource supplies one credential that is not bound to a repository: a
+// PAT, or an App JWT for App-level endpoints. Implementations must be safe for
+// concurrent calls.
+type TokenSource interface {
+	Token(context.Context) (string, error)
+}
+
+// RepoTokenSource supplies a credential bound to one repository. The repository
+// is always an explicit argument; there is no mutable "current repository".
+// Implementations must be safe for concurrent calls.
+type RepoTokenSource interface {
+	RepoToken(context.Context, RepoRef) (string, error)
+}
+
+// TokenInvalidator is implemented by repository token sources that cache
+// credentials. Invalidate drops token for repo after GitHub rejected it, so the
+// next RepoToken call mints a fresh one. A different cached token is kept.
+type TokenInvalidator interface {
+	Invalidate(repo RepoRef, token string)
+}
+
+// StaticRepoTokens adapts a single TokenSource (PAT mode) to RepoTokenSource:
+// every repository gets the same credential, exactly as before per-repo routing.
+type StaticRepoTokens struct{ Source TokenSource }
+
+// RepoToken returns the shared credential for any repository.
+func (s StaticRepoTokens) RepoToken(ctx context.Context, _ RepoRef) (string, error) {
+	if s.Source == nil {
+		return "", errors.New("no GitHub credential configured")
+	}
+	return s.Source.Token(ctx)
+}
+
+// Client is the runner's GitHub boundary. Missing branches and open PRs return
+// false and nil respectively; other missing resources return *ErrNotFound.
+type Client interface {
+	GetRepo(context.Context, RepoRef) (Repo, error)
+	GetIssue(context.Context, RepoRef, int) (Issue, error)
+	ListIssueComments(context.Context, RepoRef, int, time.Time) ([]Comment, error)
+	ListIssueCommentsSince(context.Context, RepoRef, int, time.Time, string) ([]Comment, string, bool, error)
+	GetIssueComment(context.Context, RepoRef, int64) (Comment, error)
+	CreateIssueComment(context.Context, RepoRef, int, string) (Comment, error)
+	UpdateIssueComment(context.Context, RepoRef, int64, string) error
+	IsCollaborator(context.Context, RepoRef, string) (bool, error)
+	FindOpenPR(context.Context, RepoRef, string) (*PullRequest, error)
+	CreatePR(context.Context, RepoRef, NewPR) (PullRequest, error)
+	GetBranch(context.Context, RepoRef, string) (Branch, bool, error)
+	BranchExists(context.Context, RepoRef, string) (bool, error)
+	AddLabels(context.Context, RepoRef, int, []string) error
+	RemoveLabel(context.Context, RepoRef, int, string) error
+}
+
+// RepoRef identifies a repository without a URL or credentials.
+type RepoRef struct {
+	Owner string
+	Name  string
+}
+
+// Permissions contains the repository capabilities needed for preflight.
+type Permissions struct {
+	Push bool `json:"push"`
+}
+
+// Repo contains repository metadata used for preflight and cloning.
+type Repo struct {
+	Name          string      `json:"name"`
+	FullName      string      `json:"full_name"`
+	DefaultBranch string      `json:"default_branch"`
+	CloneURL      string      `json:"clone_url"`
+	Private       bool        `json:"private"`
+	Permissions   Permissions `json:"permissions"`
+}
+
+// Label is a GitHub issue label.
+type Label struct {
+	Name string `json:"name"`
+}
+
+// Issue includes the current issue text used to invalidate stale approvals.
+type Issue struct {
+	Number            int       `json:"number"`
+	NodeID            string    `json:"node_id"`
+	Title             string    `json:"title"`
+	Body              string    `json:"body"`
+	State             string    `json:"state"`
+	Labels            []Label   `json:"labels"`
+	IsPullRequest     bool      `json:"-"`
+	Author            string    `json:"-"`
+	AuthorAssociation string    `json:"author_association"`
+	HTMLURL           string    `json:"html_url"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// UnmarshalJSON normalizes GitHub's nested user and pull_request fields.
+func (i *Issue) UnmarshalJSON(data []byte) error {
+	type plain Issue
+	var wire struct {
+		plain
+		User        struct{ Login string } `json:"user"`
+		PullRequest *json.RawMessage       `json:"pull_request"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*i = Issue(wire.plain)
+	i.Author = wire.User.Login
+	i.IsPullRequest = wire.PullRequest != nil
+	return nil
+}
+
+
+codex
+Marker recovery checks only the public marker text, so a copied marker can make it adopt someone else’s issue. I’m checking the impact on run creation and whether concurrent retries can create duplicate runs.
+exec
+/bin/zsh -lc "sed -n '285,410p' internal/runner/runner.go; cat internal/github/mentions.go; sed -n '1,170p' internal/runner/phases.go; rg -n 'AuthorAssociation|issue.Author|Trigger' internal/runner internal/ingress; sed -n '1,210p' internal/server/issues_test.go; cat internal/store/migrations/0004_review.sql | tail -15; rg -n 'func .*CreateRun|func .*ListRuns' internal/store" in /Users/pappumishra/Documents/selfproject/patchbot-m26-create-issue
+ succeeded in 0ms:
+	}
+	raw, err := json.Marshal(limits)
+	if err != nil {
+		return store.Run{}, err
+	}
+	return store.Run{IngressKey: req.IngressKey, Repo: req.Repo, IssueNumber: req.Issue, Mode: req.Mode, Provider: req.Provider, RefineModel: refine, CodeModel: code, DryRun: req.DryRun, Status: store.StatusQueued, Phase: store.PhasePreflight, LimitsJSON: raw}, nil
+}
+
+// Start creates and executes the read-only phase, returning a durable waiting
+// run (or a completed investigation). It never bypasses approval, even dry-run.
+func (r *Runner) Start(ctx context.Context, req Request) (store.Run, error) {
+	run, err := r.prepare(req)
+	if err != nil {
+		return run, err
+	}
+	if req.Mode == "" {
+		issue, err := r.gh.GetIssue(ctx, ref(run.Repo), int(run.IssueNumber))
+		if err != nil {
+			return store.Run{}, err
+		}
+		for _, mode := range []string{config.ModeInvestigate, config.ModeRefine, config.ModeFix} {
+			for _, label := range issue.Labels {
+				if label.Name == "ai-"+mode {
+					run.Mode = mode
+					return r.start(ctx, run, nil)
+				}
+			}
+		}
+	}
+	return r.start(ctx, run, nil)
+}
+
+func (r *Runner) start(ctx context.Context, run store.Run, reuse *store.Spec) (store.Run, error) {
+	ctx, release, err := r.admit(ctx)
+	if err != nil {
+		return store.Run{}, err
+	}
+	defer release()
+	run.Trigger = r.actionChannel()
+	if r.opts.Dispatch != nil {
+		admittedAt := time.Now().UTC()
+		run.HeartbeatAt = &admittedAt
+	}
+	run, err = r.db.CreateRun(ctx, run)
+	if err != nil {
+		return run, err
+	}
+	id := run.ID
+	initial := run
+	if err = r.action(ctx, id, "start", r.actorFor(ctx), r.actionChannel(), nil); err == nil {
+		err = r.dispatch(ctx, id, func(work context.Context) error {
+			run := initial
+			err := r.withWork(work, id, func(work context.Context) error {
+				if err := r.transition(work, &run, store.StatusRunning, store.PhasePreflight, store.RunPatch{}); err != nil {
+					return err
+				}
+				return r.refine(work, &run, nil, "", reuse)
+			})
+			if err != nil {
+				return r.fail(work, run, err)
+			}
+			// A retry may reuse an approved spec. It still enters the ordinary gate.
+			if reuse != nil && r.opts.Dispatch != nil {
+				return r.execute(work, id)
+			}
+			return nil
+		})
+	}
+	if err != nil {
+		err = r.fail(ctx, initial, err)
+	}
+	latest, readErr := r.db.GetRun(context.WithoutCancel(ctx), id)
+	return latest, errors.Join(err, readErr)
+}
+
+func (r *Runner) actionChannel() string {
+	if r.opts.ActionChannel == "ui" {
+		return "ui"
+	}
+	return "cli"
+}
+
+func (r *Runner) admit(ctx context.Context) (context.Context, func(), error) {
+	if r.opts.Admit != nil {
+		return r.opts.Admit(ctx)
+	}
+	return ctx, func() {}, nil
+}
+
+// RecoverStale fails orphaned active work and releases its issue lock. Servers
+// call this periodically as well as on startup so quick restarts recover later.
+func (r *Runner) RecoverStale(ctx context.Context) error {
+	_, err := r.db.FailStaleRuns(ctx, r.now().Add(-r.opts.StaleAfter))
+	return err
+}
+
+func (r *Runner) dispatch(ctx context.Context, id int64, work func(context.Context) error) error {
+	if r.opts.Dispatch != nil {
+		return r.opts.Dispatch(ctx, id, work)
+	}
+	return work(ctx)
+}
+
+func (r *Runner) transition(ctx context.Context, run *store.Run, status store.Status, phase store.Phase, patch store.RunPatch) error {
+	// Free text from provider/GitHub responses must be redacted before SQLite,
+	// not only when displayed by the API or CLI.
+	for _, field := range []*string{patch.IssueTitle, patch.ErrorMessage, patch.PRURL, patch.Summary} {
+		if field != nil {
+			*field = r.redactor.Redact(*field)
+		}
+	}
+	patch.Phase = phase
+	patch.ExpectedGeneration = &run.Generation
+	if err := r.db.SetRunStatus(ctx, run.ID, run.Status, status, patch); err != nil {
+		return err
+	}
+	updated, err := r.db.GetRun(ctx, run.ID)
+	if err != nil {
+		return err
+	}
+	if updated.Status != status || updated.Generation != run.Generation+1 {
+		return store.ErrConflict
+	}
+	*run = updated
+	return nil
+}
+package github
+
+import (
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
+
+// NeutralizeMentions inserts a zero-width joiner after @ in user and team
+// mentions. Email addresses and Markdown inline code and fenced code are kept.
+// Applying it more than once has no additional effect.
+func NeutralizeMentions(text string) string {
+	var out strings.Builder
+	out.Grow(len(text))
+	var code byte
+	var width int
+	fenced := false
+	lineStart := true
+	indent := 0
+	var previous rune
+	for index := 0; index < len(text); {
+		current := text[index]
+		if current == '\n' {
+			out.WriteByte(current)
+			index++
+			lineStart, indent, previous = true, 0, '\n'
+			continue
+		}
+		if current == '`' || (current == '~' && lineStart) {
+			end := index + 1
+			for end < len(text) && text[end] == current {
+				end++
+			}
+			run := end - index
+			fence := lineStart && indent <= 3 && run >= 3
+			if current == '`' {
+				info, _, _ := strings.Cut(text[end:], "\n")
+				fence = fence && !strings.ContainsRune(info, '`')
+			}
+			switch {
+			case code == 0 && current == '`' && (!lineStart || indent <= 3) && !escapedAt(text, index) &&
+				(fence || hasClosingTicks(text[end:], run)):
+				code, width, fenced = current, run, fence
+			case code == 0 && current == '~' && fence:
+				code, width, fenced = current, run, true
+			case code == current && ((!fenced && run == width) ||
+				(fenced && lineStart && indent <= 3 && run >= width && fenceEnd(text[end:]))):
+				code, width, fenced = 0, 0, false
+			}
+			out.WriteString(text[index:end])
+			index, lineStart, previous = end, false, rune(current)
+			continue
+		}
+		if current == '@' && code == 0 && index+1 < len(text) && mentionStart(text[index+1]) &&
+			!emailAt(text, index, previous) {
+			out.WriteString("@\u200d")
+			index++
+			lineStart, previous = false, '@'
+			continue
+		}
+		character, size := utf8.DecodeRuneInString(text[index:])
+		out.WriteString(text[index : index+size])
+		index += size
+		if current != ' ' && current != '\t' && current != '\r' {
+			lineStart = false
+		} else if lineStart {
+			switch current {
+			case '\t':
+				indent += 4 - indent%4
+			case ' ':
+				indent++
+			}
+		}
+		previous = character
+	}
+	return out.String()
+}
+
+func fenceEnd(text string) bool {
+	line, _, _ := strings.Cut(text, "\n")
+	return strings.Trim(line, " \t\r") == ""
+}
+
+func mentionStart(character byte) bool {
+	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+		character >= '0' && character <= '9'
+}
+
+func emailAt(text string, index int, previous rune) bool {
+	if !unicode.IsLetter(previous) && !unicode.IsDigit(previous) && !strings.ContainsRune("._%+-", previous) {
+		return false
+	}
+	end := index + 1
+	for end < len(text) && (mentionStart(text[end]) || text[end] == '.' || text[end] == '-') {
+		end++
+	}
+	domain := strings.TrimRight(text[index+1:end], ".")
+	dot := strings.IndexByte(domain, '.')
+	return dot > 0 && dot < len(domain)-1 && !strings.Contains(domain, "..")
+}
+
+func escapedAt(text string, index int) bool {
+	count := 0
+	for index > 0 && text[index-1] == '\\' {
+		count++
+		index--
+	}
+	return count%2 != 0
+}
+
+func hasClosingTicks(text string, width int) bool {
+	for index := 0; index < len(text); {
+		if text[index] != '`' {
+			index++
+			continue
+		}
+		end := index + 1
+		for end < len(text) && text[end] == '`' {
+			end++
+		}
+		if end-index == width {
+			return true
+		}
+		index = end
+	}
+	return false
+}
+package runner
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/agent"
+	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/execx"
+	"github.com/aryanpappu/patchbot/internal/github"
+	"github.com/aryanpappu/patchbot/internal/gitx"
+	"github.com/aryanpappu/patchbot/internal/store"
+	"github.com/aryanpappu/patchbot/internal/tools"
+	"github.com/aryanpappu/patchbot/internal/workspace"
+)
+
+type toolEnvironment struct {
+	repo *gitx.Repo
+	env  *tools.Env
+	dir  string
+}
+
+func (e *toolEnvironment) close() error {
+	if e == nil || e.dir == "" {
+		return nil
+	}
+	dir := e.dir
+	e.dir = ""
+	err := errors.Join(e.env.WS.Close(false), e.repo.Close())
+	root, openErr := os.OpenRoot(filepath.Dir(dir))
+	if openErr != nil {
+		return errors.Join(err, openErr)
+	}
+	defer func() { _ = root.Close() }()
+	return errors.Join(err, root.RemoveAll(filepath.Base(dir)))
+}
+
+func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha string) (_ *toolEnvironment, err error) {
+	base := filepath.Join(r.cfg.DataDir(), "workspaces")
+	if err := os.MkdirAll(base, 0700); err != nil {
+		return nil, errors.New("create workspace directory failed")
+	}
+	dir, err := os.MkdirTemp(base, "run-"+strconv.FormatInt(run.ID, 10)+"-")
+	if err != nil {
+		return nil, errors.New("create run workspace failed")
+	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	// git asks for a fresh repository-bound token on every remote operation,
+	// so a run longer than an installation token's lifetime still pushes.
+	repoRef := ref(run.Repo)
+	tokenFunc := func(ctx context.Context) (string, error) { return r.tokens.RepoToken(ctx, repoRef) }
+	if _, err := tokenFunc(ctx); err != nil {
+		return nil, githubCredentialError(err)
+	}
+	var repo *gitx.Repo
+	defer func() {
+		if err != nil && repo != nil {
+			_ = repo.Close()
+		}
+	}()
+	err = r.operation(ctx, run, "git", "clone", func() error {
+		var cloneErr error
+		repo, cloneErr = r.opts.Clone(ctx, gitx.CloneOptions{Dir: filepath.Join(dir, "repo"), Host: "github.com", Owner: ref(run.Repo).Owner, Name: ref(run.Repo).Name, Branch: meta.DefaultBranch, DefaultBranch: meta.DefaultBranch, TokenFunc: tokenFunc, TrustedPath: r.cfg.Limits.TrustedPath, ExcludedRoots: []string{r.cfg.DataDir()}})
+		return cloneErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	if sha != "" {
+		if err := r.operation(ctx, run, "git", "checkout_sha", func() error { return repo.CheckoutSHA(ctx, sha) }); err != nil {
+			return nil, err
+		}
+	}
+	ws, err := workspace.Open(repo.Dir(), workspace.Options{Protected: r.cfg.Repos[run.Repo].Protected})
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_ = ws.Close(false)
+		}
+	}()
+	frozen, err := r.runExecutor(ctx, run)
+	if err != nil {
+		return nil, err
+	}
+	policyOpts := r.cfg.CommandPolicyOptions(run.Repo)
+	if r.cfg.Executor.Container() {
+		policyOpts.TrustedPath = slices.Clone(frozen.Path)
+	}
+	policy, err := execx.NewPolicy(ws.Dir(), r.cfg.Repos[run.Repo].Commands, policyOpts)
+	if err != nil {
+		return nil, err
+	}
+	executor, err := r.opts.Executor(ws.Dir(), frozen)
+	if err != nil {
+		return nil, err
+	}
+	limits := r.cfg.Limits
+	return &toolEnvironment{repo: repo, dir: dir, env: &tools.Env{WS: ws, Exec: executor, Policy: policy, RunDir: dir, Redactor: r.redactor, Limits: tools.Limits{CmdTimeout: limits.CmdTimeout, CmdOutputBytes: limits.CmdOutputBytes, CmdStoreBytes: limits.CmdStoreBytes}}}, nil
+}
+
+// executorArtifact is the artifact kind that records the container image a
+// run uses. It is written the first time the run needs an executor and read
+// back afterwards, so the image is frozen on the run: a config change or
+// restart mid-run cannot switch it.
+const executorArtifact = "executor"
+
+func (r *Runner) runExecutor(ctx context.Context, run store.Run) (config.RepoExecutor, error) {
+	if !r.cfg.Executor.Container() {
+		return config.RepoExecutor{}, nil
+	}
+	saved, err := r.db.GetArtifact(ctx, run.ID, executorArtifact, 0)
+	switch {
+	case err == nil:
+		var re config.RepoExecutor
+		if err := json.Unmarshal([]byte(saved.Content), &re); err != nil || re.Image == "" {
+			return config.RepoExecutor{}, errors.New("recorded executor evidence is unreadable")
+		}
+		return re, nil
+	case !errors.Is(err, store.ErrNotFound):
+		return config.RepoExecutor{}, err
+	}
+	re := r.cfg.RepoExecutor(run.Repo)
+	if re.Image == "" {
+		return config.RepoExecutor{}, fmt.Errorf("no container image for %s: set repos.%q.image or executor.image", run.Repo, run.Repo)
+	}
+	content, err := json.Marshal(re)
+	if err != nil {
+		return config.RepoExecutor{}, err
+	}
+	// The artifact is redacted on save and shown in the UI, so a value that
+	// redaction would change cannot be stored losslessly: fail closed rather
+	// than freeze settings that a resume would read back corrupted.
+	if r.redactor.Redact(string(content)) != string(content) {
+		return config.RepoExecutor{}, fmt.Errorf("container image or path for %s looks like a credential and cannot be recorded; use a different image name or path", run.Repo)
+	}
+	return re, r.artifact(ctx, run.ID, executorArtifact, string(content))
+}
+
+func (r *Runner) preflight(ctx context.Context, run store.Run) (github.Repo, github.Issue, error) {
+	if r.cfg.Repos[run.Repo] == nil {
+		return github.Repo{}, github.Issue{}, errors.New("repository is not in configuration allowlist")
+	}
+	meta, err := r.gh.GetRepo(ctx, ref(run.Repo))
+	if err != nil {
+		return meta, github.Issue{}, err
+	}
+	issue, err := r.gh.GetIssue(ctx, ref(run.Repo), int(run.IssueNumber))
+	if err != nil {
+		return meta, issue, err
+	}
+	if issue.State != "open" || issue.IsPullRequest {
+		return meta, issue, errors.New("issue must be open and must not be a pull request")
+	}
+	if meta.DefaultBranch == "" {
+		return meta, issue, errors.New("repository has no default branch")
+	}
+rg: internal/ingress: No such file or directory (os error 2)
+internal/runner/ingress.go:64:		return r.applyTriggerLabel(ctx, repo, number, r.triggerLabel(issue.Labels))
+internal/runner/ingress.go:98:		if _, ok := r.cfg.Webhook.TriggerLabels[label.Name]; ok {
+internal/runner/ingress.go:109:// applyTriggerLabel latches label and starts at most one run per generation.
+internal/runner/ingress.go:111:func (r *Runner) applyTriggerLabel(ctx context.Context, repo string, number int64, label string) error {
+internal/runner/ingress.go:112:	state, err := r.db.ObserveTriggerLabel(ctx, repo, number, label)
+internal/runner/ingress.go:117:	_, err = r.Start(ctx, Request{Repo: repo, Issue: number, Mode: r.cfg.Webhook.TriggerLabels[label], IngressKey: key})
+internal/runner/ingress.go:123:		return r.db.MarkTriggerHandled(ctx, repo, number, state.Generation)
+internal/runner/ingress.go:129:// baselineTriggerLabel latches a label seen on a repository's first sweep
+internal/runner/ingress.go:131:func (r *Runner) baselineTriggerLabel(ctx context.Context, repo string, number int64, label string) error {
+internal/runner/ingress.go:132:	state, err := r.db.ObserveTriggerLabel(ctx, repo, number, label)
+internal/runner/ingress.go:136:	return r.db.MarkTriggerHandled(ctx, repo, number, state.Generation)
+internal/runner/ingress.go:185:	known, err := r.db.TriggerLabels(ctx, repo)
+internal/runner/ingress.go:208:				err = r.applyTriggerLabel(ctx, repo, number, "") // observed removal rearms
+internal/runner/ingress.go:210:				err = r.baselineTriggerLabel(ctx, repo, number, label)
+internal/runner/ingress.go:212:				err = r.applyTriggerLabel(ctx, repo, number, label)
+internal/runner/runner.go:323:	run.Trigger = r.actionChannel()
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/github"
+	"github.com/aryanpappu/patchbot/internal/llm/fake"
+	"github.com/aryanpappu/patchbot/internal/secret"
+	"github.com/aryanpappu/patchbot/internal/store"
+)
+
+// issueGitHub is a fake GitHub that can also open and list issues.
+type issueGitHub struct {
+	*fakeGitHub
+	imu    sync.Mutex
+	issues []github.Issue
+	// createErr fails CreateIssue before anything is created.
+	createErr error
+	// lostReply creates the issue but reports a transport failure (the crash window).
+	lostReply bool
+	listErr   error
+	lists     int
+	attempts  int
+}
+
+func newIssueGitHub() *issueGitHub { return &issueGitHub{fakeGitHub: &fakeGitHub{}} }
+
+func (g *issueGitHub) CreateIssue(_ context.Context, repo github.RepoRef, in github.NewIssue) (github.Issue, error) {
+	g.imu.Lock()
+	defer g.imu.Unlock()
+	g.attempts++
+	if g.createErr != nil {
+		return github.Issue{}, g.createErr
+	}
+	n := len(g.issues) + 1
+	issue := github.Issue{Number: n, NodeID: "I_node" + strconv.Itoa(n), Title: in.Title, Body: in.Body, State: "open",
+		HTMLURL: "https://github.com/" + repo.Owner + "/" + repo.Name + "/issues/" + strconv.Itoa(n)}
+	g.issues = append(g.issues, issue)
+	if g.lostReply {
+		return github.Issue{}, errors.New("CreateIssue: API request failed")
+	}
+	return issue, nil
+}
+
+func (g *issueGitHub) ListIssuesSince(_ context.Context, _ github.RepoRef, _ time.Time, page int) ([]github.Issue, error) {
+	g.imu.Lock()
+	defer g.imu.Unlock()
+	g.lists++
+	if g.listErr != nil {
+		return nil, g.listErr
+	}
+	if page > 1 {
+		return nil, nil
+	}
+	out := make([]github.Issue, 0, len(g.issues))
+	for i := len(g.issues) - 1; i >= 0; i-- {
+		out = append(out, g.issues[i])
+	}
+	return out, nil
+}
+
+func (g *issueGitHub) GetIssue(_ context.Context, _ github.RepoRef, n int) (github.Issue, error) {
+	g.imu.Lock()
+	defer g.imu.Unlock()
+	if n < 1 || n > len(g.issues) {
+		return github.Issue{}, &github.ErrNotFound{APIError: github.APIError{StatusCode: 404, Message: "Not Found"}}
+	}
+	return g.issues[n-1], nil
+}
+
+func (g *issueGitHub) count() int {
+	g.imu.Lock()
+	defer g.imu.Unlock()
+	return len(g.issues)
+}
+
+func newIssueFixture(t *testing.T, p *fake.Provider) (*fixture, *issueGitHub) {
+	t.Helper()
+	g := newIssueGitHub()
+	f := newFixture(t, p, func(o *Options) { o.Runner.GitHub = g })
+	f.gh = g.fakeGitHub
+	return f, g
+}
+
+const goodKey = "0b0f4a52-7a38-4a54-9d1e-5d0c8a1f3c11"
+
+func issueJSON(t *testing.T, fields map[string]any) string {
+	t.Helper()
+	body := map[string]any{"repo": "owner/repo", "title": "Add dark mode", "body": "Please add a dark theme.", "idempotency_key": goodKey}
+	for k, v := range fields {
+		if v == nil {
+			delete(body, k)
+		} else {
+			body[k] = v
+		}
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+type issueResponse struct {
+	Issue struct {
+		Repo        string `json:"repo"`
+		Number      int64  `json:"number"`
+		NodeID      string `json:"node_id"`
+		HTMLURL     string `json:"html_url"`
+		RequestedBy string `json:"requested_by"`
+		Created     bool   `json:"created"`
+	} `json:"issue"`
+	Run   *store.Run `json:"run"`
+	Error struct{ Kind, Message string }
+}
+
+func decodeIssue(t *testing.T, w *httptest.ResponseRecorder) issueResponse {
+	t.Helper()
+	var out issueResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("bad JSON %q: %v", w.Body.String(), err)
+	}
+	return out
+}
+
+func TestCreateIssueWritesMarkerFooterAndRecordsActor(t *testing.T) {
+	f, g := newIssueFixture(t, nil)
+	w := f.request("POST", "/api/issues", issueJSON(t, nil))
+	requireStatus(t, w, http.StatusCreated)
+	out := decodeIssue(t, w)
+	if out.Issue.Number != 1 || out.Issue.NodeID != "I_node1" || !out.Issue.Created || out.Issue.RequestedBy != "operator" || out.Run != nil {
+		t.Fatalf("response: %+v", out)
+	}
+	if out.Issue.HTMLURL != "https://github.com/owner/repo/issues/1" {
+		t.Fatalf("url %q", out.Issue.HTMLURL)
+	}
+	if g.count() != 1 {
+		t.Fatalf("issues created: %d", g.count())
+	}
+	issue := g.issues[0]
+	marker := "<!-- patchbot:issue-created v1 key=" + goodKey + " -->"
+	if issue.Title != "Add dark mode" || !strings.HasPrefix(issue.Body, "Please add a dark theme.") || !strings.HasSuffix(issue.Body, marker) ||
+		!strings.Contains(issue.Body, "Created from the patchbot dashboard by `operator`") {
+		t.Fatalf("issue content: %q", issue.Body)
+	}
+	row, err := f.db.DashboardIssue(t.Context(), goodKey)
+	if err != nil || row.Pending || row.Number != 1 || row.NodeID != "I_node1" || row.Actor != "operator" || row.Repo != "owner/repo" || row.RunID != 0 {
+		t.Fatalf("row: %+v %v", row, err)
+	}
+	if byNumber, ok, err := f.db.DashboardIssueByNumber(t.Context(), "owner/repo", 1); err != nil || !ok || byNumber.IdempotencyKey != goodKey {
+		t.Fatalf("lookup by number: %+v %v %v", byNumber, ok, err)
+	}
+	if !github.HasPatchbotMarker(issue.Body) {
+		t.Fatal("issue body must carry the patchbot marker")
+	}
+}
+
+func TestCreateIssueIsIdempotent(t *testing.T) {
+	f, g := newIssueFixture(t, nil)
+	first := decodeIssue(t, f.request("POST", "/api/issues", issueJSON(t, nil)))
+	w := f.request("POST", "/api/issues", issueJSON(t, nil))
+	requireStatus(t, w, http.StatusOK)
+	second := decodeIssue(t, w)
+	if second.Issue.Number != first.Issue.Number || second.Issue.Created || g.count() != 1 || g.attempts != 1 {
+		t.Fatalf("retry created again: %+v attempts=%d", second, g.attempts)
+	}
+	// The same key with different content is refused, not silently reused.
+	w = f.request("POST", "/api/issues", issueJSON(t, map[string]any{"title": "Something else"}))
+	requireStatus(t, w, http.StatusUnprocessableEntity)
+	if decodeIssue(t, w).Error.Kind != "idempotency_conflict" || g.count() != 1 {
+		t.Fatal("conflicting reuse of a key")
+	}
+	// A different key opens a different issue.
+	w = f.request("POST", "/api/issues", issueJSON(t, map[string]any{"idempotency_key": "another-key-1234"}))
+	requireStatus(t, w, http.StatusCreated)
+	if g.count() != 2 {
+		t.Fatal("second key should create a second issue")
+	}
+}
+
+func TestCreateIssueConcurrentSameKeyCreatesOnce(t *testing.T) {
+	f, g := newIssueFixture(t, nil)
+	var wg sync.WaitGroup
+	codes := make(chan int, 6)
+	for range 6 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes <- f.request("POST", "/api/issues", issueJSON(t, nil)).Code
+		}()
+	}
+	wg.Wait()
+	close(codes)
+	for code := range codes {
+		if code != 200 && code != 201 && code != 409 {
+			t.Fatalf("unexpected status %d", code)
+		}
+	}
+	if g.count() != 1 {
+		t.Fatalf("created %d issues", g.count())
+    spec_version INTEGER NOT NULL CHECK (spec_version > 0),
+    spec_hash TEXT NOT NULL CHECK (length(spec_hash) = 64 AND spec_hash NOT GLOB '*[^0-9a-f]*'),
+    diff_hash TEXT NOT NULL CHECK (length(diff_hash) = 64 AND diff_hash NOT GLOB '*[^0-9a-f]*'),
+    base_sha TEXT NOT NULL DEFAULT '',
+    tree_id TEXT NOT NULL DEFAULT '',
+    verdict TEXT NOT NULL CHECK (verdict IN ('approve','request_changes','incomplete')),
+    reason TEXT NOT NULL DEFAULT '',
+    findings_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(findings_json)),
+    criteria_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(criteria_json)),
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    created_at INTEGER NOT NULL CHECK (created_at >= 0),
+    UNIQUE (run_id, round)
+) STRICT;
+CREATE INDEX reviews_run ON reviews(run_id, round);
+internal/store/sqlite.go:188:func (s *SQLite) CreateRun(ctx context.Context, r Run) (Run, error) {
+internal/store/sqlite.go:247:func (s *SQLite) ListRuns(ctx context.Context, f RunFilter) (RunPage, error) {
+
+exec
+/bin/zsh -lc "sed -n '188,245p' internal/store/sqlite.go; rg -n 'Dispatch:|Admit:|func .*admit|func .*dispatch|ActionChannel' internal/server; sed -n '1,210p' internal/server/queue.go; sed -n '1,130p' internal/server/server.go; sed -n '240,325p' internal/server/issues_test.go; rg -n 'StatusInvestigated|StatusFailed|StatusCompleted' internal/runner/refine.go internal/store/migrations/0004_review.sql" in /Users/pappumishra/Documents/selfproject/patchbot-m26-create-issue
+ exited 2 in 0ms:
+func (s *SQLite) CreateRun(ctx context.Context, r Run) (Run, error) {
+	r.Repo = strings.ToLower(strings.TrimSpace(r.Repo))
+	if r.Mode == "" {
+		r.Mode = "fix"
+	}
+	if r.Status == "" {
+		r.Status = StatusQueued
+	}
+	if r.Phase == "" {
+		r.Phase = PhasePreflight
+	}
+	if r.Trigger == "" {
+		r.Trigger = "cli"
+	}
+	r.ErrorMessage = cappedText(r.ErrorMessage, 2000)
+	r.CreatedAt = timestamp(r.CreatedAt)
+	r.UpdatedAt = r.CreatedAt
+	if r.Status == StatusRunning {
+		if r.StartedAt == nil {
+			r.StartedAt = &r.CreatedAt
+		}
+		if r.HeartbeatAt == nil {
+			r.HeartbeatAt = &r.CreatedAt
+		}
+	}
+	if r.Status == StatusAwaitingApproval || r.Status == StatusNeedsInfo {
+		if r.WaitingSince == nil {
+			r.WaitingSince = &r.CreatedAt
+		}
+	}
+	if !r.Status.IsActive() && r.FinishedAt == nil {
+		r.FinishedAt = &r.CreatedAt
+	}
+	args := []any{r.Repo, r.IssueNumber, r.IssueTitle, r.Mode, r.RetryOf, r.Trigger,
+		r.Provider, r.RefineModel, r.CodeModel, r.DryRun, r.Status, r.Phase, r.Outcome,
+		r.BaseSHA, r.HeadSHA, r.Branch, r.PRNumber, r.PRURL, r.PRDraft, r.Summary,
+		r.TestsStatus, r.TestAttempts, r.Turns, r.InputTokens, r.OutputTokens,
+		r.CacheReadTokens, r.CacheWriteTokens, r.CostMicros, jsonText(r.LimitsJSON),
+		r.ErrorKind, r.ErrorMessage, r.CreatedAt.UnixMilli(), r.UpdatedAt.UnixMilli(),
+		optionalMillis(r.StartedAt), optionalMillis(r.FinishedAt), optionalMillis(r.HeartbeatAt), optionalMillis(r.WaitingSince), int64(0), string(r.ReviewJSON)}
+	var ingress any
+	if r.IngressKey != "" {
+		ingress = r.IngressKey
+	}
+	args = append(args, ingress)
+	query := "INSERT INTO runs(" + strings.TrimPrefix(runColumns, "id,") + ",ingress_key" + ") VALUES(" + placeholders(len(args)) + ") RETURNING " + runColumns
+	return scanRun(s.db.QueryRowContext(ctx, query, args...))
+}
+
+func placeholders(n int) string { return strings.TrimSuffix(strings.Repeat("?,", n), ",") }
+
+// GetRun retrieves a run by ID.
+func (s *SQLite) GetRun(ctx context.Context, id int64) (Run, error) {
+	return scanRun(s.db.QueryRowContext(ctx, "SELECT "+runColumns+" FROM runs WHERE id=?", id))
+}
+
+type runCursor struct{ CreatedAt, ID int64 }
+
+internal/server/server.go:169:	opts.Runner.ActionChannel = "ui"
+sed: internal/server/queue.go: No such file or directory
+// Package server serves the local JSON API and resumable event streams.
+package server
+
+import (
+	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"errors"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"path"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/cfaccess"
+	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/github"
+	"github.com/aryanpappu/patchbot/internal/llm"
+	"github.com/aryanpappu/patchbot/internal/llm/providers"
+	"github.com/aryanpappu/patchbot/internal/runner"
+	"github.com/aryanpappu/patchbot/internal/secret"
+	"github.com/aryanpappu/patchbot/internal/store"
+	"github.com/aryanpappu/patchbot/internal/web"
+)
+
+// Options supplies trusted infrastructure. Zero values use production defaults.
+type Options struct {
+	Token secret.Secret
+	// Access overrides the Cloudflare Access verifier built from the
+	// configuration (tests point it at a local JWKS server).
+	Access          *cfaccess.Verifier
+	Runner          runner.Options
+	ShutdownTimeout time.Duration
+	// Short intervals are useful to exercise timers without network or live keys.
+	HeartbeatInterval  time.Duration
+	PollInterval       time.Duration
+	StreamWriteTimeout time.Duration
+	SyncInterval       time.Duration
+}
+
+// Server owns background runs and stream lifetimes. The caller owns the store
+// and closes it only after Shutdown and outstanding runner cleanup finish.
+type Server struct {
+	cfg             *config.Config
+	db              store.Store
+	runner          *runner.Runner
+	models          *llm.ModelLister
+	registry        *llm.Registry
+	redactor        *secret.Redactor
+	manager         *manager
+	bus             broadcaster
+	handler         http.Handler
+	http            *http.Server
+	tokenHash       [32]byte
+	authenticated   bool
+	access          *cfaccess.Verifier
+	opts            Options
+	mu              sync.RWMutex
+	addr            string
+	stopping        bool
+	stop            context.CancelFunc
+	done            chan struct{}
+	maintenanceDone chan struct{}
+	unsubscribe     func()
+	shutdownOnce    sync.Once
+	ingressMu       sync.Mutex
+	ingressWake     chan struct{}
+	// maxPending overrides maxPendingDeliveries in tests when positive.
+	maxPending int
+	// setup holds Connect GitHub states; setupMu serializes the callback.
+	setup   setupStates
+	setupMu sync.Mutex
+	// issueGrace overrides issuePendingGrace in tests when positive.
+	issueGrace time.Duration
+}
+
+// ValidateAddress refuses public or wildcard binds without a UI credential.
+// Hostnames other than localhost require authentication: no DNS lookup can
+// change an unauthenticated listener from loopback to a public interface.
+func ValidateAddress(addr string, token secret.Secret) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return errors.New("server address must be host:port")
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 0 || n > 65535 {
+		return errors.New("server port must be between 0 and 65535")
+	}
+	ip := net.ParseIP(host)
+	if !token.IsSet() && host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return errors.New("non-loopback server address requires PATCHBOT_UI_TOKEN")
+	}
+	return nil
+}
+
+// s0 is the credential ValidateAddress sees: Access JWT verification stands in
+// for the UI token on non-loopback binds.
+func s0(opts Options, cfg *config.Config) secret.Secret {
+	if cfg.Server.Auth.Mode == config.AuthCloudflareAccess {
+		return secret.New("cloudflare-access")
+	}
+	return opts.Token
+}
+
+// New constructs one runner and starts lifecycle maintenance and ownership heartbeats.
+func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) (*Server, error) {
+	if cfg == nil || db == nil {
+		return nil, errors.New("server requires configuration and storage")
+	}
+	if !opts.Token.IsSet() {
+		opts.Token = secret.New(os.Getenv("PATCHBOT_UI_TOKEN"))
+	}
+	if cfg.Server.Auth.Mode == config.AuthCloudflareAccess {
+		// Access replaces the bearer token; the token is ignored in this mode.
+		opts.Token = secret.Secret{}
+		if opts.Access == nil {
+			a := cfg.Server.Auth
+			var err error
+			opts.Access, err = cfaccess.New(cfaccess.Config{TeamDomain: a.TeamDomain, Audience: a.Audience, AllowedEmails: a.AllowedEmails})
+			if err != nil {
+				return nil, errors.New("invalid cloudflare_access configuration")
+			}
+		}
+	}
+	if err := ValidateAddress(cfg.Server.Addr, s0(opts, cfg)); err != nil {
+	}
+	if row, _ := f.db.DashboardIssue(t.Context(), goodKey); row.Pending || row.Number != 1 || row.NodeID != "I_node1" {
+		t.Fatalf("row not completed: %+v", row)
+	}
+}
+
+func TestCreateIssueCrashWindowCreatesWhenSearchFindsNothing(t *testing.T) {
+	f, g := newIssueFixture(t, nil)
+	g.createErr = &github.APIError{StatusCode: 502, Message: "bad gateway"}
+	requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, nil)), http.StatusBadGateway)
+	g.createErr = nil
+	f.server.issueGrace = time.Millisecond
+	time.Sleep(5 * time.Millisecond)
+	requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, nil)), http.StatusCreated)
+	if g.count() != 1 || g.lists == 0 {
+		t.Fatalf("count=%d lists=%d", g.count(), g.lists)
+	}
+}
+
+func TestCreateIssueUnverifiableRecoveryNeverCreates(t *testing.T) {
+	f, g := newIssueFixture(t, nil)
+	g.lostReply = true
+	requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, nil)), http.StatusBadGateway)
+	g.lostReply, g.listErr = false, errors.New("list failed")
+	f.server.issueGrace = time.Millisecond
+	time.Sleep(5 * time.Millisecond)
+	w := f.request("POST", "/api/issues", issueJSON(t, nil))
+	requireStatus(t, w, http.StatusBadGateway)
+	if decodeIssue(t, w).Error.Kind != "issue_state_unknown" || g.attempts != 1 {
+		t.Fatalf("a failed search must not create: attempts=%d %s", g.attempts, w.Body.String())
+	}
+}
+
+func TestCreateIssueStartRunUsesRunPathAndNeverApproves(t *testing.T) {
+	f, g := newIssueFixture(t, fake.New("anthropic", specStep()))
+	f.withRepo()
+	w := f.request("POST", "/api/issues", issueJSON(t, map[string]any{"start_run": true, "mode": "refine", "dry_run": true}))
+	requireStatus(t, w, http.StatusCreated)
+	out := decodeIssue(t, w)
+	if out.Run == nil || out.Run.IssueNumber != out.Issue.Number || out.Run.Repo != "owner/repo" {
+		t.Fatalf("run: %s", w.Body.String())
+	}
+	if w.Header().Get("Location") != fmt.Sprintf("/api/runs/%d", out.Run.ID) {
+		t.Fatalf("location %q", w.Header().Get("Location"))
+	}
+	waiting := f.waitFor(out.Run.ID, store.StatusAwaitingApproval)
+	if waiting.Trigger != "ui" || waiting.Mode != "refine" || !waiting.DryRun {
+		t.Fatalf("run not started like POST /api/runs: %+v", waiting)
+	}
+	if approvals, err := f.db.ListApprovals(t.Context(), out.Run.ID); err != nil || len(approvals) != 0 {
+		t.Fatalf("creating an issue must not approve: %+v %v", approvals, err)
+	}
+	row, _ := f.db.DashboardIssue(t.Context(), goodKey)
+	if row.RunID != out.Run.ID {
+		t.Fatalf("run not linked: %+v", row)
+	}
+	// Retry: same issue, same run, no second run.
+	w = f.request("POST", "/api/issues", issueJSON(t, map[string]any{"start_run": true, "mode": "refine", "dry_run": true}))
+	requireStatus(t, w, http.StatusOK)
+	again := decodeIssue(t, w)
+	if again.Run == nil || again.Run.ID != out.Run.ID || g.count() != 1 {
+		t.Fatalf("retry: %s", w.Body.String())
+	}
+	if page, _ := f.db.ListRuns(t.Context(), store.RunFilter{}); len(page.Runs) != 1 {
+		t.Fatalf("runs: %d", len(page.Runs))
+	}
+	// The run detail names the dashboard requester.
+	w = f.request("GET", fmt.Sprintf("/api/runs/%d", out.Run.ID), "")
+	requireStatus(t, w, 200)
+	if !strings.Contains(w.Body.String(), `"requested_by":"operator"`) {
+		t.Fatalf("detail lacks requester: %s", w.Body.String())
+	}
+}
+
+func TestCreateIssueResumesRunAfterEarlierRunFailure(t *testing.T) {
+	f, g := newIssueFixture(t, fake.New("anthropic", specStep()))
+	f.withRepo()
+	req := issueJSON(t, map[string]any{"start_run": true, "mode": "refine", "dry_run": true})
+	// Pre-create the row as if the first request died after the issue existed.
+	g.issues = append(g.issues, github.Issue{Number: 1, Title: "x", State: "open"})
+	in := issueRequest{Repo: "owner/repo", Title: "Add dark mode", Body: "Please add a dark theme.", StartRun: true, IdempotencyKey: goodKey, Mode: "refine", DryRun: true}
+	if _, _, err := f.db.BeginDashboardIssue(t.Context(), store.DashboardIssue{IdempotencyKey: goodKey, RequestHash: in.hash(), Repo: "owner/repo", Actor: "operator"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.CompleteDashboardIssue(t.Context(), goodKey, 1, "I_node1", "https://github.com/owner/repo/issues/1", time.Now()); err != nil {
+		t.Fatal(err)
+rg: internal/runner/refine.go: No such file or directory (os error 2)
+
+codex
+- **P1 — [internal/server/issues.go:318](/Users/pappumishra/Documents/selfproject/patchbot-m26-create-issue/internal/server/issues.go:318): Public marker permits recovery hijacking.** After GitHub creates an issue but its response/bookkeeping is lost, an outsider can copy its marker into a newer issue. Recovery accepts the first matching suffix without checking author or content, links the outsider’s issue to the dashboard row, and starts its run under the original requester. **Fix:** verify the expected bot/PAT author and normalized request content; reject ambiguous matches.
+
+- **P2 — [internal/server/issues.go:338](/Users/pappumishra/Documents/selfproject/patchbot-m26-create-issue/internal/server/issues.go:338): Run creation is not durably idempotent.** Concurrent retries can both observe no run. If the first run fails quickly or finishes an investigation before the second inserts, the active-run constraint allows a second run. Linking then conflicts, but that error is ignored, so identical requests can return different runs and repeat work. **Fix:** use a stable, unique run ingress key derived from the dashboard row and retrieve the existing run on conflict.
+tokens used
+65,228
+- **P1 — [internal/server/issues.go:318](/Users/pappumishra/Documents/selfproject/patchbot-m26-create-issue/internal/server/issues.go:318): Public marker permits recovery hijacking.** After GitHub creates an issue but its response/bookkeeping is lost, an outsider can copy its marker into a newer issue. Recovery accepts the first matching suffix without checking author or content, links the outsider’s issue to the dashboard row, and starts its run under the original requester. **Fix:** verify the expected bot/PAT author and normalized request content; reject ambiguous matches.
+
+- **P2 — [internal/server/issues.go:338](/Users/pappumishra/Documents/selfproject/patchbot-m26-create-issue/internal/server/issues.go:338): Run creation is not durably idempotent.** Concurrent retries can both observe no run. If the first run fails quickly or finishes an investigation before the second inserts, the active-run constraint allows a second run. Linking then conflicts, but that error is ignored, so identical requests can return different runs and repeat work. **Fix:** use a stable, unique run ingress key derived from the dashboard row and retrieve the existing run on conflict.

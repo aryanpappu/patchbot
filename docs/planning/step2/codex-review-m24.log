@@ -1,0 +1,4229 @@
+Reading additional input from stdin...
+OpenAI Codex v0.166.0
+--------
+workdir: /Users/pappumishra/Documents/selfproject/patchbot-m24-repo-mgmt
+model: gpt-6.1-sol
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: none
+reasoning summaries: none
+session id: 01a1d9ba-3d18-7500-a2f0-9531b80ca7d4
+--------
+user
+Review branch m24-repo-mgmt vs development (git diff development...HEAD): dashboard-managed repository allowlist for patchbot (registry, 0010 migration, /api/repos CRUD, frozen repo_settings artifact per run). Focus: privilege escalation via UI-edited commands (argv vs shell, PATH/binary injection, protected path removal, path traversal), validation parity gaps vs config repos, config/dashboard collision, TOCTOU between edit and running runs (frozen settings read back everywhere, any remaining direct cfg.Repos reads), delete with active runs race, audit integrity, auth on new routes, XSS in UI. Report only real findings: file:line, severity, scenario, fix. Concise.
+codex
+I’ll inspect the diff and trace repository settings through command execution, run snapshots, API authorization, and the dashboard UI.
+exec
+/bin/zsh -lc 'git diff --stat development...HEAD; git status --short; rg --files -g AGENTS.md' in /Users/pappumishra/Documents/selfproject/patchbot-m24-repo-mgmt
+ exited 1 in 222ms:
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-8M5dr4Fo' (errno=Operation not permitted)
+ CHANGELOG.md                             |   7 +
+ SECURITY.md                              |   7 +
+ docs/ARCHITECTURE.md                     |  20 ++
+ docs/DECISIONS.md                        |   1 +
+ docs/M24-REPORT.md                       |  39 +++
+ docs/PROGRESS.md                         |   1 +
+ internal/cli/config.go                   |  23 ++
+ internal/cli/doctor.go                   |  23 ++
+ internal/cli/doctor_repos_test.go        |  43 +++
+ internal/cli/memory.go                   |  14 +-
+ internal/config/executor.go              |   8 +-
+ internal/config/validate.go              |  46 +++-
+ internal/repos/repos.go                  | 447 +++++++++++++++++++++++++++++++
+ internal/repos/repos_test.go             | 259 ++++++++++++++++++
+ internal/runner/executor_repo_test.go    |  14 +-
+ internal/runner/ingress.go               |   8 +-
+ internal/runner/lifecycle.go             |   6 +-
+ internal/runner/memory.go                |   9 +-
+ internal/runner/phases.go                |  61 ++++-
+ internal/runner/publish.go               |   8 +-
+ internal/runner/repo_freeze_test.go      |  83 ++++++
+ internal/runner/repos.go                 |  36 +++
+ internal/runner/runner.go                |  25 +-
+ internal/server/api.go                   |  11 +-
+ internal/server/memory.go                |  12 +-
+ internal/server/repos.go                 | 136 ++++++++++
+ internal/server/repos_test.go            | 226 ++++++++++++++++
+ internal/server/server.go                |   3 +
+ internal/server/web.go                   |   2 +
+ internal/server/webhook.go               |   2 +-
+ internal/server/webhook_test.go          |   4 +-
+ internal/store/migrations/0010_repos.sql |  36 +++
+ internal/store/repos.go                  | 231 ++++++++++++++++
+ internal/store/repos_test.go             | 106 ++++++++
+ internal/store/store.go                  |   1 +
+ internal/web/assets/app.js               | 107 +++++++-
+ internal/web/shell.html                  |   2 +-
+ internal/web/web.go                      |   2 +-
+ internal/workspace/jail.go               |   4 +
+ patchbot.example.toml                    |   3 +
+ 40 files changed, 2010 insertions(+), 66 deletions(-)
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-843y4nJR' (errno=Operation not permitted)
+
+exec
+/bin/zsh -lc 'cat internal/repos/repos.go' in /Users/pappumishra/Documents/selfproject/patchbot-m24-repo-mgmt
+ succeeded in 0ms:
+// Package repos is the effective repository allowlist: the read-only
+// [repos."owner/name"] tables of the config file plus the repositories managed
+// from the dashboard (stored in SQLite with an audit trail). The runner, the
+// server, the webhook ingress, doctor and config show consult a Registry
+// instead of reading config.Config.Repos where the allowlist matters.
+//
+// Dashboard repositories are validated by the same code as config repositories
+// (config.Config.ValidateRepo) plus size limits and the workspace protected-path
+// rules. A run freezes the settings it started with (see internal/runner), so
+// an edit or removal here only affects runs that start afterwards.
+package repos
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/store"
+	"github.com/aryanpappu/patchbot/internal/workspace"
+)
+
+// Sources of an effective repository.
+const (
+	SourceConfig    = "config"
+	SourceDashboard = "dashboard"
+)
+
+// Errors returned by mutations. Validation failures wrap ErrInvalid and carry
+// a message safe to show the operator (it never quotes a secret).
+var (
+	ErrInvalid   = errors.New("invalid repository")
+	ErrReadOnly  = errors.New("repository comes from the config file and is read-only here")
+	ErrCollision = errors.New("a repository with this name is defined in the config file")
+	ErrNotFound  = store.ErrNotFound
+)
+
+// Limits keep one stored repository small enough to freeze as a run artifact.
+const (
+	maxCommands = 32
+	maxArgv     = 64
+	maxArgBytes = 4096
+	maxProtect  = 64
+	maxPathLen  = 512
+)
+
+// Settings is the editable part of a repository, in the shape of a
+// [repos."owner/name"] table.
+type Settings struct {
+	// Commands maps a command ID to its argv (never a shell string).
+	Commands    map[string][]string `json:"commands"`
+	TestCommand string              `json:"test_command,omitempty"`
+	Protected   []string            `json:"protected,omitempty"`
+	// Image is digest-pinned (container mode only); Path is the container PATH.
+	Image string   `json:"image,omitempty"`
+	Path  []string `json:"path,omitempty"`
+}
+
+// FromRepo copies a config repository into Settings.
+func FromRepo(r *config.Repo) Settings {
+	if r == nil {
+		return Settings{}
+	}
+	s := Settings{TestCommand: r.TestCommand, Image: r.Image, Protected: slices.Clone(r.Protected), Path: slices.Clone(r.Path)}
+	s.Commands = make(map[string][]string, len(r.Commands))
+	for id, argv := range r.Commands {
+		s.Commands[id] = slices.Clone(argv)
+	}
+	return s
+}
+
+// Repo converts Settings back to a config.Repo (deep copy).
+func (s Settings) Repo() *config.Repo {
+	r := &config.Repo{TestCommand: s.TestCommand, Image: s.Image, Protected: slices.Clone(s.Protected), Path: slices.Clone(s.Path)}
+	r.Commands = make(map[string][]string, len(s.Commands))
+	for id, argv := range s.Commands {
+		r.Commands[id] = slices.Clone(argv)
+	}
+	return r
+}
+
+// Entry is one effective repository.
+type Entry struct {
+	Name     string   `json:"name"`
+	Source   string   `json:"source"`
+	Settings Settings `json:"settings"`
+	// Version is 0 for config repositories (read-only) and starts at 1 for
+	// dashboard repositories; every edit adds one.
+	Version   int64      `json:"version"`
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	CreatedBy string     `json:"created_by,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	UpdatedBy string     `json:"updated_by,omitempty"`
+	// BuiltinProtected are protected whatever the settings say.
+	BuiltinProtected []string `json:"builtin_protected"`
+}
+
+// Registry is safe for concurrent use.
+type Registry struct {
+	cfg    *config.Config
+	db     store.RepoStore
+	redact func(string) string
+	now    func() time.Time
+
+	wmu  sync.Mutex // serializes mutations
+	mu   sync.RWMutex
+	dash map[string]Entry
+}
+
+// New loads the dashboard repositories. db may be nil (config repositories
+// only; mutations then fail). redact must mask credential-shaped text; nil
+// uses the config's redactor.
+func New(ctx context.Context, cfg *config.Config, db store.RepoStore, redact func(string) string) (*Registry, error) {
+	if redact == nil {
+		redact = cfg.Redactor().Redact
+	}
+	r := &Registry{cfg: cfg, db: db, redact: redact, now: time.Now, dash: map[string]Entry{}}
+	if err := r.Reload(ctx); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// Reload re-reads the dashboard repositories from the database. A stored row
+// that no longer validates (for example after the executor mode changed) is
+// skipped, so it can never widen the allowlist; List still reports nothing for
+// it and the operator can remove or fix it by editing config.
+func (r *Registry) Reload(ctx context.Context) error {
+	if r.db == nil {
+		return nil
+	}
+	recs, err := r.db.ListRepos(ctx)
+	if err != nil {
+		return err
+	}
+	next := make(map[string]Entry, len(recs))
+	for _, rec := range recs {
+		e, err := r.entry(rec)
+		if err != nil {
+			continue
+		}
+		if _, clash := r.cfg.Repos[e.Name]; clash {
+			continue // the config file wins; the row stays inert
+		}
+		next[e.Name] = e
+	}
+	r.mu.Lock()
+	r.dash = next
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *Registry) entry(rec store.RepoRecord) (Entry, error) {
+	var s Settings
+	if err := json.Unmarshal([]byte(rec.SettingsJSON), &s); err != nil {
+		return Entry{}, err
+	}
+	if err := r.cfg.ValidateRepo(rec.Name, s.Repo()); err != nil {
+		return Entry{}, err
+	}
+	created, updated := rec.CreatedAt, rec.UpdatedAt
+	return Entry{Name: rec.Name, Source: SourceDashboard, Settings: s, Version: rec.Version,
+		CreatedAt: &created, CreatedBy: rec.CreatedBy, UpdatedAt: &updated, UpdatedBy: rec.UpdatedBy,
+		BuiltinProtected: workspace.BuiltinProtected()}, nil
+}
+
+// Normalize returns the canonical (lower-case, trimmed) repository name.
+func Normalize(name string) string { return strings.ToLower(strings.TrimSpace(name)) }
+
+// Lookup returns a private copy of the repository's settings.
+func (r *Registry) Lookup(name string) (*config.Repo, bool) {
+	e, ok := r.Get(name)
+	if !ok {
+		return nil, false
+	}
+	return e.Settings.Repo(), true
+}
+
+// Has reports whether name is on the allowlist.
+func (r *Registry) Has(name string) bool {
+	name = Normalize(name)
+	if _, ok := r.cfg.Repos[name]; ok {
+		return true
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.dash[name]
+	return ok
+}
+
+// Allowed is the single allowlist question: may runs, ingress and memory touch
+// this repository? It is Has under the name callers outside this package use.
+func (r *Registry) Allowed(name string) bool { return r.Has(name) }
+
+// Get returns one effective repository.
+func (r *Registry) Get(name string) (Entry, bool) {
+	name = Normalize(name)
+	if c, ok := r.cfg.Repos[name]; ok {
+		return configEntry(name, c), true
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	e, ok := r.dash[name]
+	return cloneEntry(e), ok
+}
+
+func configEntry(name string, c *config.Repo) Entry {
+	return Entry{Name: name, Source: SourceConfig, Settings: FromRepo(c), BuiltinProtected: workspace.BuiltinProtected()}
+}
+
+func cloneEntry(e Entry) Entry {
+	e.Settings = FromRepo(e.Settings.Repo())
+	return e
+}
+
+// Names returns every allowlisted repository, sorted.
+func (r *Registry) Names() []string {
+	r.mu.RLock()
+	names := make([]string, 0, len(r.cfg.Repos)+len(r.dash))
+	for name := range r.dash {
+		names = append(names, name)
+	}
+	r.mu.RUnlock()
+	for name := range r.cfg.Repos {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// List returns the effective repositories sorted by name.
+func (r *Registry) List() []Entry {
+	names := r.Names()
+	out := make([]Entry, 0, len(names))
+	for _, name := range names {
+		if e, ok := r.Get(name); ok {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// Validate applies every rule a dashboard repository must satisfy. name must
+// already be normalized.
+func (r *Registry) Validate(name string, s Settings) error {
+	if _, clash := r.cfg.Repos[name]; clash {
+		return ErrCollision
+	}
+	if len(s.Commands) > maxCommands || len(s.Protected) > maxProtect || len(s.Path) > maxProtect {
+		return invalid("too many commands, protected paths or PATH entries")
+	}
+	for id, argv := range s.Commands {
+		if len(argv) > maxArgv {
+			return invalid("command %q has too many arguments", id)
+		}
+		for _, arg := range argv {
+			if len(arg) > maxArgBytes {
+				return invalid("command %q has an argument over %d bytes", id, maxArgBytes)
+			}
+		}
+	}
+	for _, p := range s.Protected {
+		if len(p) > maxPathLen {
+			return invalid("a protected path is over %d bytes", maxPathLen)
+		}
+	}
+	if len(s.Image) > maxPathLen {
+		return invalid("image is too long")
+	}
+	repo := s.Repo()
+	if err := r.cfg.ValidateRepo(name, repo); err != nil {
+		return invalid("%s", err)
+	}
+	if _, err := workspace.NewPolicy(repo.Protected); err != nil {
+		return invalid("%s", err)
+	}
+	raw, err := json.Marshal(s)
+	if err != nil {
+		return invalid("settings cannot be encoded")
+	}
+	// The frozen run artifact and the audit rows are redacted on save. A value
+	// that redaction would change cannot be stored losslessly: fail closed.
+	if r.redact(string(raw)) != string(raw) {
+		return invalid("a command, path or image looks like a credential and cannot be stored")
+	}
+	return nil
+}
+
+// ValidationError carries an operator-facing message.
+type ValidationError struct{ msg string }
+
+func (e *ValidationError) Error() string { return e.msg }
+
+// Is makes errors.Is(err, ErrInvalid) true.
+func (e *ValidationError) Is(target error) bool { return target == ErrInvalid }
+
+func invalid(format string, args ...any) error {
+	return &ValidationError{msg: fmt.Sprintf(format, args...)}
+}
+
+func (r *Registry) auditJSON(s *Settings) string {
+	if s == nil {
+		return ""
+	}
+	raw, err := json.Marshal(s)
+	if err != nil {
+		return ""
+	}
+	return r.redact(string(raw))
+}
+
+func (r *Registry) check() error {
+	if r.db == nil {
+		return errors.New("repository storage is not available")
+	}
+	return nil
+}
+
+// Add stores a new dashboard repository.
+func (r *Registry) Add(ctx context.Context, name string, s Settings, actor, channel string) (Entry, error) {
+	if err := r.check(); err != nil {
+		return Entry{}, err
+	}
+	name = Normalize(name)
+	if err := r.Validate(name, s); err != nil {
+		return Entry{}, err
+	}
+	r.wmu.Lock()
+	defer r.wmu.Unlock()
+	now := r.now()
+	rec, err := r.db.AddRepo(ctx, store.RepoRecord{Name: name, SettingsJSON: r.auditJSON(&s), CreatedAt: now, CreatedBy: r.redact(actor)},
+		store.RepoAudit{Repo: name, Action: store.RepoActionAdd, Actor: r.redact(actor), Channel: channel, AfterJSON: r.auditJSON(&s), At: now})
+	if err != nil {
+		return Entry{}, err
+	}
+	return r.publish(rec)
+}
+
+// Update replaces a dashboard repository's settings if its version is still
+// expectedVersion.
+func (r *Registry) Update(ctx context.Context, name string, s Settings, expectedVersion int64, actor, channel string) (Entry, error) {
+	if err := r.check(); err != nil {
+		return Entry{}, err
+	}
+	name = Normalize(name)
+	if _, ok := r.cfg.Repos[name]; ok {
+		return Entry{}, ErrReadOnly
+	}
+	if err := r.Validate(name, s); err != nil {
+		return Entry{}, err
+	}
+	r.wmu.Lock()
+	defer r.wmu.Unlock()
+	before, ok := r.Get(name)
+	if !ok {
+		return Entry{}, ErrNotFound
+	}
+	now := r.now()
+	rec, err := r.db.UpdateRepo(ctx, store.RepoRecord{Name: name, SettingsJSON: r.auditJSON(&s), UpdatedAt: now, UpdatedBy: r.redact(actor)}, expectedVersion,
+		store.RepoAudit{Repo: name, Action: store.RepoActionEdit, Actor: r.redact(actor), Channel: channel, BeforeJSON: r.auditJSON(&before.Settings), AfterJSON: r.auditJSON(&s), At: now})
+	if err != nil {
+		return Entry{}, err
+	}
+	return r.publish(rec)
+}
+
+// Remove deletes a dashboard repository unless it has active runs
+// (store.ErrRepoBusy). Run history and the audit trail stay.
+func (r *Registry) Remove(ctx context.Context, name string, expectedVersion int64, actor, channel string) error {
+	if err := r.check(); err != nil {
+		return err
+	}
+	name = Normalize(name)
+	if _, ok := r.cfg.Repos[name]; ok {
+		return ErrReadOnly
+	}
+	r.wmu.Lock()
+	defer r.wmu.Unlock()
+	before, ok := r.Get(name)
+	if !ok {
+		return ErrNotFound
+	}
+	err := r.db.RemoveRepo(ctx, name, expectedVersion,
+		store.RepoAudit{Repo: name, Action: store.RepoActionRemove, Actor: r.redact(actor), Channel: channel, BeforeJSON: r.auditJSON(&before.Settings), At: r.now()})
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	delete(r.dash, name)
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *Registry) publish(rec store.RepoRecord) (Entry, error) {
+	e, err := r.entry(rec)
+	if err != nil {
+		return Entry{}, err
+	}
+	r.mu.Lock()
+	r.dash[e.Name] = e
+	r.mu.Unlock()
+	return cloneEntry(e), nil
+}
+
+// Audit returns the newest audit rows for a repository, also after removal.
+func (r *Registry) Audit(ctx context.Context, name string) ([]store.RepoAudit, error) {
+	if r.db == nil {
+		return nil, nil
+	}
+	return r.db.ListRepoAudit(ctx, Normalize(name), 200)
+}
+
+// Merge adds dashboard records to a copy of the config repositories, for
+// read-only consumers that hold no Registry (doctor, config show). Records
+// that fail validation or collide with a config repository are returned in
+// problems keyed by name.
+func Merge(cfg *config.Config, recs []store.RepoRecord) (merged map[string]*config.Repo, dashboard []string, problems map[string]error) {
+	merged = make(map[string]*config.Repo, len(cfg.Repos)+len(recs))
+	for name, r := range cfg.Repos {
+		merged[name] = r
+	}
+	problems = map[string]error{}
+	for _, rec := range recs {
+		var s Settings
+		if err := json.Unmarshal([]byte(rec.SettingsJSON), &s); err != nil {
+			problems[rec.Name] = errors.New("settings are unreadable")
+			continue
+		}
+		if _, clash := cfg.Repos[rec.Name]; clash {
+			problems[rec.Name] = ErrCollision
+			continue
+		}
+		if err := cfg.ValidateRepo(rec.Name, s.Repo()); err != nil {
+			problems[rec.Name] = err
+			continue
+		}
+		merged[rec.Name] = s.Repo()
+		dashboard = append(dashboard, rec.Name)
+	}
+	return merged, dashboard, problems
+}
+
+exec
+/bin/zsh -lc 'git diff development...HEAD -- internal/config internal/runner internal/server internal/workspace internal/web/assets/app.js internal/store/repos.go internal/store/migrations/0010_repos.sql' in /Users/pappumishra/Documents/selfproject/patchbot-m24-repo-mgmt
+ succeeded in 248ms:
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-ZGkgEAnZ' (errno=Operation not permitted)
+diff --git a/internal/config/executor.go b/internal/config/executor.go
+index ab81a80..6465c1e 100644
+--- a/internal/config/executor.go
++++ b/internal/config/executor.go
+@@ -32,8 +32,14 @@ type RepoExecutor struct {
+ // RepoExecutor resolves the per-repository overrides. An unknown repo or ""
+ // yields the [executor] values.
+ func (c *Config) RepoExecutor(repo string) RepoExecutor {
++	return c.ExecutorFor(repo, c.Repos[repo])
++}
++
++// ExecutorFor resolves the overrides of an explicit repository entry (for
++// example a dashboard repository or a run-frozen copy); nil yields [executor].
++func (c *Config) ExecutorFor(repo string, r *Repo) RepoExecutor {
+ 	out := RepoExecutor{Image: c.Executor.Image, Path: slices.Clone(c.Executor.Path), ImageSource: "executor.image"}
+-	if r := c.Repos[repo]; r != nil {
++	if r != nil {
+ 		if r.Image != "" {
+ 			out.Image, out.ImageSource = r.Image, fmt.Sprintf("repos.%q.image", repo)
+ 		}
+diff --git a/internal/config/validate.go b/internal/config/validate.go
+index cd0032a..b2b73a6 100644
+--- a/internal/config/validate.go
++++ b/internal/config/validate.go
+@@ -279,24 +279,44 @@ func (c *Config) validateExecutor(v *validator) {
+ 		v.addf("executor.path: %s", err)
+ 	}
+ 	for _, name := range sortedKeys(c.Repos) {
+-		r := c.Repos[name]
+-		at := fmt.Sprintf("repos.%q", name)
+-		switch {
+-		case r.Image == "" && e.Image == "":
+-			v.addf("%s.image: required in container mode because executor.image is not set; pin it by digest (name@sha256:...)", at)
+-		case r.Image != "":
+-			if err := execx.ValidateImage(r.Image); err != nil {
+-				v.addf("%s.image: %s", at, err)
+-			}
++		c.validateRepoExecutor(v, name, c.Repos[name])
++	}
++}
++
++// validateRepoExecutor checks a repository's container image and PATH in
++// container mode against the effective [executor] table.
++func (c *Config) validateRepoExecutor(v *validator, name string, r *Repo) {
++	e := c.Executor
++	at := fmt.Sprintf("repos.%q", name)
++	switch {
++	case r.Image == "" && e.Image == "":
++		v.addf("%s.image: required in container mode because executor.image is not set; pin it by digest (name@sha256:...)", at)
++	case r.Image != "":
++		if err := execx.ValidateImage(r.Image); err != nil {
++			v.addf("%s.image: %s", at, err)
+ 		}
+-		if r.Path != nil {
+-			if err := execx.ValidateContainerPath(r.Path); err != nil {
+-				v.addf("%s.path: %s", at, err)
+-			}
++	}
++	if r.Path != nil {
++		if err := execx.ValidateContainerPath(r.Path); err != nil {
++			v.addf("%s.path: %s", at, err)
+ 		}
+ 	}
+ }
+ 
++// ValidateRepo applies to one repository entry exactly the checks Validate
++// applies to a [repos."owner/name"] table: name format, command argv rules,
++// test_command, protected paths and, in container mode, image and PATH. The
++// dashboard uses it for repositories it stores, so both sources share one rule
++// set. Messages never contain a secret.
++func (c *Config) ValidateRepo(name string, r *Repo) error {
++	v := validator{redactor: c.Redactor()}
++	validateRepo(&v, name, r)
++	if c.Executor.Container() {
++		c.validateRepoExecutor(&v, name, r)
++	}
++	return errors.Join(v.errs...)
++}
++
+ func (c *Config) validateProvider(v *validator, name string, p *Provider) {
+ 	at := "providers." + name
+ 	v.check(providerNameRE.MatchString(name),
+diff --git a/internal/runner/executor_repo_test.go b/internal/runner/executor_repo_test.go
+index d25013c..cdaeb25 100644
+--- a/internal/runner/executor_repo_test.go
++++ b/internal/runner/executor_repo_test.go
+@@ -11,11 +11,21 @@ import (
+ 
+ 	"github.com/aryanpappu/patchbot/internal/config"
+ 	"github.com/aryanpappu/patchbot/internal/execx"
++	"github.com/aryanpappu/patchbot/internal/repos"
+ 	"github.com/aryanpappu/patchbot/internal/secret"
+ 	"github.com/aryanpappu/patchbot/internal/store"
+ 	"github.com/aryanpappu/patchbot/internal/testpath"
+ )
+ 
++func testRegistry(t *testing.T, cfg *config.Config, db store.Store) *repos.Registry {
++	t.Helper()
++	reg, err := repos.New(t.Context(), cfg, db, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return reg
++}
++
+ func repoImage(c string) string { return "example.test/img:1@sha256:" + strings.Repeat(c, 64) }
+ 
+ func loadRepoConfig(t *testing.T, bin, body string) *config.Config {
+@@ -114,7 +124,7 @@ func TestRunExecutorFreezesAndRecordsImage(t *testing.T) {
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+-	r := &Runner{cfg: cfg, db: db, redactor: secret.NewRedactor()}
++	r := &Runner{cfg: cfg, db: db, redactor: secret.NewRedactor(), repos: testRegistry(t, cfg, db)}
+ 	first, err := r.runExecutor(t.Context(), run)
+ 	if err != nil {
+ 		t.Fatal(err)
+@@ -165,7 +175,7 @@ func TestRunExecutorRefusesToFreezeRedactableSettings(t *testing.T) {
+ 	}
+ 	red := secret.NewRedactor()
+ 	red.AddSecrets(secret.New(token))
+-	r := &Runner{cfg: cfg, db: db, redactor: red}
++	r := &Runner{cfg: cfg, db: db, redactor: red, repos: testRegistry(t, cfg, db)}
+ 	if _, err := r.runExecutor(t.Context(), run); err == nil || strings.Contains(err.Error(), token) {
+ 		t.Fatalf("want a fail-closed error without the value, got %v", err)
+ 	}
+diff --git a/internal/runner/ingress.go b/internal/runner/ingress.go
+index ccc0a17..31c3d52 100644
+--- a/internal/runner/ingress.go
++++ b/internal/runner/ingress.go
+@@ -38,7 +38,7 @@ func Gone(err error) bool {
+ }
+ 
+ func (r *Runner) reconcileIssue(ctx context.Context, repo string, number int64, comments, labels bool) error {
+-	if r.cfg.Repos[repo] == nil || number <= 0 {
++	if !r.repos.Has(repo) || number <= 0 {
+ 		return nil
+ 	}
+ 	meta, err := r.gh.GetRepo(ctx, ref(repo))
+@@ -151,11 +151,7 @@ func (r *Runner) SyncLabels(ctx context.Context) error {
+ 	if !ok {
+ 		return nil
+ 	}
+-	repos := make([]string, 0, len(r.cfg.Repos))
+-	for repo := range r.cfg.Repos {
+-		repos = append(repos, repo)
+-	}
+-	sort.Strings(repos)
++	repos := r.repos.Names()
+ 	var errs []error
+ 	for _, repo := range repos {
+ 		if err := r.syncRepoLabels(ctx, listing, repo); err != nil {
+diff --git a/internal/runner/lifecycle.go b/internal/runner/lifecycle.go
+index dda50bd..650716a 100644
+--- a/internal/runner/lifecycle.go
++++ b/internal/runner/lifecycle.go
+@@ -237,7 +237,11 @@ func (r *Runner) EditSpec(ctx context.Context, id int64, draft tools.SpecDraft)
+ 	}
+ 	draft = *(&tools.Submission{Spec: &draft}).Redacted(r.redactor).Spec
+ 	// Apply the refinement content and path rules to operator edits.
+-	if err := validateDraft(ctx, run, r.cfg.Repos[run.Repo], draft); err != nil {
++	frozenRepo, err := r.runRepo(ctx, run)
++	if err != nil {
++		return store.Spec{}, err
++	}
++	if err := validateDraft(ctx, run, frozenRepo, draft); err != nil {
+ 		return store.Spec{}, errors.Join(ErrInvalidRequest, err)
+ 	}
+ 	issue, err := r.gh.GetIssue(ctx, ref(run.Repo), int(run.IssueNumber))
+diff --git a/internal/runner/memory.go b/internal/runner/memory.go
+index 0316c5c..c811e66 100644
+--- a/internal/runner/memory.go
++++ b/internal/runner/memory.go
+@@ -21,8 +21,9 @@ import (
+ // memory.selected event exposes the IDs and content hashes.
+ const memoryArtifact = "memory_selection"
+ 
+-func (r *Runner) policyDigest(run store.Run) string {
+-	return memory.PolicyDigest(r.cfg.Repos[run.Repo], r.cfg.Limits.TrustedPath)
++func (r *Runner) policyDigest(ctx context.Context, run store.Run) string {
++	repo, _ := r.runRepo(ctx, run)
++	return memory.PolicyDigest(repo, r.cfg.Limits.TrustedPath)
+ }
+ 
+ // selectMemory freezes the memory for one stage before the model sees it. The
+@@ -33,7 +34,7 @@ func (r *Runner) selectMemory(ctx context.Context, run store.Run, stage string)
+ 	if !r.cfg.Memory.Enabled {
+ 		return "", nil
+ 	}
+-	sel, err := memory.Select(ctx, r.db, r.cfg.Memory, run.Repo, stage, r.policyDigest(run), r.now())
++	sel, err := memory.Select(ctx, r.db, r.cfg.Memory, run.Repo, stage, r.policyDigest(ctx, run), r.now())
+ 	if err != nil {
+ 		return "", err
+ 	}
+@@ -87,7 +88,7 @@ func (r *Runner) observe(ctx context.Context, run store.Run, command string, res
+ 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+ 	defer cancel()
+ 	_, err := memory.AddObservation(recordCtx, r.db, memory.ObservationInput{Repo: run.Repo, CommandID: command, ExitCode: result.ExitCode, TimedOut: result.TimedOut,
+-		BaseSHA: run.BaseSHA, HeadSHA: head, PolicyDigest: r.policyDigest(run), Evidence: evidence, RunID: run.ID, ObservedAt: r.now()})
++		BaseSHA: run.BaseSHA, HeadSHA: head, PolicyDigest: r.policyDigest(ctx, run), Evidence: evidence, RunID: run.ID, ObservedAt: r.now()})
+ 	if err != nil {
+ 		r.memoryWarn(recordCtx, run, "Memory observation could not be recorded; the run continues.")
+ 	}
+diff --git a/internal/runner/phases.go b/internal/runner/phases.go
+index 89d96b7..400bd59 100644
+--- a/internal/runner/phases.go
++++ b/internal/runner/phases.go
+@@ -17,6 +17,7 @@ import (
+ 	"github.com/aryanpappu/patchbot/internal/execx"
+ 	"github.com/aryanpappu/patchbot/internal/github"
+ 	"github.com/aryanpappu/patchbot/internal/gitx"
++	"github.com/aryanpappu/patchbot/internal/repos"
+ 	"github.com/aryanpappu/patchbot/internal/store"
+ 	"github.com/aryanpappu/patchbot/internal/tools"
+ 	"github.com/aryanpappu/patchbot/internal/workspace"
+@@ -83,7 +84,11 @@ func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha
+ 			return nil, err
+ 		}
+ 	}
+-	ws, err := workspace.Open(repo.Dir(), workspace.Options{Protected: r.cfg.Repos[run.Repo].Protected})
++	frozenRepo, err := r.runRepo(ctx, run)
++	if err != nil {
++		return nil, err
++	}
++	ws, err := workspace.Open(repo.Dir(), workspace.Options{Protected: frozenRepo.Protected})
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -100,7 +105,7 @@ func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha
+ 	if r.cfg.Executor.Container() {
+ 		policyOpts.TrustedPath = slices.Clone(frozen.Path)
+ 	}
+-	policy, err := execx.NewPolicy(ws.Dir(), r.cfg.Repos[run.Repo].Commands, policyOpts)
++	policy, err := execx.NewPolicy(ws.Dir(), frozenRepo.Commands, policyOpts)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -133,7 +138,11 @@ func (r *Runner) runExecutor(ctx context.Context, run store.Run) (config.RepoExe
+ 	case !errors.Is(err, store.ErrNotFound):
+ 		return config.RepoExecutor{}, err
+ 	}
+-	re := r.cfg.RepoExecutor(run.Repo)
++	frozenRepo, err := r.runRepo(ctx, run)
++	if err != nil {
++		return config.RepoExecutor{}, err
++	}
++	re := r.cfg.ExecutorFor(run.Repo, frozenRepo)
+ 	if re.Image == "" {
+ 		return config.RepoExecutor{}, fmt.Errorf("no container image for %s: set repos.%q.image or executor.image", run.Repo, run.Repo)
+ 	}
+@@ -151,7 +160,7 @@ func (r *Runner) runExecutor(ctx context.Context, run store.Run) (config.RepoExe
+ }
+ 
+ func (r *Runner) preflight(ctx context.Context, run store.Run) (github.Repo, github.Issue, error) {
+-	if r.cfg.Repos[run.Repo] == nil {
++	if !r.repos.Has(run.Repo) {
+ 		return github.Repo{}, github.Issue{}, errors.New("repository is not in configuration allowlist")
+ 	}
+ 	meta, err := r.gh.GetRepo(ctx, ref(run.Repo))
+@@ -437,7 +446,11 @@ func (r *Runner) code(ctx context.Context, run *store.Run) (err error) {
+ 	}
+ 	baseline := "not_run"
+ 	baselineInfo := baseline
+-	command, _ := r.cfg.Repos[run.Repo].TestCommandID()
++	frozenRepo, err := r.runRepo(ctx, *run)
++	if err != nil {
++		return err
++	}
++	command, _ := frozenRepo.TestCommandID()
+ 	if command != "" && r.cfg.Limits.BaselineTests {
+ 		test, err := r.baseline(ctx, *run, env, command, limits.Agent.TestTimeout)
+ 		if err != nil {
+@@ -611,3 +624,41 @@ func validateDraft(ctx context.Context, run store.Run, repo *config.Repo, draft
+ 	}
+ 	return nil
+ }
++
++// repoSettingsArtifact records the repository settings (commands, protected
++// paths, test command, image and PATH) a run started with. Like the executor
++// artifact it is written once and read back on every resume and revision, so
++// a dashboard edit or a config reload never changes a run in flight.
++const repoSettingsArtifact = "repo_settings"
++
++// runRepo returns the run's frozen repository settings, freezing the current
++// effective settings on first use. The artifact is redacted on save, so a value
++// that redaction would change is refused (fail closed) instead of being stored
++// and read back corrupted.
++func (r *Runner) runRepo(ctx context.Context, run store.Run) (*config.Repo, error) {
++	r.freezeMu.Lock()
++	defer r.freezeMu.Unlock()
++	saved, err := r.db.GetArtifact(ctx, run.ID, repoSettingsArtifact, 0)
++	switch {
++	case err == nil:
++		var s repos.Settings
++		if err := json.Unmarshal([]byte(saved.Content), &s); err != nil {
++			return nil, errors.New("recorded repository settings are unreadable")
++		}
++		return s.Repo(), nil
++	case !errors.Is(err, store.ErrNotFound):
++		return nil, err
++	}
++	repo, ok := r.repos.Lookup(run.Repo)
++	if !ok {
++		return nil, errors.New("repository is not in configuration allowlist")
++	}
++	content, err := json.Marshal(repos.FromRepo(repo))
++	if err != nil {
++		return nil, err
++	}
++	if r.redactor.Redact(string(content)) != string(content) {
++		return nil, fmt.Errorf("settings of %s look like a credential and cannot be recorded on the run", run.Repo)
++	}
++	return repo, r.artifact(ctx, run.ID, repoSettingsArtifact, string(content))
++}
+diff --git a/internal/runner/publish.go b/internal/runner/publish.go
+index 8ada9a4..e32d310 100644
+--- a/internal/runner/publish.go
++++ b/internal/runner/publish.go
+@@ -38,7 +38,11 @@ func (r *Runner) validateChanges(ctx context.Context, run store.Run, env *toolEn
+ 	if err != nil {
+ 		return err
+ 	}
+-	policy, err := workspace.NewPolicy(r.cfg.Repos[run.Repo].Protected)
++	frozenRepo, err := r.runRepo(ctx, run)
++	if err != nil {
++		return err
++	}
++	policy, err := workspace.NewPolicy(frozenRepo.Protected)
+ 	if err != nil {
+ 		return err
+ 	}
+@@ -160,7 +164,7 @@ func (r *Runner) publish(ctx context.Context, run *store.Run, env *toolEnvironme
+ 	if err := r.transition(ctx, run, store.StatusRunning, store.PhasePublish, store.RunPatch{HeadSHA: &head}); err != nil {
+ 		return err
+ 	}
+-	if repo := r.cfg.Repos[run.Repo]; result.LastTest != nil && repo != nil {
++	if repo, rerr := r.runRepo(ctx, *run); result.LastTest != nil && rerr == nil {
+ 		command, _ := repo.TestCommandID()
+ 		r.observe(ctx, *run, command, *result.LastTest, head, fmt.Sprintf("run %d verify test attempt %d", run.ID, result.TestAttempts))
+ 	}
+diff --git a/internal/runner/repo_freeze_test.go b/internal/runner/repo_freeze_test.go
+new file mode 100644
+index 0000000..d322e30
+--- /dev/null
++++ b/internal/runner/repo_freeze_test.go
+@@ -0,0 +1,83 @@
++package runner
++
++import (
++	"os"
++	"testing"
++
++	"github.com/aryanpappu/patchbot/internal/repos"
++	"github.com/aryanpappu/patchbot/internal/secret"
++	"github.com/aryanpappu/patchbot/internal/store"
++)
++
++func TestRunKeepsFrozenRepoSettingsAfterEdit(t *testing.T) {
++	cfg := loadRepoConfig(t, "/usr/bin", repoTables)
++	if err := mkData(cfg.DataDir()); err != nil {
++		t.Fatal(err)
++	}
++	db, err := store.Open(t.Context(), cfg.DatabasePath())
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = db.Close() })
++	reg := testRegistry(t, cfg, db)
++	r := &Runner{cfg: cfg, db: db, redactor: secret.NewRedactor(), repos: reg}
++	ctx := t.Context()
++	settings := repos.Settings{Commands: map[string][]string{"test": {"go", "test"}}, TestCommand: "test", Protected: []string{"secrets"}}
++	if _, err := reg.Add(ctx, "acme/widgets", settings, "me", "ui"); err != nil {
++		t.Fatal(err)
++	}
++	newRun := func(issue int64) store.Run {
++		run, err := db.CreateRun(ctx, store.Run{Repo: "acme/widgets", IssueNumber: issue, Mode: "fix", Provider: "anthropic", Status: store.StatusRunning})
++		if err != nil {
++			t.Fatal(err)
++		}
++		return run
++	}
++	inFlight := newRun(1)
++	first, err := r.runRepo(ctx, inFlight)
++	if err != nil || first.Protected[0] != "secrets" {
++		t.Fatalf("freeze: %+v %v", first, err)
++	}
++	settings.Commands = map[string][]string{"test": {"make", "check"}}
++	settings.Protected = []string{"deploy"}
++	if _, err := reg.Update(ctx, "acme/widgets", settings, 1, "me", "ui"); err != nil {
++		t.Fatal(err)
++	}
++	// The run in flight (and a resumed run in a fresh Runner) keeps the old settings.
++	again, err := r.runRepo(ctx, inFlight)
++	if err != nil || again.Commands["test"][0] != "go" || again.Protected[0] != "secrets" {
++		t.Fatalf("in-flight run changed: %+v %v", again, err)
++	}
++	reg2 := testRegistry(t, cfg, db)
++	resumed := &Runner{cfg: cfg, db: db, redactor: secret.NewRedactor(), repos: reg2}
++	if got, err := resumed.runRepo(ctx, inFlight); err != nil || got.Commands["test"][0] != "go" {
++		t.Fatalf("resume lost frozen settings: %+v %v", got, err)
++	}
++	// A new run sees the edit, and still works if the repo is later removed.
++	fresh := newRun(2)
++	if got, err := r.runRepo(ctx, fresh); err != nil || got.Commands["test"][0] != "make" || got.Protected[0] != "deploy" {
++		t.Fatalf("new run: %+v %v", got, err)
++	}
++	if !r.repos.Has("acme/widgets") {
++		t.Fatal("repo should be allowlisted")
++	}
++}
++
++func TestRunRepoRefusesUnknownRepo(t *testing.T) {
++	cfg := loadRepoConfig(t, "/usr/bin", repoTables)
++	if err := mkData(cfg.DataDir()); err != nil {
++		t.Fatal(err)
++	}
++	db, err := store.Open(t.Context(), cfg.DatabasePath())
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = db.Close() })
++	r := &Runner{cfg: cfg, db: db, redactor: secret.NewRedactor(), repos: testRegistry(t, cfg, db)}
++	run, _ := db.CreateRun(t.Context(), store.Run{Repo: "nobody/nothing", IssueNumber: 1, Mode: "fix", Provider: "anthropic", Status: store.StatusRunning})
++	if _, err := r.runRepo(t.Context(), run); err == nil {
++		t.Fatal("unlisted repository was frozen")
++	}
++}
++
++func mkData(dir string) error { return os.MkdirAll(dir, 0o700) }
+diff --git a/internal/runner/repos.go b/internal/runner/repos.go
+new file mode 100644
+index 0000000..e1858c3
+--- /dev/null
++++ b/internal/runner/repos.go
+@@ -0,0 +1,36 @@
++package runner
++
++import (
++	"context"
++	"time"
++
++	"github.com/aryanpappu/patchbot/internal/repos"
++)
++
++// Repos returns the effective repository allowlist the runner consults.
++func (r *Runner) Repos() *repos.Registry { return r.repos }
++
++// RepoCheck is the result of the optional reachability check for a repository.
++// It informs the operator and never blocks adding the repository.
++type RepoCheck struct {
++	// Checked is false when no check could be attempted (GitHub not connected).
++	Checked   bool   `json:"checked"`
++	Reachable bool   `json:"reachable"`
++	Push      bool   `json:"push"`
++	Message   string `json:"message"`
++}
++
++// CheckRepo asks GitHub, with the credential a run would use (the App
++// installation for that repository, or the PAT), whether repo is reachable.
++func (r *Runner) CheckRepo(ctx context.Context, repo string) RepoCheck {
++	if r.notConnected {
++		return RepoCheck{Message: "GitHub is not connected yet, so reachability was not checked"}
++	}
++	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
++	defer cancel()
++	meta, err := r.gh.GetRepo(ctx, ref(repo))
++	if err != nil {
++		return RepoCheck{Checked: true, Message: r.redactor.Redact("GitHub could not read this repository with the configured credential: " + err.Error())}
++	}
++	return RepoCheck{Checked: true, Reachable: true, Push: meta.Permissions.Push, Message: "reachable"}
++}
+diff --git a/internal/runner/runner.go b/internal/runner/runner.go
+index 0e7f234..cf5449c 100644
+--- a/internal/runner/runner.go
++++ b/internal/runner/runner.go
+@@ -21,6 +21,7 @@ import (
+ 	"github.com/aryanpappu/patchbot/internal/gitx"
+ 	"github.com/aryanpappu/patchbot/internal/llm"
+ 	"github.com/aryanpappu/patchbot/internal/llm/providers"
++	"github.com/aryanpappu/patchbot/internal/repos"
+ 	"github.com/aryanpappu/patchbot/internal/secret"
+ 	"github.com/aryanpappu/patchbot/internal/store"
+ 	"github.com/aryanpappu/patchbot/internal/tools"
+@@ -55,8 +56,11 @@ type Options struct {
+ 	GitHubAPI    string
+ 	GitHubHTTP   *http.Client
+ 	Constructors llm.Constructors
+-	Clone        func(context.Context, gitx.CloneOptions) (*gitx.Repo, error)
+-	Executor     func(dir string, repo config.RepoExecutor) (execx.Executor, error)
++	// Repos is the effective repository allowlist. Nil builds one from the
++	// configuration and the dashboard repositories in the database.
++	Repos    *repos.Registry
++	Clone    func(context.Context, gitx.CloneOptions) (*gitx.Repo, error)
++	Executor func(dir string, repo config.RepoExecutor) (execx.Executor, error)
+ 	// ContainerSweep removes containers left by a previous process. Nil uses
+ 	// execx.SweepContainers when [executor] kind is container.
+ 	ContainerSweep    func(context.Context) (int, error)
+@@ -89,6 +93,9 @@ type Runner struct {
+ 	tokens   github.RepoTokenSource
+ 	opts     Options
+ 	redactor *secret.Redactor
++	repos    *repos.Registry
++	// freezeMu makes the first freeze of a run's repository settings win.
++	freezeMu sync.Mutex
+ 	mu       sync.Mutex
+ 	active   map[int64]context.CancelFunc
+ 	controls map[int64]*sync.Mutex
+@@ -142,6 +149,13 @@ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options)
+ 	}
+ 	r := &Runner{cfg: cfg, db: db, opts: opts, redactor: cfg.Redactor(), active: make(map[int64]context.CancelFunc), controls: make(map[int64]*sync.Mutex)}
+ 	r.redactor.Extend(opts.Redactor)
++	r.repos = opts.Repos
++	if r.repos == nil {
++		var err error
++		if r.repos, err = repos.New(ctx, cfg, db, r.redactor.Redact); err != nil {
++			return nil, err
++		}
++	}
+ 	if err := r.setupGitHub(ctx); err != nil {
+ 		return nil, err
+ 	}
+@@ -238,7 +252,7 @@ func (r *Runner) prepare(req Request) (store.Run, error) {
+ 	if !repoPattern.MatchString(req.Repo) || req.Issue <= 0 {
+ 		return store.Run{}, errors.New("require --repo owner/name and a positive --issue")
+ 	}
+-	if r.cfg.Repos[req.Repo] == nil {
++	if !r.repos.Has(req.Repo) {
+ 		return store.Run{}, errors.New("repository is not in configuration allowlist")
+ 	}
+ 	if req.Mode == "" {
+@@ -329,6 +343,11 @@ func (r *Runner) start(ctx context.Context, run store.Run, reuse *store.Spec) (s
+ 	if err != nil {
+ 		return run, err
+ 	}
++	// The run keeps the repository settings it starts with, whatever the
++	// dashboard changes while it is in flight.
++	if _, ferr := r.runRepo(ctx, run); ferr != nil {
++		return run, errors.Join(ferr, r.fail(ctx, run, ferr))
++	}
+ 	id := run.ID
+ 	initial := run
+ 	if err = r.action(ctx, id, "start", r.actorFor(ctx), r.actionChannel(), nil); err == nil {
+diff --git a/internal/server/api.go b/internal/server/api.go
+index f8e70ff..b1aa620 100644
+--- a/internal/server/api.go
++++ b/internal/server/api.go
+@@ -8,7 +8,6 @@ import (
+ 	"fmt"
+ 	"net/http"
+ 	"net/url"
+-	"sort"
+ 	"strconv"
+ 	"strings"
+ 
+@@ -26,6 +25,7 @@ func (s *Server) routes() http.Handler {
+ 	mux.HandleFunc("/{$}", s.page)
+ 	mux.HandleFunc("/runs", s.page)
+ 	mux.HandleFunc("/runs/new", s.page)
++	mux.HandleFunc("/repos", s.page)
+ 	mux.HandleFunc("/runs/{id}", s.page)
+ 	mux.HandleFunc("/assets/{name}", s.asset)
+ 	mux.HandleFunc("/api/session", s.session)
+@@ -40,6 +40,7 @@ func (s *Server) routes() http.Handler {
+ 		mux.HandleFunc("/api/runs/{id}/"+action, s.action)
+ 	}
+ 	s.memoryRoutes(mux)
++	s.repoRoutes(mux)
+ 	mux.HandleFunc("/setup/github", s.githubSetupPage)
+ 	mux.HandleFunc(github.CallbackPath, s.githubSetupCallback)
+ 	mux.HandleFunc("/api/github/setup/start", s.githubSetupStart)
+@@ -75,11 +76,7 @@ func (s *Server) providers(w http.ResponseWriter, r *http.Request) {
+ 		_, err := s.registry.Provider(name)
+ 		values = append(values, provider{name, cfg.Kind, cfg.DefaultModel, err == nil})
+ 	}
+-	repos := make([]string, 0, len(s.cfg.Repos))
+-	for name := range s.cfg.Repos {
+-		repos = append(repos, name)
+-	}
+-	sort.Strings(repos)
++	repos := s.repos.Names()
+ 	s.writeJSON(w, 200, map[string]any{"providers": values, "repos": repos, "defaults": map[string]any{"provider": s.cfg.Defaults.Provider, "mode": s.cfg.Defaults.Mode, "refine_model": s.cfg.Model("refine"), "code_model": s.cfg.Model("code"), "max_cost_usd": s.cfg.Defaults.MaxCostUSD}})
+ }
+ 
+@@ -133,7 +130,7 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
+ 		return
+ 	}
+ 	input.Repo = strings.ToLower(strings.TrimSpace(input.Repo))
+-	if s.cfg.Repos[input.Repo] == nil || input.Issue <= 0 || (input.Mode != "" && input.Mode != config.ModeFix && input.Mode != config.ModeRefine && input.Mode != config.ModeInvestigate) || input.MaxCostMicros < 0 || !validModels(input.Model, input.RefineModel, input.CodeModel) {
++	if !s.repos.Has(input.Repo) || input.Issue <= 0 || (input.Mode != "" && input.Mode != config.ModeFix && input.Mode != config.ModeRefine && input.Mode != config.ModeInvestigate) || input.MaxCostMicros < 0 || !validModels(input.Model, input.RefineModel, input.CodeModel) {
+ 		s.writeError(w, 400, "invalid_request", "require an allowlisted repo, positive issue, valid mode, models and budget")
+ 		return
+ 	}
+diff --git a/internal/server/memory.go b/internal/server/memory.go
+index af85a47..0aa6254 100644
+--- a/internal/server/memory.go
++++ b/internal/server/memory.go
+@@ -35,7 +35,7 @@ func (s *Server) memoryList(w http.ResponseWriter, r *http.Request) {
+ 	query := r.URL.Query()
+ 	// Only allowlisted repositories are listed; others cannot be decided either.
+ 	filter := store.MemoryFilter{Repo: strings.ToLower(strings.TrimSpace(query.Get("repo"))), Repos: s.allowlistedRepos(), Kind: query.Get("kind"), Limit: 500}
+-	if filter.Repo != "" && s.cfg.Repos[filter.Repo] == nil {
++	if filter.Repo != "" && !s.repos.Has(filter.Repo) {
+ 		s.writeError(w, 400, "invalid_request", "require an allowlisted repo")
+ 		return
+ 	}
+@@ -81,11 +81,7 @@ func memoryView(e store.MemoryEntry) view {
+ }
+ 
+ func (s *Server) allowlistedRepos() []string {
+-	repos := make([]string, 0, len(s.cfg.Repos))
+-	for name := range s.cfg.Repos {
+-		repos = append(repos, strings.ToLower(name))
+-	}
+-	return repos
++	return s.repos.Names()
+ }
+ 
+ func (s *Server) memoryAdd(w http.ResponseWriter, r *http.Request) {
+@@ -97,7 +93,7 @@ func (s *Server) memoryAdd(w http.ResponseWriter, r *http.Request) {
+ 		return
+ 	}
+ 	repo := strings.ToLower(strings.TrimSpace(input.Repo))
+-	if s.cfg.Repos[repo] == nil {
++	if !s.repos.Has(repo) {
+ 		s.writeError(w, 400, "invalid_request", "require an allowlisted repo")
+ 		return
+ 	}
+@@ -137,7 +133,7 @@ func (s *Server) memoryDecide(w http.ResponseWriter, r *http.Request) {
+ 	}
+ 	action := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+ 	entry, err := memory.Decide(r.Context(), s.db, memory.DecideInput{ID: id, Action: action, Actor: s.actor(r), Channel: "ui", HashPrefix: input.ContentHash,
+-		Allowed: func(repo string) bool { return s.cfg.Repos[repo] != nil }})
++		Allowed: func(repo string) bool { return s.repos.Has(repo) }})
+ 	switch {
+ 	case errors.Is(err, memory.ErrHashRequired):
+ 		s.writeError(w, 400, "invalid_request", memory.ErrHashRequired.Error())
+diff --git a/internal/server/repos.go b/internal/server/repos.go
+new file mode 100644
+index 0000000..936b049
+--- /dev/null
++++ b/internal/server/repos.go
+@@ -0,0 +1,136 @@
++package server
++
++import (
++	"errors"
++	"net/http"
++	"strconv"
++	"strings"
++
++	"github.com/aryanpappu/patchbot/internal/repos"
++	"github.com/aryanpappu/patchbot/internal/store"
++)
++
++// Repository management routes share the server's authentication (Access JWT
++// or bearer token), host check, cross-origin protection and 1 MiB body limit.
++// The actor is the verified Access email (else approval.local_actor), channel ui.
++// Config-file repositories are listed but read-only.
++func (s *Server) repoRoutes(mux *http.ServeMux) {
++	mux.HandleFunc("/api/repos", s.reposCollection)
++	mux.HandleFunc("/api/repos/{owner}/{name}", s.repoItem)
++	mux.HandleFunc("/api/repos/{owner}/{name}/audit", s.repoAudit)
++}
++
++type repoBody struct {
++	Name     string         `json:"name"`
++	Version  int64          `json:"version"`
++	Settings repos.Settings `json:"settings"`
++}
++
++func (s *Server) reposCollection(w http.ResponseWriter, r *http.Request) {
++	if !s.method(w, r, http.MethodGet, http.MethodPost) {
++		return
++	}
++	if r.Method == http.MethodGet {
++		s.writeJSON(w, http.StatusOK, map[string]any{"repos": s.repos.List(), "container": s.cfg.Executor.Container()})
++		return
++	}
++	var input repoBody
++	if !s.decode(w, r, &input, false) {
++		return
++	}
++	entry, err := s.repos.Add(r.Context(), input.Name, input.Settings, s.actor(r), "ui")
++	if err != nil {
++		s.repoError(w, err)
++		return
++	}
++	w.Header().Set("Location", "/api/repos/"+entry.Name)
++	s.writeJSON(w, http.StatusCreated, map[string]any{"repo": entry, "github": s.runner.CheckRepo(r.Context(), entry.Name)})
++}
++
++func (s *Server) repoItem(w http.ResponseWriter, r *http.Request) {
++	if !s.method(w, r, http.MethodGet, http.MethodPut, http.MethodDelete) {
++		return
++	}
++	name := r.PathValue("owner") + "/" + r.PathValue("name")
++	switch r.Method {
++	case http.MethodGet:
++		entry, ok := s.repos.Get(name)
++		if !ok {
++			s.writeError(w, http.StatusNotFound, "not_found", "repository not found")
++			return
++		}
++		s.writeJSON(w, http.StatusOK, map[string]any{"repo": entry})
++	case http.MethodPut:
++		var input repoBody
++		if !s.decode(w, r, &input, false) {
++			return
++		}
++		version, ok := ifMatch(r, input.Version)
++		if !ok {
++			s.writeError(w, http.StatusPreconditionRequired, "version_required", "send the version you edited (If-Match header or version field)")
++			return
++		}
++		entry, err := s.repos.Update(r.Context(), name, input.Settings, version, s.actor(r), "ui")
++		if err != nil {
++			s.repoError(w, err)
++			return
++		}
++		s.writeJSON(w, http.StatusOK, map[string]any{"repo": entry})
++	default:
++		version, _ := ifMatch(r, 0)
++		if err := s.repos.Remove(r.Context(), name, version, s.actor(r), "ui"); err != nil {
++			s.repoError(w, err)
++			return
++		}
++		s.writeJSON(w, http.StatusOK, map[string]any{"removed": repos.Normalize(name)})
++	}
++}
++
++// ifMatch reads the expected version from the If-Match header (an integer,
++// optionally quoted) or, failing that, from fallback. ok is false when neither
++// is a positive version.
++func ifMatch(r *http.Request, fallback int64) (int64, bool) {
++	if h := strings.Trim(strings.TrimSpace(r.Header.Get("If-Match")), `"`); h != "" {
++		v, err := strconv.ParseInt(h, 10, 64)
++		return v, err == nil && v > 0
++	}
++	return fallback, fallback > 0
++}
++
++func (s *Server) repoAudit(w http.ResponseWriter, r *http.Request) {
++	if !s.method(w, r, http.MethodGet) {
++		return
++	}
++	name := r.PathValue("owner") + "/" + r.PathValue("name")
++	rows, err := s.repos.Audit(r.Context(), name)
++	if err != nil {
++		s.respondError(w, err)
++		return
++	}
++	if len(rows) == 0 && !s.repos.Has(name) {
++		s.writeError(w, http.StatusNotFound, "not_found", "repository not found")
++		return
++	}
++	s.writeJSON(w, http.StatusOK, map[string]any{"audit": rows})
++}
++
++func (s *Server) repoError(w http.ResponseWriter, err error) {
++	switch {
++	case errors.Is(err, repos.ErrInvalid):
++		s.writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
++	case errors.Is(err, repos.ErrCollision):
++		s.writeError(w, http.StatusConflict, "name_in_config", err.Error())
++	case errors.Is(err, repos.ErrReadOnly):
++		s.writeError(w, http.StatusForbidden, "read_only", err.Error())
++	case errors.Is(err, store.ErrRepoExists):
++		s.writeError(w, http.StatusConflict, "exists", err.Error())
++	case errors.Is(err, store.ErrVersionConflict):
++		s.writeError(w, http.StatusConflict, "version_conflict", "the repository changed since you loaded it; reload and retry")
++	case errors.Is(err, store.ErrRepoBusy):
++		s.writeError(w, http.StatusConflict, "repo_busy", "the repository has active runs; finish or cancel them first")
++	case errors.Is(err, store.ErrNotFound):
++		s.writeError(w, http.StatusNotFound, "not_found", "repository not found")
++	default:
++		s.respondError(w, err)
++	}
++}
+diff --git a/internal/server/repos_test.go b/internal/server/repos_test.go
+new file mode 100644
+index 0000000..898d98d
+--- /dev/null
++++ b/internal/server/repos_test.go
+@@ -0,0 +1,226 @@
++package server
++
++import (
++	"encoding/json"
++	"fmt"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	"github.com/aryanpappu/patchbot/internal/secret"
++	"github.com/aryanpappu/patchbot/internal/store"
++)
++
++const addBody = `{"name":"acme/widgets","settings":{"commands":{"test":["go","test","./..."]},"test_command":"test","protected":["secrets"]}}`
++
++type repoReply struct {
++	Repo struct {
++		Name    string
++		Source  string
++		Version int64
++	}
++	Repos []struct {
++		Name    string
++		Source  string
++		Version int64
++	}
++	Audit []store.RepoAudit
++	Error struct{ Kind string }
++}
++
++func decodeRepo(t *testing.T, body []byte) repoReply {
++	t.Helper()
++	var r repoReply
++	if err := json.Unmarshal(body, &r); err != nil {
++		t.Fatal(err)
++	}
++	return r
++}
++
++func TestRepoAPILifecycle(t *testing.T) {
++	f := newFixture(t, nil, nil)
++	list := decodeRepo(t, f.request("GET", "/api/repos", "").Body.Bytes())
++	if len(list.Repos) != 1 || list.Repos[0].Name != "owner/repo" || list.Repos[0].Source != "config" {
++		t.Fatalf("list: %+v", list)
++	}
++	w := f.request("POST", "/api/repos", addBody)
++	requireStatus(t, w, 201)
++	if r := decodeRepo(t, w.Body.Bytes()); r.Repo.Version != 1 || r.Repo.Source != "dashboard" {
++		t.Fatalf("add: %s", w.Body.String())
++	}
++	requireStatus(t, f.request("POST", "/api/repos", addBody), 409)
++	// A stale version is a 409, a missing one is 428.
++	edit := `{"version":%d,"settings":{"commands":{"test":["make","check"]},"test_command":"test"}}`
++	requireStatus(t, f.request("PUT", "/api/repos/acme/widgets", fmt.Sprintf(edit, 5)), 409)
++	requireStatus(t, f.request("PUT", "/api/repos/acme/widgets", `{"settings":{}}`), 428)
++	w = f.request("PUT", "/api/repos/acme/widgets", fmt.Sprintf(edit, 1))
++	requireStatus(t, w, 200)
++	if r := decodeRepo(t, w.Body.Bytes()); r.Repo.Version != 2 {
++		t.Fatalf("edit: %s", w.Body.String())
++	}
++	got := decodeRepo(t, f.request("GET", "/api/repos/acme/widgets", "").Body.Bytes())
++	if got.Repo.Version != 2 {
++		t.Fatalf("get: %+v", got)
++	}
++	requireStatus(t, f.request("DELETE", "/api/repos/acme/widgets", ""), 200)
++	requireStatus(t, f.request("GET", "/api/repos/acme/widgets", ""), 404)
++	w = f.request("GET", "/api/repos/acme/widgets/audit", "")
++	requireStatus(t, w, 200)
++	audit := decodeRepo(t, w.Body.Bytes()).Audit
++	if len(audit) != 3 || audit[0].Action != "remove" || audit[2].Action != "add" || audit[0].Actor != "operator" || audit[0].Channel != "ui" {
++		t.Fatalf("audit: %+v", audit)
++	}
++	requireStatus(t, f.request("GET", "/api/repos/nobody/nothing/audit", ""), 404)
++}
++
++func TestRepoAPIRefusals(t *testing.T) {
++	f := newFixture(t, nil, nil)
++	// Config-file repositories are read-only and cannot be shadowed.
++	w := f.request("POST", "/api/repos", `{"name":"owner/repo","settings":{}}`)
++	requireStatus(t, w, 409)
++	if decodeRepo(t, w.Body.Bytes()).Error.Kind != "name_in_config" {
++		t.Fatal(w.Body.String())
++	}
++	requireStatus(t, f.request("PUT", "/api/repos/owner/repo", `{"version":1,"settings":{}}`), 403)
++	requireStatus(t, f.request("DELETE", "/api/repos/owner/repo", ""), 403)
++	for name, body := range map[string]string{
++		"shell string command": `{"name":"acme/a","settings":{"commands":{"test":"go test ./..."}}}`,
++		"shell in program":     `{"name":"acme/a","settings":{"commands":{"test":["go test"]}}}`,
++		"test cmd missing":     `{"name":"acme/a","settings":{"commands":{"build":["make"]},"test_command":"test"}}`,
++		"bad name":             `{"name":"nope","settings":{}}`,
++		"dotdot protected":     `{"name":"acme/a","settings":{"protected":["../x"]}}`,
++		"unknown field":        `{"name":"acme/a","settings":{"shell":"sh"}}`,
++		"credential argument":  `{"name":"acme/a","settings":{"commands":{"t":["x","ghp_` + strings.Repeat("a1B2", 9) + `"]}}}`,
++	} {
++		w := f.request("POST", "/api/repos", body)
++		if w.Code != 400 {
++			t.Errorf("%s: status %d: %s", name, w.Code, w.Body.String())
++		}
++	}
++	if strings.Contains(f.request("GET", "/api/repos", "").Body.String(), "acme/a") {
++		t.Fatal("a refused repository was stored")
++	}
++	huge := `{"name":"acme/a","settings":{"commands":{"t":["` + strings.Repeat("x", 2<<20) + `"]}}}`
++	requireStatus(t, f.request("POST", "/api/repos", huge), 413)
++	requireStatus(t, f.request("PATCH", "/api/repos", ""), 405)
++}
++
++func TestNewRunUsesAddedRepoWithoutRestart(t *testing.T) {
++	f := newFixture(t, nil, nil)
++	f.withRepo()
++	run := `{"repo":"acme/widgets","issue":3,"mode":"investigate","dry_run":true}`
++	requireStatus(t, f.request("POST", "/api/runs", run), 400)
++	requireStatus(t, f.request("POST", "/api/repos", addBody), 201)
++	w := f.request("POST", "/api/runs", run)
++	requireStatus(t, w, 202)
++	var out struct{ Run store.Run }
++	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || out.Run.Repo != "acme/widgets" {
++		t.Fatalf("run: %s %v", w.Body.String(), err)
++	}
++	// The run froze the settings it started with.
++	art, err := f.db.GetArtifact(t.Context(), out.Run.ID, "repo_settings", 0)
++	if err != nil || !strings.Contains(art.Content, "secrets") {
++		t.Fatalf("frozen settings: %q %v", art.Content, err)
++	}
++}
++
++func TestRepoDeleteRefusedWithActiveRun(t *testing.T) {
++	f := newFixture(t, nil, nil)
++	requireStatus(t, f.request("POST", "/api/repos", addBody), 201)
++	run, err := f.db.CreateRun(t.Context(), store.Run{Repo: "acme/widgets", IssueNumber: 9, Status: store.StatusAwaitingApproval, Provider: "anthropic", RefineModel: "m", CodeModel: "m", Mode: "fix"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	w := f.request("DELETE", "/api/repos/acme/widgets", "")
++	requireStatus(t, w, 409)
++	if decodeRepo(t, w.Body.Bytes()).Error.Kind != "repo_busy" {
++		t.Fatal(w.Body.String())
++	}
++	if err := f.db.SetRunStatus(t.Context(), run.ID, store.StatusAwaitingApproval, store.StatusCancelled, store.RunPatch{Phase: store.PhaseRefine}); err != nil {
++		t.Fatal(err)
++	}
++	requireStatus(t, f.request("DELETE", "/api/repos/acme/widgets", ""), 200)
++	if _, err := f.db.GetRun(t.Context(), run.ID); err != nil {
++		t.Fatal("history must stay")
++	}
++}
++
++func TestRepoAPIRequiresAuthentication(t *testing.T) {
++	f := newFixture(t, nil, func(o *Options) { o.Token = secret.New("ui-token-for-repos") })
++	for _, c := range [][2]string{
++		{"GET", "/api/repos"}, {"POST", "/api/repos"}, {"GET", "/api/repos/owner/repo"},
++		{"PUT", "/api/repos/acme/widgets"}, {"DELETE", "/api/repos/acme/widgets"}, {"GET", "/api/repos/owner/repo/audit"},
++	} {
++		w := f.requestWith(c[0], c[1], addBody, "")
++		if w.Code != 401 {
++			t.Errorf("%s %s without token: %d", c[0], c[1], w.Code)
++		}
++	}
++	requireStatus(t, f.request("GET", "/api/repos", ""), 200)
++
++	a := newAccessFixture(t, nil)
++	for _, c := range [][2]string{{"GET", "/api/repos"}, {"POST", "/api/repos"}, {"PUT", "/api/repos/acme/widgets"}, {"DELETE", "/api/repos/acme/widgets"}, {"GET", "/api/repos/owner/repo/audit"}} {
++		if w := a.do(c[0], c[1], addBody, ""); w.Code != 401 {
++			t.Errorf("access %s %s without JWT: %d", c[0], c[1], w.Code)
++		}
++	}
++}
++
++func (f *fixture) requestWith(method, path, body, token string) *httptest.ResponseRecorder {
++	f.t.Helper()
++	saved := f.token
++	f.token = token
++	defer func() { f.token = saved }()
++	return f.request(method, path, body)
++}
++
++func TestRepoAuditRecordsAccessEmail(t *testing.T) {
++	a := newAccessFixture(t, nil)
++	jwt := a.token(nil)
++	requireStatus(t, a.do("POST", "/api/repos", addBody, jwt), 201)
++	requireStatus(t, a.do("PUT", "/api/repos/acme/widgets", `{"version":1,"settings":{"commands":{"test":["make"]}}}`, jwt), 200)
++	rows, err := a.db.ListRepoAudit(t.Context(), "acme/widgets", 10)
++	if err != nil || len(rows) != 2 {
++		t.Fatalf("audit: %+v %v", rows, err)
++	}
++	for _, row := range rows {
++		if row.Actor != accessOwner || row.Channel != "ui" {
++			t.Fatalf("audit row: %+v", row)
++		}
++	}
++}
++
++func TestRepoSettingsXSSStaysInert(t *testing.T) {
++	f := newFixture(t, nil, nil)
++	payload := `<script>alert(1)</script><img src=x onerror=alert(1)>`
++	body, _ := json.Marshal(map[string]any{"name": "acme/xss", "settings": map[string]any{
++		"commands": map[string]any{"test": []string{"echo", payload}}, "protected": []string{payload}}})
++	requireStatus(t, f.request("POST", "/api/repos", string(body)), 201)
++	w := f.request("GET", "/api/repos", "")
++	if strings.Contains(w.Body.String(), "<script>") || strings.Contains(w.Body.String(), "<img") {
++		t.Fatalf("markup in JSON response: %s", w.Body.String())
++	}
++	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") || w.Header().Get("X-Content-Type-Options") != "nosniff" {
++		t.Fatalf("headers: %v", w.Header())
++	}
++	if !strings.Contains(w.Header().Get("Content-Security-Policy"), "script-src 'self'") {
++		t.Fatal("CSP missing")
++	}
++	// The payload round-trips as data.
++	var got struct {
++		Repos []struct {
++			Name     string
++			Settings struct{ Protected []string }
++		}
++	}
++	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
++		t.Fatal(err)
++	}
++	found := false
++	for _, r := range got.Repos {
++		found = found || (r.Name == "acme/xss" && len(r.Settings.Protected) == 1 && r.Settings.Protected[0] == payload)
++	}
++	if !found {
++		t.Fatal("payload did not round-trip")
++	}
++}
+diff --git a/internal/server/server.go b/internal/server/server.go
+index 0ed53a4..a65fee2 100644
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -22,6 +22,7 @@ import (
+ 	"github.com/aryanpappu/patchbot/internal/github"
+ 	"github.com/aryanpappu/patchbot/internal/llm"
+ 	"github.com/aryanpappu/patchbot/internal/llm/providers"
++	"github.com/aryanpappu/patchbot/internal/repos"
+ 	"github.com/aryanpappu/patchbot/internal/runner"
+ 	"github.com/aryanpappu/patchbot/internal/secret"
+ 	"github.com/aryanpappu/patchbot/internal/store"
+@@ -49,6 +50,7 @@ type Server struct {
+ 	cfg             *config.Config
+ 	db              store.Store
+ 	runner          *runner.Runner
++	repos           *repos.Registry
+ 	models          *llm.ModelLister
+ 	registry        *llm.Registry
+ 	redactor        *secret.Redactor
+@@ -175,6 +177,7 @@ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options)
+ 		}
+ 		return nil, errors.New("could not initialize runner")
+ 	}
++	s.repos = s.runner.Repos()
+ 	configs, err := cfg.LLMProviders()
+ 	if err != nil {
+ 		if s.unsubscribe != nil {
+diff --git a/internal/server/web.go b/internal/server/web.go
+index a5f3f94..d3e3db2 100644
+--- a/internal/server/web.go
++++ b/internal/server/web.go
+@@ -16,6 +16,8 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
+ 	state := web.State{Page: "runs", AuthRequired: s.authenticated, Email: sessionEmail(r)}
+ 	if r.URL.Path == "/runs/new" {
+ 		state.Page = "new"
++	} else if r.URL.Path == "/repos" {
++		state.Page = "repos"
+ 	} else if value := r.PathValue("id"); value != "" {
+ 		id, err := strconv.ParseInt(value, 10, 64)
+ 		if err != nil || id <= 0 {
+diff --git a/internal/server/webhook.go b/internal/server/webhook.go
+index 137ba85..3f91e3d 100644
+--- a/internal/server/webhook.go
++++ b/internal/server/webhook.go
+@@ -67,7 +67,7 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
+ 		w.WriteHeader(http.StatusAccepted)
+ 		return
+ 	}
+-	if !eligible || payload.Issue.IsPullRequest || payload.Issue.Number <= 0 || s.cfg.Repos[repo] == nil {
++	if !eligible || payload.Issue.IsPullRequest || payload.Issue.Number <= 0 || !s.repos.Has(repo) {
+ 		w.WriteHeader(http.StatusAccepted)
+ 		return
+ 	}
+diff --git a/internal/server/webhook_test.go b/internal/server/webhook_test.go
+index 265664d..4800141 100644
+--- a/internal/server/webhook_test.go
++++ b/internal/server/webhook_test.go
+@@ -41,7 +41,7 @@ func TestWebhookAuthenticationBoundsAndDedupe(t *testing.T) {
+ 	cfg := config.Default()
+ 	cfg.Webhook.Enabled = true
+ 	cfg.Webhook.Secret = secret.New(hookSecret)
+-	s := &Server{cfg: cfg, db: f.db, authenticated: true, ingressWake: make(chan struct{}, 1)}
++	s := &Server{cfg: cfg, db: f.db, authenticated: true, ingressWake: make(chan struct{}, 1), repos: f.server.repos}
+ 	cfg.Repos = f.cfg.Repos
+ 	body := ` {"action":"labeled","repository":{"full_name":"owner/repo"},"issue":{"number":12},"label":{"name":"ai-fix"}} `
+ 	for _, signature := range []string{"", "sha256=bad", hookSignature(body + " ")} {
+@@ -127,7 +127,7 @@ func TestWebhookPendingBacklogIsBounded(t *testing.T) {
+ 	cfg.Webhook.Enabled = true
+ 	cfg.Webhook.Secret = secret.New(hookSecret)
+ 	cfg.Repos = f.cfg.Repos
+-	s := &Server{cfg: cfg, db: f.db, authenticated: true, ingressWake: make(chan struct{}, 1), maxPending: 2}
++	s := &Server{cfg: cfg, db: f.db, authenticated: true, ingressWake: make(chan struct{}, 1), maxPending: 2, repos: f.server.repos}
+ 	body := `{"action":"created","repository":{"full_name":"owner/repo"},"issue":{"number":12}}`
+ 	for _, id := range []string{"a", "b"} {
+ 		requireHookStatus(t, hookRequest(s, body, id, "issue_comment", hookSignature(body)), 202)
+diff --git a/internal/store/migrations/0010_repos.sql b/internal/store/migrations/0010_repos.sql
+new file mode 100644
+index 0000000..446d92f
+--- /dev/null
++++ b/internal/store/migrations/0010_repos.sql
+@@ -0,0 +1,36 @@
++-- Dashboard-managed repositories (M24). The config file stays the bootstrap
++-- allowlist and is never written; these rows are added to it. settings_json is
++-- the redacted repository settings (commands argv map, test_command, protected
++-- paths, optional digest-pinned image and container PATH), validated by the
++-- same rules as a [repos."owner/name"] table before it is stored. Edits bump
++-- version (optimistic concurrency). History stays when a row is removed.
++CREATE TABLE dashboard_repos (
++    name TEXT PRIMARY KEY CHECK (length(name) BETWEEN 3 AND 140 AND name = lower(name)),
++    settings_json TEXT NOT NULL CHECK (json_valid(settings_json)),
++    version INTEGER NOT NULL CHECK (version >= 1),
++    created_at INTEGER NOT NULL CHECK (created_at >= 0),
++    created_by TEXT NOT NULL,
++    updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
++    updated_by TEXT NOT NULL
++) STRICT;
++
++-- Append-only audit of every add, edit and remove with the acting identity.
++-- before_json and after_json are redacted settings snapshots ('' when absent).
++CREATE TABLE repo_audit (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    repo TEXT NOT NULL,
++    action TEXT NOT NULL CHECK (action IN ('add', 'edit', 'remove')),
++    actor TEXT NOT NULL,
++    channel TEXT NOT NULL,
++    before_json TEXT NOT NULL DEFAULT '',
++    after_json TEXT NOT NULL DEFAULT '',
++    at INTEGER NOT NULL CHECK (at >= 0)
++) STRICT;
++
++CREATE INDEX repo_audit_repo ON repo_audit (repo, id);
++
++CREATE TRIGGER repo_audit_no_update BEFORE UPDATE ON repo_audit
++BEGIN SELECT RAISE(ABORT, 'repo_audit is append-only'); END;
++
++CREATE TRIGGER repo_audit_no_delete BEFORE DELETE ON repo_audit
++BEGIN SELECT RAISE(ABORT, 'repo_audit is append-only'); END;
+diff --git a/internal/store/repos.go b/internal/store/repos.go
+new file mode 100644
+index 0000000..c4cec9a
+--- /dev/null
++++ b/internal/store/repos.go
+@@ -0,0 +1,231 @@
++package store
++
++import (
++	"context"
++	"database/sql"
++	"errors"
++	"net/url"
++	"path/filepath"
++	"strings"
++	"time"
++)
++
++// Errors of the dashboard repository store.
++var (
++	// ErrRepoExists means a dashboard repository with that name exists.
++	ErrRepoExists = errors.New("repository already exists")
++	// ErrVersionConflict means the stored version is not the expected one.
++	ErrVersionConflict = errors.New("repository changed since it was read")
++	// ErrRepoBusy means the repository has active runs and cannot be removed.
++	ErrRepoBusy = errors.New("repository has active runs")
++)
++
++// Repo audit actions.
++const (
++	RepoActionAdd    = "add"
++	RepoActionEdit   = "edit"
++	RepoActionRemove = "remove"
++)
++
++// RepoRecord is one dashboard-managed repository. SettingsJSON is the redacted,
++// validated settings document; the repos package owns its schema.
++type RepoRecord struct {
++	Name         string
++	SettingsJSON string
++	Version      int64
++	CreatedAt    time.Time
++	CreatedBy    string
++	UpdatedAt    time.Time
++	UpdatedBy    string
++}
++
++// RepoAudit is one append-only audit row.
++type RepoAudit struct {
++	ID         int64     `json:"id"`
++	Repo       string    `json:"repo"`
++	Action     string    `json:"action"`
++	Actor      string    `json:"actor"`
++	Channel    string    `json:"channel"`
++	BeforeJSON string    `json:"before"`
++	AfterJSON  string    `json:"after"`
++	At         time.Time `json:"at"`
++}
++
++// RepoStore persists dashboard repositories. Every mutation writes its audit
++// row in the same transaction.
++type RepoStore interface {
++	ListRepos(ctx context.Context) ([]RepoRecord, error)
++	// AddRepo inserts at version 1; ErrRepoExists when the name is taken.
++	AddRepo(ctx context.Context, rec RepoRecord, audit RepoAudit) (RepoRecord, error)
++	// UpdateRepo replaces the settings and bumps the version when the stored
++	// version is expectedVersion; ErrNotFound or ErrVersionConflict otherwise.
++	UpdateRepo(ctx context.Context, rec RepoRecord, expectedVersion int64, audit RepoAudit) (RepoRecord, error)
++	// RemoveRepo deletes the row (history stays) unless a run of the
++	// repository is still active (ErrRepoBusy). expectedVersion 0 skips the
++	// version check.
++	RemoveRepo(ctx context.Context, name string, expectedVersion int64, audit RepoAudit) error
++	// ListRepoAudit returns the newest rows first, also for removed repositories.
++	ListRepoAudit(ctx context.Context, name string, limit int) ([]RepoAudit, error)
++}
++
++const repoColumns = `name,settings_json,version,created_at,created_by,updated_at,updated_by`
++
++func scanRepo(row interface{ Scan(...any) error }) (RepoRecord, error) {
++	var rec RepoRecord
++	var created, updated int64
++	if err := row.Scan(&rec.Name, &rec.SettingsJSON, &rec.Version, &created, &rec.CreatedBy, &updated, &rec.UpdatedBy); err != nil {
++		return RepoRecord{}, err
++	}
++	rec.CreatedAt, rec.UpdatedAt = time.UnixMilli(created).UTC(), time.UnixMilli(updated).UTC()
++	return rec, nil
++}
++
++// ListRepos returns every dashboard repository ordered by name.
++func (s *SQLite) ListRepos(ctx context.Context) ([]RepoRecord, error) {
++	rows, err := s.db.QueryContext(ctx, `SELECT `+repoColumns+` FROM dashboard_repos ORDER BY name`)
++	if err != nil {
++		return nil, mapError(err)
++	}
++	return collectRepos(rows)
++}
++
++func collectRepos(rows *sql.Rows) ([]RepoRecord, error) {
++	defer func() { _ = rows.Close() }()
++	var out []RepoRecord
++	for rows.Next() {
++		rec, err := scanRepo(rows)
++		if err != nil {
++			return nil, mapError(err)
++		}
++		out = append(out, rec)
++	}
++	return out, mapError(rows.Err())
++}
++
++func insertRepoAudit(ctx context.Context, tx *eventTx, a RepoAudit) error {
++	_, err := tx.ExecContext(ctx, `INSERT INTO repo_audit(repo,action,actor,channel,before_json,after_json,at) VALUES(?,?,?,?,?,?,?)`,
++		a.Repo, a.Action, a.Actor, a.Channel, a.BeforeJSON, a.AfterJSON, timestamp(a.At).UnixMilli())
++	return err
++}
++
++// AddRepo implements RepoStore.
++func (s *SQLite) AddRepo(ctx context.Context, rec RepoRecord, audit RepoAudit) (RepoRecord, error) {
++	now := timestamp(rec.CreatedAt)
++	var saved RepoRecord
++	err := s.withTx(ctx, func(tx *eventTx) error {
++		var exists int
++		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM dashboard_repos WHERE name=?`, rec.Name).Scan(&exists); err != nil {
++			return err
++		}
++		if exists > 0 {
++			return ErrRepoExists
++		}
++		var err error
++		saved, err = scanRepo(tx.QueryRowContext(ctx, `INSERT INTO dashboard_repos(`+repoColumns+`) VALUES(?,?,1,?,?,?,?) RETURNING `+repoColumns,
++			rec.Name, rec.SettingsJSON, now.UnixMilli(), rec.CreatedBy, now.UnixMilli(), rec.CreatedBy))
++		if err != nil {
++			return err
++		}
++		audit.At = now
++		return insertRepoAudit(ctx, tx, audit)
++	})
++	return saved, err
++}
++
++// UpdateRepo implements RepoStore.
++func (s *SQLite) UpdateRepo(ctx context.Context, rec RepoRecord, expectedVersion int64, audit RepoAudit) (RepoRecord, error) {
++	now := timestamp(rec.UpdatedAt)
++	var saved RepoRecord
++	err := s.withTx(ctx, func(tx *eventTx) error {
++		var current int64
++		if err := tx.QueryRowContext(ctx, `SELECT version FROM dashboard_repos WHERE name=?`, rec.Name).Scan(&current); err != nil {
++			return err
++		}
++		if current != expectedVersion {
++			return ErrVersionConflict
++		}
++		var err error
++		saved, err = scanRepo(tx.QueryRowContext(ctx, `UPDATE dashboard_repos SET settings_json=?, version=version+1, updated_at=?, updated_by=?
++			WHERE name=? RETURNING `+repoColumns, rec.SettingsJSON, now.UnixMilli(), rec.UpdatedBy, rec.Name))
++		if err != nil {
++			return err
++		}
++		audit.At = now
++		return insertRepoAudit(ctx, tx, audit)
++	})
++	return saved, err
++}
++
++// RemoveRepo implements RepoStore.
++func (s *SQLite) RemoveRepo(ctx context.Context, name string, expectedVersion int64, audit RepoAudit) error {
++	return s.withTx(ctx, func(tx *eventTx) error {
++		var current int64
++		if err := tx.QueryRowContext(ctx, `SELECT version FROM dashboard_repos WHERE name=?`, name).Scan(&current); err != nil {
++			return err
++		}
++		if expectedVersion != 0 && current != expectedVersion {
++			return ErrVersionConflict
++		}
++		// Same immediate transaction as the delete: no run can become active
++		// between the check and the removal.
++		var active int
++		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM runs WHERE repo=? AND status IN ('queued','running','needs_info','awaiting_approval','approved')`, name).Scan(&active); err != nil {
++			return err
++		}
++		if active > 0 {
++			return ErrRepoBusy
++		}
++		if _, err := tx.ExecContext(ctx, `DELETE FROM dashboard_repos WHERE name=?`, name); err != nil {
++			return err
++		}
++		audit.At = timestamp(audit.At)
++		return insertRepoAudit(ctx, tx, audit)
++	})
++}
++
++// ListRepoAudit implements RepoStore.
++func (s *SQLite) ListRepoAudit(ctx context.Context, name string, limit int) ([]RepoAudit, error) {
++	if limit <= 0 || limit > 500 {
++		limit = 200
++	}
++	rows, err := s.db.QueryContext(ctx, `SELECT id,repo,action,actor,channel,before_json,after_json,at FROM repo_audit WHERE repo=? ORDER BY id DESC LIMIT ?`, name, limit)
++	if err != nil {
++		return nil, mapError(err)
++	}
++	defer func() { _ = rows.Close() }()
++	out := []RepoAudit{}
++	for rows.Next() {
++		var a RepoAudit
++		var at int64
++		if err := rows.Scan(&a.ID, &a.Repo, &a.Action, &a.Actor, &a.Channel, &a.BeforeJSON, &a.AfterJSON, &at); err != nil {
++			return nil, mapError(err)
++		}
++		a.At = time.UnixMilli(at).UTC()
++		out = append(out, a)
++	}
++	return out, mapError(rows.Err())
++}
++
++// ReadDashboardRepos reads the dashboard repositories from a database file
++// opened read-only (doctor and config show use it; it never creates or
++// migrates the file). A database without the table reads as empty.
++func ReadDashboardRepos(ctx context.Context, path string) ([]RepoRecord, error) {
++	abs, err := filepath.Abs(path)
++	if err != nil {
++		return nil, err
++	}
++	u := &url.URL{Scheme: "file", Path: abs, RawQuery: "mode=ro"}
++	db, err := sql.Open("sqlite", u.String())
++	if err != nil {
++		return nil, err
++	}
++	defer func() { _ = db.Close() }()
++	rows, err := db.QueryContext(ctx, `SELECT `+repoColumns+` FROM dashboard_repos ORDER BY name`)
++	if err != nil {
++		if strings.Contains(err.Error(), "no such table") || strings.Contains(err.Error(), "unable to open") {
++			return nil, nil
++		}
++		return nil, err
++	}
++	return collectRepos(rows)
++}
+diff --git a/internal/web/assets/app.js b/internal/web/assets/app.js
+index 307b62e..24eeb2c 100644
+--- a/internal/web/assets/app.js
++++ b/internal/web/assets/app.js
+@@ -67,7 +67,8 @@
+         error: "", notice: "", providers: [], repos: [], models: [], modelWarning: "",
+         runs: [], cursor: "", awaiting: null, detail: initial.initial || null, artifacts: [], events: [],
+         streamStatus: "Connecting", version: "", compare: "", editor: null, notes: "",
+-        memory: { enabled: true, entries: [] }
++        memory: { enabled: true, entries: [] },
++        repoList: [], repoContainer: false, repoEditor: null, repoRemove: "", repoAudit: null
+       });
+       const query = new URLSearchParams(location.search);
+       const filters = reactive({ repo: query.get("repo") || "", issue: query.get("issue") || "", status: query.get("status") || "" });
+@@ -86,6 +87,7 @@
+         s.runs = []; s.events = []; s.artifacts = []; s.editor = null;
+         s.providers = []; s.repos = []; s.models = []; s.awaiting = null;
+         s.memory = { enabled: true, entries: [] };
++        s.repoList = []; s.repoEditor = null; s.repoAudit = null; s.repoRemove = "";
+         lastID = 0;
+         modelRequest++;
+         if (stopStream) stopStream.abort();
+@@ -314,8 +316,9 @@
+           stopStream = new AbortController();
+           void follow(stopStream.signal);
+         } else if (initial.page === "runs") { await loadRuns(); await loadMemory(); }
++        else if (initial.page === "repos") await loadRepos();
+         s.ready = true;
+-        if (initial.page !== "runs") void loadModels();
++        if (initial.page !== "runs" && initial.page !== "repos") void loadModels();
+       }
+       const navigateRun = run => { location.assign(`/runs/${run.id}`); };
+       function start(event) {
+@@ -377,6 +380,104 @@
+           await boot();
+         });
+       }
++      // Repository management (M24). Commands are edited as one argv JSON array
++      // per line ("id: [\"prog\", \"arg\"]"), never as a shell string; the server
++      // validates everything again. Every value shown is a text node.
++      const argvText = commands => Object.keys(commands || {}).sort().map(id => id + ": " + JSON.stringify(commands[id])).join("\n");
++      function parseCommands(value) {
++        const commands = {};
++        for (const line of lines(value)) {
++          const cut = line.indexOf(":");
++          if (cut < 1) throw new Error("Write each command as: id: [\"program\", \"arg\", ...]");
++          let argv;
++          try { argv = JSON.parse(line.slice(cut + 1)); } catch { argv = null; }
++          if (!Array.isArray(argv) || !argv.length || !argv.every(a => typeof a === "string")) {
++            throw new Error("Command " + line.slice(0, cut).trim() + " must be a JSON array of strings (argv, no shell).");
++          }
++          commands[line.slice(0, cut).trim()] = argv;
++        }
++        return commands;
++      }
++      async function loadRepos() {
++        const result = await request("/api/repos");
++        s.repoList = result.repos; s.repoContainer = !!result.container;
++        s.repos = result.repos.map(r => r.name);
++      }
++      const newRepoEditor = (entry) => ({
++        mode: entry ? "edit" : "add", name: entry?.name || "", version: entry?.version || 0,
++        commands: argvText(entry?.settings.commands), test: entry?.settings.test_command || "",
++        protectedPaths: (entry?.settings.protected || []).join("\n"), image: entry?.settings.image || "",
++        path: (entry?.settings.path || []).join("\n")
++      });
++      function saveRepo(event) {
++        event.preventDefault();
++        const e = s.repoEditor;
++        void work(async () => {
++          const settings = { commands: parseCommands(e.commands), test_command: e.test.trim(), protected: lines(e.protectedPaths), image: e.image.trim(), path: lines(e.path) };
++          let result;
++          if (e.mode === "add") result = await send("/api/repos", { name: e.name.trim(), settings });
++          else result = await send("/api/repos/" + e.name, { version: e.version, settings }, "PUT");
++          s.repoEditor = null;
++          s.notice = (e.mode === "add" ? "Repository added." : "Repository saved.") + (result.github ? " GitHub check: " + result.github.message : "");
++          await loadRepos();
++        });
++      }
++      function removeRepo(name) {
++        void work(async () => {
++          s.repoRemove = "";
++          try { await request("/api/repos/" + name, { method: "DELETE" }); }
++          finally { if (!s.locked) await loadRepos(); }
++          s.notice = "Repository " + name + " removed. Run history is kept.";
++        });
++      }
++      function showAudit(name) {
++        void work(async () => { s.repoAudit = { repo: name, rows: (await request(`/api/repos/${name}/audit`)).audit }; });
++      }
++      function repoEditorView() {
++        const e = s.repoEditor;
++        return h("form", { class: "panel", onSubmit: saveRepo }, [
++          h("h2", e.mode === "add" ? "Add repository" : "Edit " + e.name),
++          h("p", "Commands run without a shell, inside the sandbox, with no network. They decide what executes on run code, so review them like code."),
++          e.mode === "add" ? field("Repository (owner/name)", input(e, "name", { required: true, maxlength: 140, autocomplete: "off" })) : null,
++          field("Commands (one per line: id: JSON argv array)", area(e, "commands", { rows: 5, spellcheck: false })),
++          field("Test command ID", input(e, "test", { maxlength: 32 })),
++          field("Extra protected paths (one per line; .github/workflows is always protected)", area(e, "protectedPaths", { rows: 3, spellcheck: false })),
++          s.repoContainer ? field("Container image (name@sha256:digest)", input(e, "image", { maxlength: 512, spellcheck: false })) : null,
++          s.repoContainer ? field("Container PATH (one directory per line)", area(e, "path", { rows: 2, spellcheck: false })) : null,
++          h("div", { class: "actions" }, [h("button", { type: "submit", disabled: s.busy }, e.mode === "add" ? "Add repository" : "Save changes"),
++            button("Cancel", () => { s.repoEditor = null; })])
++        ]);
++      }
++      function reposView() {
++        return [h("h1", "Repositories"),
++          h("p", "Repositories from the config file are read-only here. Changes apply to new runs; a run in flight keeps the settings it started with."),
++          s.repoEditor ? repoEditorView() : button("Add repository", () => { s.repoEditor = newRepoEditor(null); }, s.busy),
++          s.repoList.length ? h("ul", { class: "runs" }, s.repoList.map(r => h("li", { key: r.name, class: "panel" }, [
++            h("h2", r.name), h("span", { class: "chip" }, r.source === "config" ? "config file (read-only)" : "dashboard · v" + r.version),
++            h("dl", { class: "counters" }, [
++              h("dt", "Commands"), h("dd", h("pre", { class: "output", tabindex: 0 }, argvText(r.settings.commands) || "none")),
++              h("dt", "Test command"), h("dd", r.settings.test_command || "default (test) if defined"),
++              h("dt", "Protected"), h("dd", [...(r.builtin_protected || []), ...(r.settings.protected || [])].join(", ")),
++              r.settings.image ? h("dt", "Image") : null, r.settings.image ? h("dd", r.settings.image) : null,
++              r.updated_by ? h("dt", "Last change") : null, r.updated_by ? h("dd", r.updated_by + " · " + r.updated_at) : null
++            ]),
++            h("div", { class: "actions" }, [
++              r.source === "dashboard" ? button("Edit", () => { s.repoEditor = newRepoEditor(r); }, s.busy) : null,
++              r.source === "dashboard" ? button("Remove", () => { s.repoRemove = r.name; }, s.busy) : null,
++              button("Audit", () => showAudit(r.name), s.busy)
++            ]),
++            s.repoRemove === r.name ? h("div", { class: "warning", role: "alertdialog", "aria-label": "Confirm removal" }, [
++              h("p", `Remove ${r.name}? New runs for it stop immediately. This is refused while it has active runs; history is kept.`),
++              h("div", { class: "actions" }, [button("Confirm removal", () => removeRepo(r.name), s.busy), button("Keep it", () => { s.repoRemove = ""; })])
++            ]) : null
++          ]))) : h("p", "No repositories are configured."),
++          s.repoAudit ? panel("Audit: " + s.repoAudit.repo, [s.repoAudit.rows.length ? h("ol", s.repoAudit.rows.map(a => h("li", { key: a.id }, [
++            h("strong", `${a.action} · ${a.actor} · ${a.channel} · ${a.at}`),
++            a.before ? h("details", [h("summary", "Before"), block(a.before)]) : null,
++            a.after ? h("details", [h("summary", "After"), block(a.after)]) : null
++          ]))) : h("p", "No dashboard changes recorded."), button("Close", () => { s.repoAudit = null; })]) : null
++        ];
++      }
+       function newView() {
+         return [h("h1", "New run"), h("form", { class: "panel", onSubmit: start }, [
+           field("Repository", select(form, "repo", s.repos.map(repo => [repo, repo]))),
+@@ -534,7 +635,7 @@
+           field("UI token", input(s, "tokenInput", { type: "password", required: true, autocomplete: "off", autofocus: true })),
+           h("button", { type: "submit", disabled: s.busy }, "Unlock")
+         ]) : [initial.auth_required ? button("Lock this tab", forgetToken) : null,
+-          !s.ready ? h("p", { role: "status" }, "Loading…") : initial.page === "new" ? newView() : initial.page === "detail" ? detailView() : listView()
++          !s.ready ? h("p", { role: "status" }, "Loading…") : initial.page === "new" ? newView() : initial.page === "repos" ? reposView() : initial.page === "detail" ? detailView() : listView()
+         ]
+       ]);
+     }
+diff --git a/internal/workspace/jail.go b/internal/workspace/jail.go
+index c60c4e2..7cdbd6a 100644
+--- a/internal/workspace/jail.go
++++ b/internal/workspace/jail.go
+@@ -259,3 +259,7 @@ func isShortGitName(key string) bool {
+ func isASCIILetter(c byte) bool {
+ 	return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')
+ }
++
++// BuiltinProtected lists the paths NewPolicy always protects, whatever the
++// repository configuration says. They cannot be removed by any setting.
++func BuiltinProtected() []string { return []string{".github/workflows"} }
+
+exec
+/bin/zsh -lc 'cat internal/server/repos.go; cat internal/runner/runner.go; cat internal/config/validate.go | tail -170; cat internal/execx/policy.go' in /Users/pappumishra/Documents/selfproject/patchbot-m24-repo-mgmt
+ succeeded in 0ms:
+package server
+
+import (
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/aryanpappu/patchbot/internal/repos"
+	"github.com/aryanpappu/patchbot/internal/store"
+)
+
+// Repository management routes share the server's authentication (Access JWT
+// or bearer token), host check, cross-origin protection and 1 MiB body limit.
+// The actor is the verified Access email (else approval.local_actor), channel ui.
+// Config-file repositories are listed but read-only.
+func (s *Server) repoRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/repos", s.reposCollection)
+	mux.HandleFunc("/api/repos/{owner}/{name}", s.repoItem)
+	mux.HandleFunc("/api/repos/{owner}/{name}/audit", s.repoAudit)
+}
+
+type repoBody struct {
+	Name     string         `json:"name"`
+	Version  int64          `json:"version"`
+	Settings repos.Settings `json:"settings"`
+}
+
+func (s *Server) reposCollection(w http.ResponseWriter, r *http.Request) {
+	if !s.method(w, r, http.MethodGet, http.MethodPost) {
+		return
+	}
+	if r.Method == http.MethodGet {
+		s.writeJSON(w, http.StatusOK, map[string]any{"repos": s.repos.List(), "container": s.cfg.Executor.Container()})
+		return
+	}
+	var input repoBody
+	if !s.decode(w, r, &input, false) {
+		return
+	}
+	entry, err := s.repos.Add(r.Context(), input.Name, input.Settings, s.actor(r), "ui")
+	if err != nil {
+		s.repoError(w, err)
+		return
+	}
+	w.Header().Set("Location", "/api/repos/"+entry.Name)
+	s.writeJSON(w, http.StatusCreated, map[string]any{"repo": entry, "github": s.runner.CheckRepo(r.Context(), entry.Name)})
+}
+
+func (s *Server) repoItem(w http.ResponseWriter, r *http.Request) {
+	if !s.method(w, r, http.MethodGet, http.MethodPut, http.MethodDelete) {
+		return
+	}
+	name := r.PathValue("owner") + "/" + r.PathValue("name")
+	switch r.Method {
+	case http.MethodGet:
+		entry, ok := s.repos.Get(name)
+		if !ok {
+			s.writeError(w, http.StatusNotFound, "not_found", "repository not found")
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{"repo": entry})
+	case http.MethodPut:
+		var input repoBody
+		if !s.decode(w, r, &input, false) {
+			return
+		}
+		version, ok := ifMatch(r, input.Version)
+		if !ok {
+			s.writeError(w, http.StatusPreconditionRequired, "version_required", "send the version you edited (If-Match header or version field)")
+			return
+		}
+		entry, err := s.repos.Update(r.Context(), name, input.Settings, version, s.actor(r), "ui")
+		if err != nil {
+			s.repoError(w, err)
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{"repo": entry})
+	default:
+		version, _ := ifMatch(r, 0)
+		if err := s.repos.Remove(r.Context(), name, version, s.actor(r), "ui"); err != nil {
+			s.repoError(w, err)
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{"removed": repos.Normalize(name)})
+	}
+}
+
+// ifMatch reads the expected version from the If-Match header (an integer,
+// optionally quoted) or, failing that, from fallback. ok is false when neither
+// is a positive version.
+func ifMatch(r *http.Request, fallback int64) (int64, bool) {
+	if h := strings.Trim(strings.TrimSpace(r.Header.Get("If-Match")), `"`); h != "" {
+		v, err := strconv.ParseInt(h, 10, 64)
+		return v, err == nil && v > 0
+	}
+	return fallback, fallback > 0
+}
+
+func (s *Server) repoAudit(w http.ResponseWriter, r *http.Request) {
+	if !s.method(w, r, http.MethodGet) {
+		return
+	}
+	name := r.PathValue("owner") + "/" + r.PathValue("name")
+	rows, err := s.repos.Audit(r.Context(), name)
+	if err != nil {
+		s.respondError(w, err)
+		return
+	}
+	if len(rows) == 0 && !s.repos.Has(name) {
+		s.writeError(w, http.StatusNotFound, "not_found", "repository not found")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"audit": rows})
+}
+
+func (s *Server) repoError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, repos.ErrInvalid):
+		s.writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	case errors.Is(err, repos.ErrCollision):
+		s.writeError(w, http.StatusConflict, "name_in_config", err.Error())
+	case errors.Is(err, repos.ErrReadOnly):
+		s.writeError(w, http.StatusForbidden, "read_only", err.Error())
+	case errors.Is(err, store.ErrRepoExists):
+		s.writeError(w, http.StatusConflict, "exists", err.Error())
+	case errors.Is(err, store.ErrVersionConflict):
+		s.writeError(w, http.StatusConflict, "version_conflict", "the repository changed since you loaded it; reload and retry")
+	case errors.Is(err, store.ErrRepoBusy):
+		s.writeError(w, http.StatusConflict, "repo_busy", "the repository has active runs; finish or cancel them first")
+	case errors.Is(err, store.ErrNotFound):
+		s.writeError(w, http.StatusNotFound, "not_found", "repository not found")
+	default:
+		s.respondError(w, err)
+	}
+}
+// Package runner orchestrates durable issue runs and their approval boundary.
+package runner
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/agent"
+	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/execx"
+	"github.com/aryanpappu/patchbot/internal/github"
+	"github.com/aryanpappu/patchbot/internal/gitx"
+	"github.com/aryanpappu/patchbot/internal/llm"
+	"github.com/aryanpappu/patchbot/internal/llm/providers"
+	"github.com/aryanpappu/patchbot/internal/repos"
+	"github.com/aryanpappu/patchbot/internal/secret"
+	"github.com/aryanpappu/patchbot/internal/store"
+	"github.com/aryanpappu/patchbot/internal/tools"
+	"github.com/aryanpappu/patchbot/internal/workspace"
+)
+
+// Options supplies trusted infrastructure. Clone, Executor and Constructors are
+// test seams; production uses gitx, execx and the raw provider constructors.
+type Options struct {
+	// Dispatch hands durable work to an owning manager. Nil runs synchronously.
+	Dispatch func(context.Context, int64, func(context.Context) error) error
+	// Admit reserves bounded dispatch capacity before any durable mutation.
+	// The returned context carries admission through Dispatch; release is always called.
+	Admit func(context.Context) (context.Context, func(), error)
+	// ActionChannel is ui for the local web server; otherwise local actions use cli.
+	ActionChannel string
+	// Redactor adds CLI/server credentials to model and persistence boundaries.
+	Redactor *secret.Redactor
+
+	GitHub github.Client
+	// Tokens is the PAT used in [github] auth = "pat" mode. It is ignored in
+	// app mode, so an App failure never falls back to a broader PAT.
+	Tokens github.TokenSource
+	// RepoTokens supplies a credential per repository for REST and git. Nil
+	// selects the configured mode: the PAT for every repository, or a GitHub
+	// App source built from [github].
+	RepoTokens github.RepoTokenSource
+	// CommitAuthor is the git identity of patchbot commits. Zero selects
+	// patchbot <patchbot@users.noreply.github.com>; app mode sets the bot.
+	CommitAuthor gitx.Author
+	// GitHubAPI and GitHubHTTP are test seams for the App API endpoint.
+	GitHubAPI    string
+	GitHubHTTP   *http.Client
+	Constructors llm.Constructors
+	// Repos is the effective repository allowlist. Nil builds one from the
+	// configuration and the dashboard repositories in the database.
+	Repos    *repos.Registry
+	Clone    func(context.Context, gitx.CloneOptions) (*gitx.Repo, error)
+	Executor func(dir string, repo config.RepoExecutor) (execx.Executor, error)
+	// ContainerSweep removes containers left by a previous process. Nil uses
+	// execx.SweepContainers when [executor] kind is container.
+	ContainerSweep    func(context.Context) (int, error)
+	Clock             func() time.Time
+	BotLogin          string
+	HeartbeatInterval time.Duration
+	StaleAfter        time.Duration
+	// DisableFailureComments suppresses the otherwise enabled failure comment.
+	DisableFailureComments bool
+}
+
+// Request fixes provider/model and limits for the lifetime of a new run.
+type Request struct {
+	// IngressKey is supplied only by automatic label reconciliation.
+	IngressKey             string
+	Repo                   string
+	Issue                  int64
+	Mode, Provider, Model  string
+	RefineModel, CodeModel string
+	DryRun                 bool
+	MaxCostMicros          int64
+}
+
+// Runner is safe for concurrent actions. Long work owns a per-run context;
+// Cancel also works from another process through the persisted status.
+type Runner struct {
+	cfg      *config.Config
+	db       store.Store
+	gh       github.Client
+	tokens   github.RepoTokenSource
+	opts     Options
+	redactor *secret.Redactor
+	repos    *repos.Registry
+	// freezeMu makes the first freeze of a run's repository settings win.
+	freezeMu sync.Mutex
+	mu       sync.Mutex
+	active   map[int64]context.CancelFunc
+	controls map[int64]*sync.Mutex
+	// notConnected is set at startup in app mode when no App exists yet.
+	notConnected bool
+}
+
+type runLimits struct {
+	Agent       agent.Limits
+	RefineTurns int
+	Timeout     time.Duration
+}
+
+// Token is a secret-backed PAT source, shared by GitHub and git clone/push.
+type Token struct{ Value secret.Secret }
+
+// Token supplies a credential without embedding it in diagnostics.
+func (t Token) Token(context.Context) (string, error) {
+	if !t.Value.IsSet() {
+		return "", errors.New("set GITHUB_TOKEN")
+	}
+	return t.Value.Reveal(), nil
+}
+
+// New prepares the runner and recovers expired heartbeats on startup.
+// The caller owns the store and closes it after runner work has finished.
+func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) (*Runner, error) {
+	if cfg == nil || db == nil {
+		return nil, errors.New("runner requires configuration and storage")
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	if opts.Clock == nil {
+		opts.Clock = time.Now
+	}
+	if opts.Clone == nil {
+		opts.Clone = gitx.Clone
+	}
+	if opts.Executor == nil {
+		opts.Executor = defaultExecutor(cfg)
+	}
+	if opts.Constructors == nil {
+		opts.Constructors = providers.Constructors(providers.Options{})
+	}
+	if opts.HeartbeatInterval <= 0 {
+		opts.HeartbeatInterval = 10 * time.Second
+	}
+	if opts.StaleAfter <= 0 {
+		opts.StaleAfter = time.Minute
+	}
+	r := &Runner{cfg: cfg, db: db, opts: opts, redactor: cfg.Redactor(), active: make(map[int64]context.CancelFunc), controls: make(map[int64]*sync.Mutex)}
+	r.redactor.Extend(opts.Redactor)
+	r.repos = opts.Repos
+	if r.repos == nil {
+		var err error
+		if r.repos, err = repos.New(ctx, cfg, db, r.redactor.Redact); err != nil {
+			return nil, err
+		}
+	}
+	if err := r.setupGitHub(ctx); err != nil {
+		return nil, err
+	}
+	if err := r.RecoverStale(ctx); err != nil {
+		return nil, err
+	}
+	r.sweepContainers(ctx)
+	manager, err := workspace.NewManager(cfg.DataDir())
+	if err != nil {
+		return nil, err
+	}
+	_, sweepErr := manager.Sweep(ctx, max(24*time.Hour, cfg.Limits.RunTimeout+cfg.Limits.TestTimeout+opts.StaleAfter))
+	if err := errors.Join(sweepErr, manager.Close()); err != nil {
+		return nil, err
+	}
+	if err := r.expireWaiting(ctx); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (r *Runner) now() time.Time { return r.opts.Clock().UTC() }
+func (r *Runner) control(id int64) *sync.Mutex {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.controls[id] == nil {
+		r.controls[id] = &sync.Mutex{}
+	}
+	return r.controls[id]
+}
+
+// ErrInvalidRequest identifies a rejected operator input without quoting it.
+var ErrInvalidRequest = errors.New("invalid run request")
+
+var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
+
+func ref(repo string) github.RepoRef {
+	owner, name, _ := strings.Cut(repo, "/")
+	return github.RepoRef{Owner: owner, Name: name}
+}
+
+func (r *Runner) limits(req Request) (runLimits, error) {
+	budget, hard, err := r.cfg.MaxCostMicro()
+	if err != nil {
+		return runLimits{}, err
+	}
+	if req.MaxCostMicros < 0 {
+		return runLimits{}, errors.New("budget must be positive")
+	}
+	if req.MaxCostMicros > 0 {
+		budget = req.MaxCostMicros
+	}
+	if budget <= 0 || hard <= 0 {
+		return runLimits{}, errors.New("budget and hard maximum must be positive")
+	}
+	budget = min(budget, hard)
+	c := r.cfg.Limits
+	return runLimits{Agent: agent.Limits{MaxTurns: c.MaxTurns, MaxOutputTokens: c.MaxOutputTokens, MaxTotalTokens: c.MaxTotalTokens, MaxCostMicros: budget, MaxTestAttempts: min(c.MaxTestAttempts, 3), TestTimeout: c.TestTimeout}, RefineTurns: c.RefineMaxTurns, Timeout: c.RunTimeout}, nil
+}
+
+func (r *Runner) provider(name string) (llm.Provider, llm.Pricing, error) {
+	configs, err := r.cfg.LLMProviders()
+	if err != nil {
+		return nil, llm.Pricing{}, err
+	}
+	for _, cfg := range configs {
+		if cfg.Name != name {
+			continue
+		}
+		ctor := r.opts.Constructors[cfg.Kind]
+		if ctor == nil {
+			return nil, llm.Pricing{}, llm.ErrNoAdapter
+		}
+		if cfg.APIKeyEnv != "" && !cfg.APIKey.IsSet() {
+			return nil, llm.Pricing{}, fmt.Errorf("provider %s: set %s", name, cfg.APIKeyEnv)
+		}
+		p, err := ctor(cfg)
+		if err != nil {
+			return nil, llm.Pricing{}, errors.New("could not construct provider")
+		}
+		if p == nil || p.Name() != name {
+			return nil, llm.Pricing{}, errors.New("provider identity mismatch")
+		}
+		return p, cfg.Pricing, nil
+	}
+	return nil, llm.Pricing{}, llm.ErrUnknownProvider
+}
+
+func (r *Runner) prepare(req Request) (store.Run, error) {
+	if r.notConnected {
+		return store.Run{}, ErrGitHubNotConnected
+	}
+	req.Repo = strings.ToLower(strings.TrimSpace(req.Repo))
+	if !repoPattern.MatchString(req.Repo) || req.Issue <= 0 {
+		return store.Run{}, errors.New("require --repo owner/name and a positive --issue")
+	}
+	if !r.repos.Has(req.Repo) {
+		return store.Run{}, errors.New("repository is not in configuration allowlist")
+	}
+	if req.Mode == "" {
+		req.Mode = r.cfg.Defaults.Mode
+	}
+	if req.Mode != config.ModeFix && req.Mode != config.ModeRefine && req.Mode != config.ModeInvestigate {
+		return store.Run{}, errors.New("mode must be fix, refine or investigate")
+	}
+	if req.Provider == "" {
+		req.Provider = r.cfg.Defaults.Provider
+	}
+	p := r.cfg.Providers[req.Provider]
+	if p == nil {
+		return store.Run{}, llm.ErrUnknownProvider
+	}
+	refine, code := r.cfg.Defaults.RefineModel, r.cfg.Defaults.CodeModel
+	if req.Provider != r.cfg.Defaults.Provider {
+		refine, code = "", ""
+	}
+	if req.Model != "" {
+		refine, code = req.Model, req.Model
+	}
+	if req.RefineModel != "" {
+		refine = req.RefineModel
+	}
+	if req.CodeModel != "" {
+		code = req.CodeModel
+	}
+	if refine == "" {
+		refine = p.DefaultModel
+	}
+	if code == "" {
+		code = p.DefaultModel
+	}
+	if refine == "" || code == "" || strings.ContainsAny(refine+code, "\r\n\x00") {
+		return store.Run{}, errors.New("set a valid model for both stages")
+	}
+	if _, _, err := r.provider(req.Provider); err != nil {
+		return store.Run{}, err
+	}
+	limits, err := r.limits(req)
+	if err != nil {
+		return store.Run{}, err
+	}
+	raw, err := json.Marshal(limits)
+	if err != nil {
+		return store.Run{}, err
+	}
+	return store.Run{IngressKey: req.IngressKey, Repo: req.Repo, IssueNumber: req.Issue, Mode: req.Mode, Provider: req.Provider, RefineModel: refine, CodeModel: code, DryRun: req.DryRun, Status: store.StatusQueued, Phase: store.PhasePreflight, LimitsJSON: raw}, nil
+}
+
+// Start creates and executes the read-only phase, returning a durable waiting
+// run (or a completed investigation). It never bypasses approval, even dry-run.
+func (r *Runner) Start(ctx context.Context, req Request) (store.Run, error) {
+	run, err := r.prepare(req)
+	if err != nil {
+		return run, err
+	}
+	if req.Mode == "" {
+		issue, err := r.gh.GetIssue(ctx, ref(run.Repo), int(run.IssueNumber))
+		if err != nil {
+			return store.Run{}, err
+		}
+		for _, mode := range []string{config.ModeInvestigate, config.ModeRefine, config.ModeFix} {
+			for _, label := range issue.Labels {
+				if label.Name == "ai-"+mode {
+					run.Mode = mode
+					return r.start(ctx, run, nil)
+				}
+			}
+		}
+	}
+	return r.start(ctx, run, nil)
+}
+
+func (r *Runner) start(ctx context.Context, run store.Run, reuse *store.Spec) (store.Run, error) {
+	ctx, release, err := r.admit(ctx)
+	if err != nil {
+		return store.Run{}, err
+	}
+	defer release()
+	run.Trigger = r.actionChannel()
+	if r.opts.Dispatch != nil {
+		admittedAt := time.Now().UTC()
+		run.HeartbeatAt = &admittedAt
+	}
+	run, err = r.db.CreateRun(ctx, run)
+	if err != nil {
+		return run, err
+	}
+	// The run keeps the repository settings it starts with, whatever the
+	// dashboard changes while it is in flight.
+	if _, ferr := r.runRepo(ctx, run); ferr != nil {
+		return run, errors.Join(ferr, r.fail(ctx, run, ferr))
+	}
+	id := run.ID
+	initial := run
+	if err = r.action(ctx, id, "start", r.actorFor(ctx), r.actionChannel(), nil); err == nil {
+		err = r.dispatch(ctx, id, func(work context.Context) error {
+			run := initial
+			err := r.withWork(work, id, func(work context.Context) error {
+				if err := r.transition(work, &run, store.StatusRunning, store.PhasePreflight, store.RunPatch{}); err != nil {
+					return err
+				}
+				return r.refine(work, &run, nil, "", reuse)
+			})
+			if err != nil {
+				return r.fail(work, run, err)
+			}
+			// A retry may reuse an approved spec. It still enters the ordinary gate.
+			if reuse != nil && r.opts.Dispatch != nil {
+				return r.execute(work, id)
+			}
+			return nil
+		})
+	}
+	if err != nil {
+		err = r.fail(ctx, initial, err)
+	}
+	latest, readErr := r.db.GetRun(context.WithoutCancel(ctx), id)
+	return latest, errors.Join(err, readErr)
+}
+
+func (r *Runner) actionChannel() string {
+	if r.opts.ActionChannel == "ui" {
+		return "ui"
+	}
+	return "cli"
+}
+
+func (r *Runner) admit(ctx context.Context) (context.Context, func(), error) {
+	if r.opts.Admit != nil {
+		return r.opts.Admit(ctx)
+	}
+	return ctx, func() {}, nil
+}
+
+// RecoverStale fails orphaned active work and releases its issue lock. Servers
+// call this periodically as well as on startup so quick restarts recover later.
+func (r *Runner) RecoverStale(ctx context.Context) error {
+	_, err := r.db.FailStaleRuns(ctx, r.now().Add(-r.opts.StaleAfter))
+	return err
+}
+
+func (r *Runner) dispatch(ctx context.Context, id int64, work func(context.Context) error) error {
+	if r.opts.Dispatch != nil {
+		return r.opts.Dispatch(ctx, id, work)
+	}
+	return work(ctx)
+}
+
+func (r *Runner) transition(ctx context.Context, run *store.Run, status store.Status, phase store.Phase, patch store.RunPatch) error {
+	// Free text from provider/GitHub responses must be redacted before SQLite,
+	// not only when displayed by the API or CLI.
+	for _, field := range []*string{patch.IssueTitle, patch.ErrorMessage, patch.PRURL, patch.Summary} {
+		if field != nil {
+			*field = r.redactor.Redact(*field)
+		}
+	}
+	patch.Phase = phase
+	patch.ExpectedGeneration = &run.Generation
+	if err := r.db.SetRunStatus(ctx, run.ID, run.Status, status, patch); err != nil {
+		return err
+	}
+	updated, err := r.db.GetRun(ctx, run.ID)
+	if err != nil {
+		return err
+	}
+	if updated.Status != status || updated.Generation != run.Generation+1 {
+		return store.ErrConflict
+	}
+	*run = updated
+	return nil
+}
+
+func (r *Runner) action(ctx context.Context, id int64, kind, actor, channel string, data any) error {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	// Data is harness-owned; all user text is redacted before encoding.
+	_, err = r.db.RecordAction(ctx, store.Action{RunID: id, Kind: kind, Actor: r.redactor.Redact(actor), Channel: channel, PayloadJSON: raw})
+	return err
+}
+
+func (r *Runner) artifact(ctx context.Context, id int64, kind, content string) error {
+	return r.db.SaveArtifact(ctx, store.Artifact{RunID: id, Kind: kind, Content: tools.CapOutput(r.redactor.Redact(content), 256<<10)})
+}
+
+// defaultExecutor selects host or container execution from [executor]. The
+// runtime binary is resolved per run so the workspace is excluded as well.
+func defaultExecutor(cfg *config.Config) func(string, config.RepoExecutor) (execx.Executor, error) {
+	if !cfg.Executor.Container() {
+		return func(dir string, _ config.RepoExecutor) (execx.Executor, error) { return execx.NewLocalExecutor(dir) }
+	}
+	return func(dir string, re config.RepoExecutor) (execx.Executor, error) {
+		containerCfg, err := cfg.ContainerConfigFor(re, os.LookupEnv, dir)
+		if err != nil {
+			return nil, err
+		}
+		return execx.NewContainerExecutor(dir, containerCfg)
+	}
+}
+
+// sweepContainers removes patchbot-labelled containers left by a crashed
+// process. It runs only when no run is queued or running in the shared store,
+// so it cannot remove a live run's container from another patchbot process.
+// Failure is logged, not fatal: each command still reconciles its own container.
+func (r *Runner) sweepContainers(ctx context.Context) {
+	sweep := r.opts.ContainerSweep
+	if sweep == nil && r.cfg.Executor.Container() {
+		sweep = func(ctx context.Context) (int, error) {
+			containerCfg, err := r.cfg.ContainerConfig("", os.LookupEnv)
+			if err != nil {
+				return 0, err
+			}
+			if containerCfg.Flavor == execx.RuntimeDocker {
+				if err := execx.PrepareDockerConfig(r.cfg.DockerConfigDir()); err != nil {
+					return 0, err
+				}
+			}
+			return execx.SweepContainers(ctx, containerCfg)
+		}
+	}
+	if sweep == nil {
+		return
+	}
+	page, err := r.db.ListRuns(ctx, store.RunFilter{Statuses: []store.Status{store.StatusQueued, store.StatusRunning}, Limit: 1})
+	if err != nil || len(page.Runs) > 0 {
+		slog.Info("container sweep skipped", "active_runs", len(page.Runs) > 0, "store_error", err != nil)
+		return
+	}
+	removed, err := sweep(ctx)
+	if err != nil {
+		slog.Warn("container sweep failed", "error", r.redactor.Redact(err.Error()))
+		return
+	}
+	if removed > 0 {
+		slog.Warn("removed containers left by a previous patchbot process", "count", removed)
+	}
+}
+	}
+	if p.PriceFree && len(p.Prices) > 0 {
+		v.addf("%s: price_free = true and a prices table contradict each other; keep one", at)
+	}
+	for _, model := range sortedKeys(p.Prices) {
+		price := p.Prices[model]
+		pat := fmt.Sprintf("%s.prices.%s", at, model)
+		v.check(validModelID(model), "%s: %q is not a model ID", pat, model)
+		for _, rate := range []struct {
+			name  string
+			value *float64
+		}{{"input", price.Input}, {"output", price.Output}} {
+			switch {
+			case rate.value == nil:
+				v.addf("%s.%s: missing; a price needs both input and output, and a rate that is "+
+					"really free must be written as 0", pat, rate.name)
+			case !validMoney(*rate.value):
+				v.addf("%s.%s: must be 0 or more", pat, rate.name)
+			}
+		}
+		v.check(price.CacheRead == nil || validMoney(*price.CacheRead), "%s.cache_read: must be 0 or more", pat)
+		v.check(price.CacheWrite == nil || validMoney(*price.CacheWrite), "%s.cache_write: must be 0 or more", pat)
+	}
+}
+
+func validateRepo(v *validator, name string, r *Repo) {
+	at := fmt.Sprintf("repos.%q", name)
+	_, repo, _ := strings.Cut(name, "/")
+	if !repoRE.MatchString(name) || repo == "." || repo == ".." {
+		v.addf("%s: a repository key looks like \"owner/name\"", at)
+	}
+	for _, id := range sortedKeys(r.Commands) {
+		argv := r.Commands[id]
+		cat := fmt.Sprintf("%s.commands.%s", at, id)
+		v.check(commandIDRE.MatchString(id),
+			"%s: a command ID uses lower-case letters, digits, - and _, and starts with a letter", cat)
+		switch {
+		case len(argv) == 0:
+			v.addf("%s: must be a non-empty argv array such as [\"go\", \"test\", \"./...\"]", cat)
+			continue
+		case argv[0] == "":
+			v.addf("%s: the program name is empty", cat)
+		case strings.HasPrefix(argv[0], "-"):
+			v.addf("%s: the program name %q starts with a dash", cat, argv[0])
+		case strings.ContainsAny(argv[0], shellMeta) || strings.ContainsFunc(argv[0], isControl):
+			v.addf("%s: the program name %q contains a shell metacharacter; commands run without a shell, "+
+				"so give the program and each argument as separate array items", cat, argv[0])
+		}
+		for i, arg := range argv {
+			v.check(!strings.ContainsRune(arg, 0), "%s: argument %d contains a NUL byte", cat, i)
+		}
+	}
+	if r.TestCommand != "" {
+		if _, ok := r.Commands[r.TestCommand]; !ok {
+			v.addf("%s.test_command: no command %q in commands (have: %s)",
+				at, r.TestCommand, orNone(sortedKeys(r.Commands)))
+		}
+	}
+	for _, path := range r.Protected {
+		v.check(validProtectedPath(path),
+			"%s.protected: %q must be a relative path inside the repository, with no \"..\"", at, path)
+	}
+}
+
+// Warnings returns problems that do not stop patchbot from starting: a model
+// with no price, an API key variable that is not set, and the like. A warning
+// names the environment variable and never its value.
+func (c *Config) Warnings() []string {
+	var out []string
+	redactor := c.Redactor()
+	warnf := func(format string, args ...any) {
+		out = append(out, redactor.Redact(fmt.Sprintf(format, args...)))
+	}
+
+	for _, name := range sortedKeys(c.Providers) {
+		p := c.Providers[name]
+		switch {
+		case p.APIKeyEnv == "" && p.Kind != KindOpenAI:
+			warnf("provider %q: api_key_env is not set, so requests carry no API key", name)
+		case p.APIKey.IsSet() && len(p.APIKey.Reveal()) < secret.MinValueLen:
+			warnf("provider %q: credential in %s is shorter than %d characters and cannot be masked; use a longer credential", name, p.APIKeyEnv, secret.MinValueLen)
+		case p.APIKeyEnv != "" && envNameRE.MatchString(p.APIKeyEnv) && !p.APIKey.IsSet():
+			warnf("provider %q: environment variable %s is not set; the provider cannot be used until it is",
+				name, p.APIKeyEnv)
+		}
+		if p.PriceFree {
+			continue
+		}
+		for _, model := range c.providerModels(name) {
+			price, ok := p.Prices[model]
+			switch {
+			case !ok:
+				warnf("provider %q: model %q has no price, so its cost is unknown and only the token limit applies; "+
+					"add [providers.%s.prices.%q] or set price_free = true", name, model, name, model)
+			case price.Checked.IsZero():
+				warnf("provider %q: the price of model %q has no checked date", name, model)
+			}
+		}
+	}
+
+	if len(c.Repos) == 0 {
+		warnf(`no [repos."owner/name"] table: no run can start until a repository is listed`)
+	}
+	for _, name := range sortedKeys(c.Repos) {
+		if _, ok := c.Repos[name].TestCommandID(); !ok {
+			warnf("repo %q: no test command, so its pull requests will be drafts marked unverified", name)
+		}
+	}
+	if host, _, err := net.SplitHostPort(c.Server.Addr); err == nil && !isLoopback(host) && c.Server.Auth.Mode != AuthCloudflareAccess {
+		warnf("server.addr %q is not a loopback address; patchbot serve will require PATCHBOT_UI_TOKEN", c.Server.Addr)
+	}
+	return out
+}
+
+// providerModels returns the models a provider is expected to run: its list,
+// its default and, for the default provider, the two stage models.
+func (c *Config) providerModels(name string) []string {
+	p := c.Providers[name]
+	models := slices.Clone(p.Models)
+	add := func(model string) {
+		if model != "" && !slices.Contains(models, model) {
+			models = append(models, model)
+		}
+	}
+	add(p.DefaultModel)
+	if name == c.Defaults.Provider {
+		add(c.Defaults.RefineModel)
+		add(c.Defaults.CodeModel)
+	}
+	return models
+}
+
+func validMoney(f float64) bool {
+	return f >= 0 && !math.IsInf(f, 0) && !math.IsNaN(f)
+}
+
+func validModelID(id string) bool {
+	return id != "" && len(id) <= 200 && !strings.ContainsFunc(id, func(r rune) bool {
+		return isControl(r) || r == ' '
+	})
+}
+
+func validProtectedPath(path string) bool {
+	if path == "" || strings.HasPrefix(path, "/") || strings.ContainsRune(path, 0) || strings.Contains(path, `\`) {
+		return false
+	}
+	for seg := range strings.SplitSeq(strings.TrimSuffix(path, "/"), "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
+
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func orNone(items []string) string {
+	if len(items) == 0 {
+		return "none"
+	}
+	return strings.Join(items, ", ")
+}
+package execx
+
+import (
+	"errors"
+	"fmt"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"strings"
+)
+
+const (
+	defaultMaxExtraArgs  = 64
+	defaultMaxArgLength  = 8 << 10
+	defaultMaxExtraBytes = 8 << 10
+)
+
+// PolicyOptions are operator-owned exceptions and limits, never model input.
+// AllowArgs and AllowLeadingDash are indexed by command ID. AllowShells is
+// indexed by executable basename, e.g. "bash", and must name an explicit opt-in.
+// Zero limits select defaults. Options are copied by NewPolicy.
+type PolicyOptions struct {
+	AllowArgs        map[string]bool
+	AllowLeadingDash map[string]bool
+	AllowShells      map[string]bool
+	MaxExtraArgs     int
+	MaxArgLength     int
+	MaxExtraBytes    int
+	// TrustedPath defaults to TrustedPath when nil; an empty list is invalid.
+	TrustedPath []string
+	// ExcludedRoots adds data/workspace roots to the checkout exclusion.
+	ExcludedRoots []string
+	// InContainer keeps executables unresolved on the host: commands run in a
+	// container image, whose PATH (TrustedPath here, container paths) resolves
+	// bare names. Shell/launcher and relative-path rules still apply.
+	InContainer bool
+}
+
+type command struct {
+	argv      []string
+	allowArgs bool
+	allowDash bool
+}
+
+// Policy holds immutable, resolved command IDs. Construct it from trusted
+// per-repo commands = { name = [argv...] } configuration outside the checkout.
+type Policy struct {
+	commands map[string]command
+	maxArgs  int
+	maxLen   int
+	maxBytes int
+	path     []string
+}
+
+// NewPolicy resolves executables once using only the configured trusted path. An absolute
+// operator-supplied executable is also accepted, but must be outside root.
+// At most one options value may be supplied.
+func NewPolicy(root string, commands map[string][]string, options ...PolicyOptions) (*Policy, error) {
+	root, err := canonicalRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	if len(options) > 1 {
+		return nil, errors.New("at most one policy options value is allowed")
+	}
+	var opts PolicyOptions
+	if len(options) == 1 {
+		opts = options[0]
+	}
+	if opts.MaxExtraArgs < 0 || opts.MaxArgLength < 0 || opts.MaxExtraBytes < 0 {
+		return nil, errors.New("argument limits must not be negative")
+	}
+	dirs := opts.TrustedPath
+	if dirs == nil {
+		dirs = filepath.SplitList(TrustedPath)
+	}
+	roots := append([]string{root}, opts.ExcludedRoots...)
+	if opts.InContainer {
+		if err := ValidateContainerPath(dirs); err != nil {
+			return nil, err
+		}
+	} else if err := ValidateTrustedPath(dirs, roots...); err != nil {
+		return nil, err
+	}
+	p := &Policy{path: append([]string(nil), dirs...), commands: make(map[string]command), maxArgs: opts.MaxExtraArgs,
+		maxLen: opts.MaxArgLength, maxBytes: opts.MaxExtraBytes}
+	if p.maxArgs == 0 {
+		p.maxArgs = defaultMaxExtraArgs
+	}
+	if p.maxLen == 0 {
+		p.maxLen = defaultMaxArgLength
+	}
+	if p.maxBytes == 0 {
+		p.maxBytes = defaultMaxExtraBytes
+	}
+	for name, argv := range commands {
+		if name == "" || strings.ContainsRune(name, 0) || len(argv) == 0 || argv[0] == "" {
+			return nil, errors.New("command ID and executable must not be empty or contain NUL")
+		}
+		for _, arg := range argv {
+			if strings.ContainsRune(arg, 0) {
+				return nil, fmt.Errorf("command %q contains NUL", name)
+			}
+		}
+		resolve := resolveExecutable
+		if opts.InContainer {
+			resolve = containerExecutable
+		}
+		binary, resolveErr := resolve(roots, argv[0], opts.AllowShells, dirs)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("command %q: %w", name, resolveErr)
+		}
+		copyArgv := append([]string(nil), argv...)
+		copyArgv[0] = binary
+		p.commands[name] = command{copyArgv, opts.AllowArgs[name], opts.AllowLeadingDash[name]}
+	}
+	return p, nil
+}
+
+// MinimalEnv uses the same immutable PATH that resolved this policy.
+func (p *Policy) MinimalEnv(home, tmp string, extra map[string]string) []string {
+	return minimalEnv(home, tmp, extra, strings.Join(p.path, string(filepath.ListSeparator)))
+}
+
+// Resolve returns a fresh argv slice. Additional arguments require explicit
+// per-command opt-in; flags require another opt-in. Literal metacharacters have
+// no shell meaning. The approved program may still interpret their contents.
+func (p *Policy) Resolve(name string, extraArgs []string) ([]string, error) {
+	cmd, ok := p.commands[name]
+	if !ok {
+		return nil, fmt.Errorf("unknown command %q", name)
+	}
+	if len(extraArgs) > 0 && !cmd.allowArgs {
+		return nil, errors.New("extra arguments are not allowed")
+	}
+	if len(extraArgs) > p.maxArgs {
+		return nil, errors.New("too many extra arguments")
+	}
+	total := 0
+	for _, arg := range extraArgs {
+		if strings.ContainsRune(arg, 0) || (!cmd.allowDash && strings.HasPrefix(arg, "-")) {
+			return nil, errors.New("invalid extra argument")
+		}
+		if len(arg) > p.maxLen || len(arg) > p.maxBytes-total {
+			return nil, errors.New("extra arguments exceed length limit")
+		}
+		total += len(arg)
+	}
+	argv := make([]string, 0, len(cmd.argv)+len(extraArgs))
+	argv = append(argv, cmd.argv...)
+	return append(argv, extraArgs...), nil
+}
+
+func shellLike(name string) bool {
+	switch name {
+	case "sh", "bash", "zsh", "fish", "dash", "env", "xargs", "sudo":
+		return true
+	default:
+		return false
+	}
+}
+
+func resolveExecutable(roots []string, name string, allowShells map[string]bool, dirs []string) (string, error) {
+	base := filepath.Base(name)
+	explicitShell := shellLike(base) && allowShells[base]
+	if shellLike(base) && !explicitShell {
+		return "", errors.New("shell or command launcher is not allowed")
+	}
+	if !filepath.IsAbs(name) && base != name {
+		return "", errors.New("relative executable paths are not allowed")
+	}
+	var path string
+	err := errors.New("executable not found in trusted path")
+	if filepath.IsAbs(name) {
+		path, err = exec.LookPath(name)
+	} else {
+		// LookPath receives absolute candidates so it never reads ambient PATH.
+		for _, dir := range dirs {
+			candidate := filepath.Join(dir, name)
+			path, err = exec.LookPath(candidate)
+			if err == nil {
+				break
+			}
+		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve executable: %w", err)
+	}
+	if excludedExecutable(roots, path) {
+		return "", errors.New("executable is inside the workspace")
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve executable symlink: %w", err)
+	}
+	if !filepath.IsAbs(resolved) || excludedExecutable(roots, resolved) {
+		return "", errors.New("executable must be absolute and outside the workspace")
+	}
+	if target := filepath.Base(resolved); shellLike(target) && !explicitShell && !allowShells[target] {
+		return "", errors.New("executable resolves to a disallowed shell or launcher")
+	}
+	return resolved, nil
+}
+
+// containerExecutable applies the name rules without consulting the host: the
+// image's filesystem is what the command will see.
+func containerExecutable(_ []string, name string, allowShells map[string]bool, _ []string) (string, error) {
+	base := path.Base(name)
+	if shellLike(base) && !allowShells[base] {
+		return "", errors.New("shell or command launcher is not allowed")
+	}
+	if strings.Contains(name, "/") && (!path.IsAbs(name) || path.Clean(name) != name) {
+		return "", errors.New("container executables must be bare names or clean absolute paths")
+	}
+	return name, nil
+}
+
+// ResolveExecutable uses the same trusted-path and exclusion rules as Policy.
+// It never consults the ambient PATH. A nil path selects the secure defaults.
+func ResolveExecutable(name string, dirs []string, excluded ...string) (string, error) {
+	if dirs == nil {
+		dirs = filepath.SplitList(TrustedPath)
+	}
+	if err := ValidateTrustedPath(dirs, excluded...); err != nil {
+		return "", err
+	}
+	return resolveExecutable(excluded, name, nil, dirs)
+}
+func excludedExecutable(roots []string, path string) bool {
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		resolved, err := resolveFuturePath(root)
+		if err != nil || inside(filepath.Clean(root), path) || inside(resolved, path) {
+			return true
+		}
+	}
+	return false
+}
+
+exec
+/bin/zsh -lc "rg -n 'cfg.Repos|RepoExecutor\\(' internal --glob '"'!**/*test*'"'; cat internal/store/migrations/0010_repos.sql; cat internal/server/server.go | head -240; cat internal/execx/path.go; cat SECURITY.md" in /Users/pappumishra/Documents/selfproject/patchbot-m24-repo-mgmt
+ succeeded in 0ms:
+internal/config/executor.go:17:		return execx.PolicyOptions{InContainer: true, TrustedPath: c.RepoExecutor(repo).Path}
+internal/config/executor.go:34:func (c *Config) RepoExecutor(repo string) RepoExecutor {
+internal/config/executor.go:65:	return c.ContainerConfigFor(c.RepoExecutor(repo), lookup, excluded...)
+internal/config/validate.go:282:		c.validateRepoExecutor(v, name, c.Repos[name])
+internal/config/validate.go:288:func (c *Config) validateRepoExecutor(v *validator, name string, r *Repo) {
+internal/config/validate.go:315:		c.validateRepoExecutor(&v, name, r)
+internal/config/show.go:119:		re := p.cfg.RepoExecutor(key[len(key)-1])
+internal/repos/repos.go:148:		if _, clash := r.cfg.Repos[e.Name]; clash {
+internal/repos/repos.go:188:	if _, ok := r.cfg.Repos[name]; ok {
+internal/repos/repos.go:204:	if c, ok := r.cfg.Repos[name]; ok {
+internal/repos/repos.go:225:	names := make([]string, 0, len(r.cfg.Repos)+len(r.dash))
+internal/repos/repos.go:230:	for name := range r.cfg.Repos {
+internal/repos/repos.go:252:	if _, clash := r.cfg.Repos[name]; clash {
+internal/repos/repos.go:352:	if _, ok := r.cfg.Repos[name]; ok {
+internal/repos/repos.go:380:	if _, ok := r.cfg.Repos[name]; ok {
+internal/repos/repos.go:424:	merged = make(map[string]*config.Repo, len(cfg.Repos)+len(recs))
+internal/repos/repos.go:425:	for name, r := range cfg.Repos {
+internal/repos/repos.go:435:		if _, clash := cfg.Repos[rec.Name]; clash {
+internal/cli/doctor.go:161:			for _, name := range sortedNames(cfg.Repos) {
+internal/cli/doctor.go:164:					where = " (resolved in the container image) from " + cfg.RepoExecutor(name).Image
+internal/cli/doctor.go:166:				for _, id := range sortedNames(cfg.Repos[name].Commands) {
+internal/cli/doctor.go:167:					p, err := execx.NewPolicy(root, map[string][]string{id: cfg.Repos[name].Commands[id]}, cfg.CommandPolicyOptions(name, excluded...))
+internal/cli/doctor.go:353:	if len(cfg.Repos) == 0 {
+internal/cli/doctor.go:356:	for _, name := range sortedNames(cfg.Repos) {
+internal/cli/doctor.go:357:		re := cfg.RepoExecutor(name)
+internal/cli/doctor.go:421:	if len(cfg.Repos) == 0 {
+internal/cli/doctor.go:424:	for _, name := range sortedNames(cfg.Repos) {
+internal/cli/doctor.go:483:// creating or migrating it, adds the valid ones to cfg.Repos so every later
+internal/cli/doctor.go:494:	for _, name := range sortedNames(cfg.Repos) {
+internal/cli/doctor.go:500:	cfg.Repos = merged
+-- Dashboard-managed repositories (M24). The config file stays the bootstrap
+-- allowlist and is never written; these rows are added to it. settings_json is
+-- the redacted repository settings (commands argv map, test_command, protected
+-- paths, optional digest-pinned image and container PATH), validated by the
+-- same rules as a [repos."owner/name"] table before it is stored. Edits bump
+-- version (optimistic concurrency). History stays when a row is removed.
+CREATE TABLE dashboard_repos (
+    name TEXT PRIMARY KEY CHECK (length(name) BETWEEN 3 AND 140 AND name = lower(name)),
+    settings_json TEXT NOT NULL CHECK (json_valid(settings_json)),
+    version INTEGER NOT NULL CHECK (version >= 1),
+    created_at INTEGER NOT NULL CHECK (created_at >= 0),
+    created_by TEXT NOT NULL,
+    updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+    updated_by TEXT NOT NULL
+) STRICT;
+
+-- Append-only audit of every add, edit and remove with the acting identity.
+-- before_json and after_json are redacted settings snapshots ('' when absent).
+CREATE TABLE repo_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('add', 'edit', 'remove')),
+    actor TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    before_json TEXT NOT NULL DEFAULT '',
+    after_json TEXT NOT NULL DEFAULT '',
+    at INTEGER NOT NULL CHECK (at >= 0)
+) STRICT;
+
+CREATE INDEX repo_audit_repo ON repo_audit (repo, id);
+
+CREATE TRIGGER repo_audit_no_update BEFORE UPDATE ON repo_audit
+BEGIN SELECT RAISE(ABORT, 'repo_audit is append-only'); END;
+
+CREATE TRIGGER repo_audit_no_delete BEFORE DELETE ON repo_audit
+BEGIN SELECT RAISE(ABORT, 'repo_audit is append-only'); END;
+// Package server serves the local JSON API and resumable event streams.
+package server
+
+import (
+	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"errors"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"path"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/cfaccess"
+	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/github"
+	"github.com/aryanpappu/patchbot/internal/llm"
+	"github.com/aryanpappu/patchbot/internal/llm/providers"
+	"github.com/aryanpappu/patchbot/internal/repos"
+	"github.com/aryanpappu/patchbot/internal/runner"
+	"github.com/aryanpappu/patchbot/internal/secret"
+	"github.com/aryanpappu/patchbot/internal/store"
+	"github.com/aryanpappu/patchbot/internal/web"
+)
+
+// Options supplies trusted infrastructure. Zero values use production defaults.
+type Options struct {
+	Token secret.Secret
+	// Access overrides the Cloudflare Access verifier built from the
+	// configuration (tests point it at a local JWKS server).
+	Access          *cfaccess.Verifier
+	Runner          runner.Options
+	ShutdownTimeout time.Duration
+	// Short intervals are useful to exercise timers without network or live keys.
+	HeartbeatInterval  time.Duration
+	PollInterval       time.Duration
+	StreamWriteTimeout time.Duration
+	SyncInterval       time.Duration
+}
+
+// Server owns background runs and stream lifetimes. The caller owns the store
+// and closes it only after Shutdown and outstanding runner cleanup finish.
+type Server struct {
+	cfg             *config.Config
+	db              store.Store
+	runner          *runner.Runner
+	repos           *repos.Registry
+	models          *llm.ModelLister
+	registry        *llm.Registry
+	redactor        *secret.Redactor
+	manager         *manager
+	bus             broadcaster
+	handler         http.Handler
+	http            *http.Server
+	tokenHash       [32]byte
+	authenticated   bool
+	access          *cfaccess.Verifier
+	opts            Options
+	mu              sync.RWMutex
+	addr            string
+	stopping        bool
+	stop            context.CancelFunc
+	done            chan struct{}
+	maintenanceDone chan struct{}
+	unsubscribe     func()
+	shutdownOnce    sync.Once
+	ingressMu       sync.Mutex
+	ingressWake     chan struct{}
+	// maxPending overrides maxPendingDeliveries in tests when positive.
+	maxPending int
+	// setup holds Connect GitHub states; setupMu serializes the callback.
+	setup   setupStates
+	setupMu sync.Mutex
+}
+
+// ValidateAddress refuses public or wildcard binds without a UI credential.
+// Hostnames other than localhost require authentication: no DNS lookup can
+// change an unauthenticated listener from loopback to a public interface.
+func ValidateAddress(addr string, token secret.Secret) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return errors.New("server address must be host:port")
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 0 || n > 65535 {
+		return errors.New("server port must be between 0 and 65535")
+	}
+	ip := net.ParseIP(host)
+	if !token.IsSet() && host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return errors.New("non-loopback server address requires PATCHBOT_UI_TOKEN")
+	}
+	return nil
+}
+
+// s0 is the credential ValidateAddress sees: Access JWT verification stands in
+// for the UI token on non-loopback binds.
+func s0(opts Options, cfg *config.Config) secret.Secret {
+	if cfg.Server.Auth.Mode == config.AuthCloudflareAccess {
+		return secret.New("cloudflare-access")
+	}
+	return opts.Token
+}
+
+// New constructs one runner and starts lifecycle maintenance and ownership heartbeats.
+func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) (*Server, error) {
+	if cfg == nil || db == nil {
+		return nil, errors.New("server requires configuration and storage")
+	}
+	if !opts.Token.IsSet() {
+		opts.Token = secret.New(os.Getenv("PATCHBOT_UI_TOKEN"))
+	}
+	if cfg.Server.Auth.Mode == config.AuthCloudflareAccess {
+		// Access replaces the bearer token; the token is ignored in this mode.
+		opts.Token = secret.Secret{}
+		if opts.Access == nil {
+			a := cfg.Server.Auth
+			var err error
+			opts.Access, err = cfaccess.New(cfaccess.Config{TeamDomain: a.TeamDomain, Audience: a.Audience, AllowedEmails: a.AllowedEmails})
+			if err != nil {
+				return nil, errors.New("invalid cloudflare_access configuration")
+			}
+		}
+	}
+	if err := ValidateAddress(cfg.Server.Addr, s0(opts, cfg)); err != nil {
+		return nil, err
+	}
+	if opts.ShutdownTimeout <= 0 {
+		opts.ShutdownTimeout = 30 * time.Second
+	}
+	if opts.HeartbeatInterval <= 0 {
+		opts.HeartbeatInterval = 15 * time.Second
+	}
+	if opts.StreamWriteTimeout <= 0 {
+		opts.StreamWriteTimeout = 5 * time.Second
+	}
+	if opts.PollInterval <= 0 {
+		opts.PollInterval = time.Second
+	}
+	if opts.SyncInterval <= 0 {
+		opts.SyncInterval = 60 * time.Second
+	}
+	if opts.Runner.Constructors == nil {
+		opts.Runner.Constructors = providers.Constructors(providers.Options{})
+	}
+	s := &Server{cfg: cfg, db: db, opts: opts, addr: cfg.Server.Addr, manager: newManager(cfg.Server.MaxConcurrentRuns, cfg.Server.MaxQueuedRuns), redactor: cfg.Redactor(), done: make(chan struct{}), maintenanceDone: make(chan struct{})}
+	s.authenticated = opts.Token.IsSet()
+	s.access = opts.Access
+	s.tokenHash = sha256.Sum256([]byte(opts.Token.Reveal()))
+	s.redactor.AddExact(opts.Token.Reveal())
+	s.redactor.AddSecrets(secret.New(os.Getenv("GITHUB_TOKEN")))
+	if opts.Runner.Tokens != nil {
+		if value, err := opts.Runner.Tokens.Token(ctx); err == nil {
+			s.redactor.AddExact(value)
+		}
+	}
+	if source, ok := db.(interface {
+		SubscribeEvents(func(store.Event)) func()
+	}); ok {
+		s.unsubscribe = source.SubscribeEvents(func(event store.Event) { s.bus.publish(event.RunID) })
+	}
+	opts.Runner.Dispatch = s.manager.submit
+	opts.Runner.Admit = s.manager.reserve
+	opts.Runner.ActionChannel = "ui"
+	s.redactor.Extend(opts.Runner.Redactor)
+	opts.Runner.Redactor = s.redactor
+	var err error
+	s.runner, err = runner.New(ctx, cfg, db, opts.Runner)
+	if err != nil {
+		if s.unsubscribe != nil {
+			s.unsubscribe()
+		}
+		return nil, errors.New("could not initialize runner")
+	}
+	s.repos = s.runner.Repos()
+	configs, err := cfg.LLMProviders()
+	if err != nil {
+		if s.unsubscribe != nil {
+			s.unsubscribe()
+		}
+		return nil, errors.New("invalid provider configuration")
+	}
+	s.registry, err = llm.NewRegistry(opts.Runner.Constructors, configs, llm.RegistryOptions{})
+	if err != nil {
+		if s.unsubscribe != nil {
+			s.unsubscribe()
+		}
+		return nil, errors.New("could not initialize providers")
+	}
+	s.models = llm.NewModelLister(s.registry, nil)
+	s.handler = s.routes()
+	s.http = &http.Server{Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, ErrorLog: log.New(io.Discard, "", 0)}
+	s.ingressWake = make(chan struct{}, 1)
+	maintenanceCtx, stop := context.WithCancel(context.Background())
+	s.stop = stop
+	interval := opts.Runner.HeartbeatInterval
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	s.manager.startHeartbeats(interval, db.Heartbeat)
+	go s.maintain(maintenanceCtx)
+	return s, nil
+}
+
+func (s *Server) maintain(ctx context.Context) {
+	defer close(s.maintenanceDone)
+	ticker := time.NewTicker(s.opts.SyncInterval)
+	defer ticker.Stop()
+	var labelTick <-chan time.Time
+	if s.cfg.Webhook.Enabled {
+		interval := s.cfg.Webhook.LabelPollInterval
+		if interval <= 0 {
+			interval = 5 * time.Minute
+		}
+		labels := time.NewTicker(interval)
+		defer labels.Stop()
+		labelTick = labels.C
+		s.logMaintenance("webhook deliveries", s.reconcileDeliveries(ctx))
+		s.syncLabels(ctx, interval)
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.ingressWake:
+			s.logMaintenance("webhook deliveries", s.reconcileDeliveries(ctx))
+		case <-labelTick:
+			s.syncLabels(ctx, s.cfg.Webhook.LabelPollInterval)
+		case <-ticker.C:
+			s.logMaintenance("recover stale runs", s.runner.RecoverStale(ctx))
+			s.logMaintenance("sync waiting runs", s.runner.SyncWaiting(ctx))
+			if s.cfg.Webhook.Enabled {
+				s.logMaintenance("webhook deliveries", s.reconcileDeliveries(ctx))
+				s.logMaintenance("prune webhook deliveries", s.pruneDeliveries(ctx))
+			}
+package execx
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// ValidateTrustedPath requires existing directories with trusted ownership and
+// permissions along every ancestor, including unresolved symlink locations.
+// Call again with the actual workspace and data roots when constructing a policy.
+func ValidateTrustedPath(dirs []string, excluded ...string) error {
+	if len(dirs) == 0 {
+		return errors.New("at least one trusted directory is required")
+	}
+	for _, dir := range dirs {
+		if !filepath.IsAbs(dir) || strings.ContainsAny(dir, "\x00"+string(filepath.ListSeparator)) {
+			return errors.New("entries must be nonempty absolute directories without a PATH separator")
+		}
+		for _, part := range strings.Split(filepath.ToSlash(dir), "/") {
+			if part == ".." {
+				return errors.New("entries must not contain parent traversal")
+			}
+		}
+		resolved, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			return fmt.Errorf("resolve trusted directory: %w", err)
+		}
+		for _, root := range excluded {
+			if root == "" {
+				continue
+			}
+			canonical, err := resolveFuturePath(root)
+			if err != nil {
+				return fmt.Errorf("resolve excluded root: %w", err)
+			}
+			if inside(canonical, resolved) || inside(filepath.Clean(root), filepath.Clean(dir)) {
+				return errors.New("trusted directory is inside the data directory or workspace")
+			}
+		}
+		if err := validateDirectoryChain(dir, excluded...); err != nil {
+			return fmt.Errorf("trusted directory %q: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+// Walk each unresolved component before following symlinks. Checking only the
+// final EvalSymlinks result misses replaceable links and intermediate targets.
+func validateDirectoryChain(path string, excluded ...string) error {
+	pending := strings.Split(filepath.Clean(path), string(filepath.Separator))
+	current := string(filepath.Separator)
+	links := 0
+	for {
+		if excludedExecutable(excluded, current) {
+			return errors.New("trusted path crosses the data directory or workspace")
+		}
+		info, err := os.Lstat(current) // #nosec G703 -- operator-owned path being validated.
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			links++
+			if links > 255 {
+				return errors.New("too many symlinks")
+			}
+			if err := trustedOwner(info); err != nil {
+				return err
+			}
+			target, err := os.Readlink(current)
+			if err != nil {
+				return err
+			}
+			if !filepath.IsAbs(target) {
+				target = filepath.Dir(current) + string(filepath.Separator) + target
+			}
+			pending = append(strings.Split(target, string(filepath.Separator)), pending...)
+			current = string(filepath.Separator)
+			continue
+		}
+		if !info.IsDir() {
+			return errors.New("every path component must be a directory")
+		}
+		if err := trustedDirectory(info); err != nil {
+			return fmt.Errorf("%s: %w", current, err)
+		}
+		for len(pending) > 0 && pending[0] == "" {
+			pending = pending[1:]
+		}
+		if len(pending) == 0 {
+			return nil
+		}
+		part := pending[0]
+		pending = pending[1:]
+		if part == "." {
+			continue
+		}
+		if part == ".." {
+			current = filepath.Dir(current)
+		} else {
+			current = filepath.Join(current, part)
+		}
+	}
+}
+
+// Resolve the existing prefix too, so a not-yet-created data directory cannot
+// hide beneath a symlink. EvalSymlinks alone cannot resolve such paths.
+func resolveFuturePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err == nil || !errors.Is(err, os.ErrNotExist) {
+		return resolved, err
+	}
+	info, statErr := os.Lstat(abs)
+	if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(abs)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(abs), target)
+		}
+		return resolveFuturePath(target)
+	}
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return "", statErr
+	}
+	parent := filepath.Dir(abs)
+	if parent == abs {
+		return "", err
+	}
+	resolved, err = resolveFuturePath(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolved, filepath.Base(abs)), nil
+}
+# Security policy
+
+**patchbot is not a sandbox. Repository commands run as your user.** They can
+read your host files, use your network and create processes outside the tool
+jail. Use only repositories, test commands and toolchain directories you trust.
+
+## Threat model
+
+The model, issue text, repository files, test output and upstream HTTP responses
+may be wrong or hostile. The operator, configuration, local account and trusted
+toolchain are trusted. The intended deployment is one operator on one machine.
+
+The approval gate binds code access to the current spec version and hash, issue
+content and expiry. Repo/command allowlists, an `os.Root` file jail, protected
+paths, explicit child environments, output caps, process groups and guarded git
+publication limit what model tools can do. Tokens are absent from test envs and
+are passed to git only for remote operations (clone, fetch, ls-remote, push) as an
+ephemeral host-scoped `http.extraheader` in `GIT_CONFIG_*`, never in argv, the
+URL or `.git/config`; local git commands never receive them. Redaction runs at persistence and output
+boundaries. Every CLI/server runner receives provider, GitHub and configured UI
+credentials. Registered values shorter than eight characters cannot be substring
+masked; `config check` and `doctor` warn without printing their values. Harness
+phases, statuses and JSON/TOML keys are preserved during redaction. HTTP reads and
+outbound deadlines are bounded. Adapter deadlines are retryable `unavailable`
+errors; caller cancellation and deadlines stop retries.
+
+Trusted PATH entries must exist and resolve to directories. Every directory
+from `/` to the entry, including unresolved symlink locations, must be owned by
+root or the current user and have no group/world write bits. Sticky directories
+are rejected too. Data and workspace roots are excluded. Doctor validates config
+before running anything and shares git resolution with production through the
+configured trusted path. Its version checks use `execx` with process groups, a
+five-second timeout, a 4 KiB output cap and WaitDelay.
+
+Process-group cleanup observes leader exit without reaping. The zombie reserves
+its PID/PGID until the final group signal, preventing cleanup from signaling a
+reused group. Timeout/cancellation sends TERM, waits the full grace period, then
+KILL; ordinary exits clean remaining members before Wait. Git shares this
+lifecycle. Escaped descendants remain outside this guarantee.
+
+The web server defaults to loopback. Other binds require `PATCHBOT_UI_TOKEN`.
+Bearer auth protects data routes when enabled. Host validation, Go cross-origin
+mutation checks, CSP, SRI and plain-text rendering protect the browser. Local
+CLI decisions use a configured actor name.
+
+With `[server.auth] mode = "cloudflare_access"` (M23) the UI/API no longer use
+the bearer token. Every request except the three fixed static asset paths must
+carry `Cf-Access-Jwt-Assertion`; patchbot verifies the RS256 signature against
+the team JWKS (`https://<team_domain>/cdn-cgi/access/certs`, keys cached by
+`kid`, one refresh per minute on an unknown `kid`), `iss`, `aud`, `exp`/`nbf`/
+`iat` (60 s skew) and that the `email` claim is in `allowed_emails`. Only RS256
+is accepted (`none` and HMAC tokens are rejected). Failures return a generic
+401/403 and the token is never logged or echoed. The verified email is the
+recorded actor on the ui channel. The Access JWT is the sole credential in this
+mode: keep the listener on loopback behind the tunnel, and rely on the Access
+policy to limit who can sign in (`allowed_emails` is a second check). The webhook path keeps its own
+HMAC check and needs a Cloudflare Access bypass policy so GitHub can reach it.
+
+GitHub approval identity: comments by the token owner (`/user`) are patchbot's
+own and normally never count. With a single-user PAT the owner may also be an
+approver ("shared identity"). Such a comment counts only if the login is a
+configured approver and live collaborator, the comment is unedited, inside the
+current waiting window, carries no `<!-- patchbot` marker, and its ID is not in
+patchbot's `posted_comments` record. Every comment patchbot posts carries that
+marker and its ID is recorded right after posting, so either check alone keeps
+patchbot's own text (even a spec starting with `/approve`) from approving.
+
+GitHub App mode (`[github] auth = "app"`): comments by the App bot
+(`<slug>[bot]`) never count, so the shared-identity rule above applies only to
+PAT mode. Each run's REST calls and every git network operation use an
+installation token minted for that repository's immutable ID only, with
+contents/issues/pull_requests write and metadata read, cached in memory, never
+written to SQLite, logs, artifacts or the container environment, and registered
+for redaction (with its git header form) before first use. App failures fail
+closed; there is no fallback to a PAT.
+
+Key custody on a shared host: the App private key is a long-lived credential
+that can mint tokens for every repository the App is installed on. patchbot
+keeps it in a file readable only by the service user (0600, owner checked,
+symlinks refused, never inside the data directory, workspaces or backups) and
+parses it once into memory. This is not a boundary against root, against other
+processes running as the patchbot user, or against debuggers and core dumps of
+the patchbot process. Install the App only on the repositories patchbot needs,
+run repository code with the container executor so it does not run as a process
+that can read the key, and rotate the key after any suspected host compromise
+(outstanding installation tokens stay valid until they expire, at most 1 hour,
+unless the installation is suspended).
+
+Connect GitHub (App manifest flow, M28): `GET /setup/github` is a data-free
+shell (like the other pages); the manifest and a 32-byte random `state` are
+issued only by the bearer-protected `POST /api/github/setup/start`. The state
+is kept as a SHA-256 digest in server memory, expires after 10 minutes, works
+once, is compared in constant time, and is consumed even when the exchange fails.
+Because GitHub redirects the browser to `/setup/github/callback`, which cannot
+carry a bearer header, that one route is authenticated by the state alone; an
+attacker who cannot obtain a state cannot make patchbot adopt their App. The
+code exchange is a bounded (64 KiB), 20-second, no-redirect, unauthenticated
+call; its response and the code are never logged or echoed, and errors are fixed
+strings. The key is written atomically (exclusive temp file, `0600`, then a
+hard link that fails if the path exists), owned by the service user, and an
+existing file, symlink or dangling link is refused, so a key is never replaced.
+The key directory must pre-exist; the check runs before the single-use code is
+spent so a key cannot be lost after the App was created. The database stores
+only the App ID and slug. `client_secret` and `webhook_secret` are discarded
+(the App is created with the webhook inactive). The setup page relaxes only
+`form-action` to `https://github.com`. Setup is disabled once connected, and a
+public, unauthenticated visitor can learn only whether GitHub is connected.
+
+The dashboard can add and edit allowlisted repositories (M24), which changes what
+runs inside the sandbox: commands, test command, protected paths and image. This stays
+argv-only (no shell), network-less and behind the owner-only login; every change is
+validated like a config file, audited with the actor, and cannot remove the built-in
+`.github/workflows` protection. Treat dashboard access as the ability to choose what
+code runs on approved changes.
+
+In scope: file-tool jail escapes, command-policy bypass, leaks through logs,
+SSE, artifacts, errors or PR text, unsafe git publication, browser protection
+bypass and code execution without valid spec approval. Prompt injection that
+crosses these enforced boundaries is in scope.
+
+Out of scope: containing arbitrary repository code, a compromised host or
+operator account, malicious trusted binaries, intentional credential exfiltration
+by tests, children that escape process groups, denial of service by host code,
+multi-user authorization and secure public deployment. Redaction cannot identify
+every secret or arbitrary encoding. The Unix binary starts
+with umask 077. Git and tests inherit it, but trusted code can change modes.
+Embedders must set their own mask. Workspace parents are private. Dry runs still execute
+host code and may incur provider costs. Containers, CPU/memory isolation,
+network isolation, TLS termination, webhooks and durable leases are future work.
+
+See [architecture](docs/ARCHITECTURE.md) for the boundaries and known limits.
+
+## Reporting
+
+Do not open a public issue. Use this repository's GitHub **Security → Report a
+vulnerability** feature. Include the version, platform and a minimal reproduction
+with dummy credentials. Expect a reply within seven days. Never include live
+keys in a report or test fixture.
+
+## Supported versions
+
+The latest release and `development` receive security fixes during early
+development. Use Go 1.27 or newer and git 2.50.1 or newer. Review provider pricing
+and credentials before enabling publication. Review every generated PR.
+
+codex
+The new routes use the existing auth middleware, and the UI renders repository values as text. Run consumers also read frozen settings. I’m checking two remaining concerns: snapshot size limits and whether repository changes stay consistent across processes sharing the database.
+exec
+/bin/zsh -lc "rg -n 'Reload\\(|SaveArtifact|CreateRun|repoRE|ToLower|CapOutput' internal/repos internal/store/artifacts.go internal/store/runs.go internal/config internal/tools/output.go; nl -ba internal/runner/phases.go | tail -50; nl -ba internal/repos/repos.go | sed -n '125,165p;265,300p;355,375p'; nl -ba internal/store/repos.go | sed -n '145,190p'; cat internal/store/artifacts.go; cat internal/config/executor.go | head -65; rg -n 'func .*CapOutput|func .*CreateRun|func .*routes|CrossOrigin|authenticate' internal/tools internal/store internal/server/server.go" in /Users/pappumishra/Documents/selfproject/patchbot-m24-repo-mgmt
+ succeeded in 0ms:
+rg: internal/store/artifacts.go: No such file or directory (os error 2)
+rg: internal/store/runs.go: No such file or directory (os error 2)
+rg: internal/tools/output.go: No such file or directory (os error 2)
+internal/repos/repos.go:124:	if err := r.Reload(ctx); err != nil {
+internal/repos/repos.go:134:func (r *Registry) Reload(ctx context.Context) error {
+internal/repos/repos.go:174:func Normalize(name string) string { return strings.ToLower(strings.TrimSpace(name)) }
+internal/config/load.go:389:	name = strings.ToLower(name)
+internal/config/validate.go:25:	repoRE         = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9]|-[A-Za-z0-9]){0,38}/[A-Za-z0-9._-]{1,100}$`)
+internal/config/validate.go:380:	if !repoRE.MatchString(name) || repo == "." || repo == ".." {
+   615			return err
+   616		}
+   617		for _, file := range draft.Files {
+   618			if strings.TrimSpace(file.Change) == "" {
+   619				return errors.New("file change description required")
+   620			}
+   621			if _, err := policy.Check(file.Path); err != nil {
+   622				return err
+   623			}
+   624		}
+   625		return nil
+   626	}
+   627	
+   628	// repoSettingsArtifact records the repository settings (commands, protected
+   629	// paths, test command, image and PATH) a run started with. Like the executor
+   630	// artifact it is written once and read back on every resume and revision, so
+   631	// a dashboard edit or a config reload never changes a run in flight.
+   632	const repoSettingsArtifact = "repo_settings"
+   633	
+   634	// runRepo returns the run's frozen repository settings, freezing the current
+   635	// effective settings on first use. The artifact is redacted on save, so a value
+   636	// that redaction would change is refused (fail closed) instead of being stored
+   637	// and read back corrupted.
+   638	func (r *Runner) runRepo(ctx context.Context, run store.Run) (*config.Repo, error) {
+   639		r.freezeMu.Lock()
+   640		defer r.freezeMu.Unlock()
+   641		saved, err := r.db.GetArtifact(ctx, run.ID, repoSettingsArtifact, 0)
+   642		switch {
+   643		case err == nil:
+   644			var s repos.Settings
+   645			if err := json.Unmarshal([]byte(saved.Content), &s); err != nil {
+   646				return nil, errors.New("recorded repository settings are unreadable")
+   647			}
+   648			return s.Repo(), nil
+   649		case !errors.Is(err, store.ErrNotFound):
+   650			return nil, err
+   651		}
+   652		repo, ok := r.repos.Lookup(run.Repo)
+   653		if !ok {
+   654			return nil, errors.New("repository is not in configuration allowlist")
+   655		}
+   656		content, err := json.Marshal(repos.FromRepo(repo))
+   657		if err != nil {
+   658			return nil, err
+   659		}
+   660		if r.redactor.Redact(string(content)) != string(content) {
+   661			return nil, fmt.Errorf("settings of %s look like a credential and cannot be recorded on the run", run.Repo)
+   662		}
+   663		return repo, r.artifact(ctx, run.ID, repoSettingsArtifact, string(content))
+   664	}
+   125			return nil, err
+   126		}
+   127		return r, nil
+   128	}
+   129	
+   130	// Reload re-reads the dashboard repositories from the database. A stored row
+   131	// that no longer validates (for example after the executor mode changed) is
+   132	// skipped, so it can never widen the allowlist; List still reports nothing for
+   133	// it and the operator can remove or fix it by editing config.
+   134	func (r *Registry) Reload(ctx context.Context) error {
+   135		if r.db == nil {
+   136			return nil
+   137		}
+   138		recs, err := r.db.ListRepos(ctx)
+   139		if err != nil {
+   140			return err
+   141		}
+   142		next := make(map[string]Entry, len(recs))
+   143		for _, rec := range recs {
+   144			e, err := r.entry(rec)
+   145			if err != nil {
+   146				continue
+   147			}
+   148			if _, clash := r.cfg.Repos[e.Name]; clash {
+   149				continue // the config file wins; the row stays inert
+   150			}
+   151			next[e.Name] = e
+   152		}
+   153		r.mu.Lock()
+   154		r.dash = next
+   155		r.mu.Unlock()
+   156		return nil
+   157	}
+   158	
+   159	func (r *Registry) entry(rec store.RepoRecord) (Entry, error) {
+   160		var s Settings
+   161		if err := json.Unmarshal([]byte(rec.SettingsJSON), &s); err != nil {
+   162			return Entry{}, err
+   163		}
+   164		if err := r.cfg.ValidateRepo(rec.Name, s.Repo()); err != nil {
+   165			return Entry{}, err
+   265				}
+   266			}
+   267		}
+   268		for _, p := range s.Protected {
+   269			if len(p) > maxPathLen {
+   270				return invalid("a protected path is over %d bytes", maxPathLen)
+   271			}
+   272		}
+   273		if len(s.Image) > maxPathLen {
+   274			return invalid("image is too long")
+   275		}
+   276		repo := s.Repo()
+   277		if err := r.cfg.ValidateRepo(name, repo); err != nil {
+   278			return invalid("%s", err)
+   279		}
+   280		if _, err := workspace.NewPolicy(repo.Protected); err != nil {
+   281			return invalid("%s", err)
+   282		}
+   283		raw, err := json.Marshal(s)
+   284		if err != nil {
+   285			return invalid("settings cannot be encoded")
+   286		}
+   287		// The frozen run artifact and the audit rows are redacted on save. A value
+   288		// that redaction would change cannot be stored losslessly: fail closed.
+   289		if r.redact(string(raw)) != string(raw) {
+   290			return invalid("a command, path or image looks like a credential and cannot be stored")
+   291		}
+   292		return nil
+   293	}
+   294	
+   295	// ValidationError carries an operator-facing message.
+   296	type ValidationError struct{ msg string }
+   297	
+   298	func (e *ValidationError) Error() string { return e.msg }
+   299	
+   300	// Is makes errors.Is(err, ErrInvalid) true.
+   355		if err := r.Validate(name, s); err != nil {
+   356			return Entry{}, err
+   357		}
+   358		r.wmu.Lock()
+   359		defer r.wmu.Unlock()
+   360		before, ok := r.Get(name)
+   361		if !ok {
+   362			return Entry{}, ErrNotFound
+   363		}
+   364		now := r.now()
+   365		rec, err := r.db.UpdateRepo(ctx, store.RepoRecord{Name: name, SettingsJSON: r.auditJSON(&s), UpdatedAt: now, UpdatedBy: r.redact(actor)}, expectedVersion,
+   366			store.RepoAudit{Repo: name, Action: store.RepoActionEdit, Actor: r.redact(actor), Channel: channel, BeforeJSON: r.auditJSON(&before.Settings), AfterJSON: r.auditJSON(&s), At: now})
+   367		if err != nil {
+   368			return Entry{}, err
+   369		}
+   370		return r.publish(rec)
+   371	}
+   372	
+   373	// Remove deletes a dashboard repository unless it has active runs
+   374	// (store.ErrRepoBusy). Run history and the audit trail stay.
+   375	func (r *Registry) Remove(ctx context.Context, name string, expectedVersion int64, actor, channel string) error {
+   145				return ErrVersionConflict
+   146			}
+   147			var err error
+   148			saved, err = scanRepo(tx.QueryRowContext(ctx, `UPDATE dashboard_repos SET settings_json=?, version=version+1, updated_at=?, updated_by=?
+   149				WHERE name=? RETURNING `+repoColumns, rec.SettingsJSON, now.UnixMilli(), rec.UpdatedBy, rec.Name))
+   150			if err != nil {
+   151				return err
+   152			}
+   153			audit.At = now
+   154			return insertRepoAudit(ctx, tx, audit)
+   155		})
+   156		return saved, err
+   157	}
+   158	
+   159	// RemoveRepo implements RepoStore.
+   160	func (s *SQLite) RemoveRepo(ctx context.Context, name string, expectedVersion int64, audit RepoAudit) error {
+   161		return s.withTx(ctx, func(tx *eventTx) error {
+   162			var current int64
+   163			if err := tx.QueryRowContext(ctx, `SELECT version FROM dashboard_repos WHERE name=?`, name).Scan(&current); err != nil {
+   164				return err
+   165			}
+   166			if expectedVersion != 0 && current != expectedVersion {
+   167				return ErrVersionConflict
+   168			}
+   169			// Same immediate transaction as the delete: no run can become active
+   170			// between the check and the removal.
+   171			var active int
+   172			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM runs WHERE repo=? AND status IN ('queued','running','needs_info','awaiting_approval','approved')`, name).Scan(&active); err != nil {
+   173				return err
+   174			}
+   175			if active > 0 {
+   176				return ErrRepoBusy
+   177			}
+   178			if _, err := tx.ExecContext(ctx, `DELETE FROM dashboard_repos WHERE name=?`, name); err != nil {
+   179				return err
+   180			}
+   181			audit.At = timestamp(audit.At)
+   182			return insertRepoAudit(ctx, tx, audit)
+   183		})
+   184	}
+   185	
+   186	// ListRepoAudit implements RepoStore.
+   187	func (s *SQLite) ListRepoAudit(ctx context.Context, name string, limit int) ([]RepoAudit, error) {
+   188		if limit <= 0 || limit > 500 {
+   189			limit = 200
+   190		}
+cat: internal/store/artifacts.go: No such file or directory
+package config
+
+import (
+	"fmt"
+	"path/filepath"
+	"slices"
+
+	"github.com/aryanpappu/patchbot/internal/execx"
+)
+
+// CommandPolicyOptions returns the policy options for repository commands.
+// Local execution resolves executables on the host trusted path; container
+// execution keeps names for the image's PATH. Command IDs and the allowlist
+// are the same either way.
+func (c *Config) CommandPolicyOptions(repo string, excluded ...string) execx.PolicyOptions {
+	if c.Executor.Container() {
+		return execx.PolicyOptions{InContainer: true, TrustedPath: c.RepoExecutor(repo).Path}
+	}
+	return execx.PolicyOptions{TrustedPath: c.Limits.TrustedPath, ExcludedRoots: append([]string{c.DataDir()}, excluded...)}
+}
+
+// RepoExecutor is the container image and in-container PATH one repository
+// runs with: its own [repos."owner/name"] values, else [executor]'s. It is
+// recorded on the run so the image a run used is auditable.
+type RepoExecutor struct {
+	Image string   `json:"image"`
+	Path  []string `json:"path"`
+	// ImageSource is the config key the image came from.
+	ImageSource string `json:"image_source"`
+}
+
+// RepoExecutor resolves the per-repository overrides. An unknown repo or ""
+// yields the [executor] values.
+func (c *Config) RepoExecutor(repo string) RepoExecutor {
+	return c.ExecutorFor(repo, c.Repos[repo])
+}
+
+// ExecutorFor resolves the overrides of an explicit repository entry (for
+// example a dashboard repository or a run-frozen copy); nil yields [executor].
+func (c *Config) ExecutorFor(repo string, r *Repo) RepoExecutor {
+	out := RepoExecutor{Image: c.Executor.Image, Path: slices.Clone(c.Executor.Path), ImageSource: "executor.image"}
+	if r != nil {
+		if r.Image != "" {
+			out.Image, out.ImageSource = r.Image, fmt.Sprintf("repos.%q.image", repo)
+		}
+		if r.Path != nil {
+			out.Path = slices.Clone(r.Path)
+		}
+	}
+	return out
+}
+
+// imageFreeImage is a valid, never-pulled image for operations that do not use
+// the image (container sweep, runtime checks) when none is configured globally.
+const imageFreeImage = "patchbot-unused@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+// ContainerConfig resolves the runtime binary through limits.trusted_path
+// (never the ambient PATH) and returns the execx container configuration.
+// lookup reads patchbot's own environment for the runtime CLI variables, such
+// as XDG_RUNTIME_DIR; nothing from it is forwarded into the container.
+// repo selects that repository's image and PATH; "" is for operations that do
+// not run a repository command (sweep, runtime checks) and uses a placeholder
+// image when [executor] has none.
+func (c *Config) ContainerConfig(repo string, lookup func(string) (string, bool), excluded ...string) (execx.ContainerConfig, error) {
+	return c.ContainerConfigFor(c.RepoExecutor(repo), lookup, excluded...)
+internal/server/server.go:62:	authenticated   bool
+internal/server/server.go:84:// change an unauthenticated listener from loopback to a public interface.
+internal/server/server.go:152:	s.authenticated = opts.Token.IsSet()
+internal/server/server.go:364:	if s.authenticated && !callback && (r.Method != http.MethodGet || !web.PublicPath(r.URL.Path)) {
+internal/server/server.go:374:		if err := http.NewCrossOriginProtection().Check(r); err != nil {
+internal/store/sqlite.go:188:func (s *SQLite) CreateRun(ctx context.Context, r Run) (Run, error) {
+internal/tools/run_cmd.go:124:func CapOutput(s string, limit int) string {
+internal/tools/terminal_test.go:209:func TestCapOutputUTF8(t *testing.T) {
+
+exec
+/bin/zsh -lc "rg -n 'const lines|function lines|SaveArtifact|ON CONFLICT|ValidateContainerPath' internal/web/assets/app.js internal/store internal/execx/container*; sed -n '188,245p' internal/store/sqlite.go; sed -n '124,150p' internal/tools/run_cmd.go; sed -n '85,115p' internal/runner/phases.go; rg -n 'func .*SaveArtifact' internal/store" in /Users/pappumishra/Documents/selfproject/patchbot-m24-repo-mgmt
+ succeeded in 0ms:
+internal/execx/container.go:160:// ValidateContainerPath checks the in-container PATH entries.
+internal/execx/container.go:161:func ValidateContainerPath(dirs []string) error {
+internal/execx/container.go:212:		if err := ValidateContainerPath(c.Path); err != nil {
+internal/web/assets/app.js:41:  const lines = value => value.split("\n").map(line => line.trim()).filter(Boolean);
+internal/store/webhooks.go:35: ON CONFLICT(delivery_id) DO NOTHING`, d.ID, d.Event, d.Repo, d.Issue, maxPending)
+internal/store/webhooks.go:137: ON CONFLICT(repo,issue) DO UPDATE SET
+internal/store/webhooks.go:184:	_, err := s.db.ExecContext(ctx, `INSERT INTO webhook_repos(repo,baselined_at) VALUES(?,?) ON CONFLICT(repo) DO NOTHING`, repo, time.Now().UTC().UnixMilli())
+internal/store/records_test.go:148:	if err := s.SaveArtifact(t.Context(), artifact); err != nil {
+internal/store/records_test.go:152:	if err := s.SaveArtifact(t.Context(), artifact); err != nil {
+internal/store/records_test.go:199:	if err := s.SaveArtifact(t.Context(), Artifact{RunID: r.ID, Kind: "test", Attempt: -1}); err == nil {
+internal/store/records.go:203:// SaveArtifact inserts or replaces an artifact with the same run/kind/attempt.
+internal/store/records.go:204:func (s *SQLite) SaveArtifact(ctx context.Context, a Artifact) error {
+internal/store/records.go:206:		VALUES(?,?,?,?,?) ON CONFLICT(run_id,kind,attempt) DO UPDATE SET content=excluded.content,created_at=excluded.created_at`,
+internal/store/records.go:313:		VALUES(?,?,?,?,?,?) ON CONFLICT(comment_id) DO NOTHING`,
+internal/store/githubapp.go:32:		VALUES(1,?,?,?,?) ON CONFLICT(id) DO NOTHING`, app.AppID, app.Slug, app.InstallationID, timestamp(app.CreatedAt).UnixMilli())
+internal/store/store.go:346:	SaveArtifact(context.Context, Artifact) error
+func (s *SQLite) CreateRun(ctx context.Context, r Run) (Run, error) {
+	r.Repo = strings.ToLower(strings.TrimSpace(r.Repo))
+	if r.Mode == "" {
+		r.Mode = "fix"
+	}
+	if r.Status == "" {
+		r.Status = StatusQueued
+	}
+	if r.Phase == "" {
+		r.Phase = PhasePreflight
+	}
+	if r.Trigger == "" {
+		r.Trigger = "cli"
+	}
+	r.ErrorMessage = cappedText(r.ErrorMessage, 2000)
+	r.CreatedAt = timestamp(r.CreatedAt)
+	r.UpdatedAt = r.CreatedAt
+	if r.Status == StatusRunning {
+		if r.StartedAt == nil {
+			r.StartedAt = &r.CreatedAt
+		}
+		if r.HeartbeatAt == nil {
+			r.HeartbeatAt = &r.CreatedAt
+		}
+	}
+	if r.Status == StatusAwaitingApproval || r.Status == StatusNeedsInfo {
+		if r.WaitingSince == nil {
+			r.WaitingSince = &r.CreatedAt
+		}
+	}
+	if !r.Status.IsActive() && r.FinishedAt == nil {
+		r.FinishedAt = &r.CreatedAt
+	}
+	args := []any{r.Repo, r.IssueNumber, r.IssueTitle, r.Mode, r.RetryOf, r.Trigger,
+		r.Provider, r.RefineModel, r.CodeModel, r.DryRun, r.Status, r.Phase, r.Outcome,
+		r.BaseSHA, r.HeadSHA, r.Branch, r.PRNumber, r.PRURL, r.PRDraft, r.Summary,
+		r.TestsStatus, r.TestAttempts, r.Turns, r.InputTokens, r.OutputTokens,
+		r.CacheReadTokens, r.CacheWriteTokens, r.CostMicros, jsonText(r.LimitsJSON),
+		r.ErrorKind, r.ErrorMessage, r.CreatedAt.UnixMilli(), r.UpdatedAt.UnixMilli(),
+		optionalMillis(r.StartedAt), optionalMillis(r.FinishedAt), optionalMillis(r.HeartbeatAt), optionalMillis(r.WaitingSince), int64(0), string(r.ReviewJSON)}
+	var ingress any
+	if r.IngressKey != "" {
+		ingress = r.IngressKey
+	}
+	args = append(args, ingress)
+	query := "INSERT INTO runs(" + strings.TrimPrefix(runColumns, "id,") + ",ingress_key" + ") VALUES(" + placeholders(len(args)) + ") RETURNING " + runColumns
+	return scanRun(s.db.QueryRowContext(ctx, query, args...))
+}
+
+func placeholders(n int) string { return strings.TrimSuffix(strings.Repeat("?,", n), ",") }
+
+// GetRun retrieves a run by ID.
+func (s *SQLite) GetRun(ctx context.Context, id int64) (Run, error) {
+	return scanRun(s.db.QueryRowContext(ctx, "SELECT "+runColumns+" FROM runs WHERE id=?", id))
+}
+
+type runCursor struct{ CreatedAt, ID int64 }
+
+func CapOutput(s string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	if len(s) <= limit {
+		return s
+	}
+	const marker = "\n[output omitted]\n"
+	if limit < len(marker) {
+		return cutUTF8(marker, limit)
+	}
+	head := (limit - len(marker)) / 4
+	tail := limit - len(marker) - head
+	start := len(s) - tail
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	return cutUTF8(s, head) + marker + s[start:]
+}
+		}
+	}
+	frozenRepo, err := r.runRepo(ctx, run)
+	if err != nil {
+		return nil, err
+	}
+	ws, err := workspace.Open(repo.Dir(), workspace.Options{Protected: frozenRepo.Protected})
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_ = ws.Close(false)
+		}
+	}()
+	frozen, err := r.runExecutor(ctx, run)
+	if err != nil {
+		return nil, err
+	}
+	policyOpts := r.cfg.CommandPolicyOptions(run.Repo)
+	if r.cfg.Executor.Container() {
+		policyOpts.TrustedPath = slices.Clone(frozen.Path)
+	}
+	policy, err := execx.NewPolicy(ws.Dir(), frozenRepo.Commands, policyOpts)
+	if err != nil {
+		return nil, err
+	}
+	executor, err := r.opts.Executor(ws.Dir(), frozen)
+	if err != nil {
+		return nil, err
+	}
+internal/store/records.go:204:func (s *SQLite) SaveArtifact(ctx context.Context, a Artifact) error {
+
+exec
+/bin/zsh -lc "sed -n '160,187p' internal/execx/container.go; nl -ba internal/web/assets/app.js | sed -n '411,423p'; nl -ba internal/repos/repos.go | sed -n '180,215p'; nl -ba internal/runner/runner.go | sed -n '366,386p'; rg -n 'func.*IsActive|Status[A-Z].*=' internal/store/store.go | head -30" in /Users/pappumishra/Documents/selfproject/patchbot-m24-repo-mgmt
+ succeeded in 0ms:
+// ValidateContainerPath checks the in-container PATH entries.
+func ValidateContainerPath(dirs []string) error {
+	if len(dirs) == 0 {
+		return errors.New("at least one directory is required")
+	}
+	for _, dir := range dirs {
+		if !path.IsAbs(dir) || path.Clean(dir) != dir || strings.ContainsAny(dir, ":\x00") {
+			return errors.New("entries must be clean absolute paths without ':'")
+		}
+	}
+	return nil
+}
+
+// Validate checks every field. It does not contact the runtime.
+func (c *ContainerConfig) Validate() error {
+	var errs []error
+	if !filepath.IsAbs(c.Runtime) || strings.ContainsRune(c.Runtime, 0) {
+		errs = append(errs, errors.New("runtime must be an absolute binary path"))
+	}
+	if c.Flavor != RuntimePodman && c.Flavor != RuntimeDocker {
+		errs = append(errs, errors.New("runtime flavor must be podman or docker"))
+	}
+	if err := ValidateImage(c.Image); err != nil {
+		errs = append(errs, err)
+	}
+	for _, size := range []string{c.Memory, c.TmpfsSize} {
+		if err := ValidateSize(size); err != nil {
+			errs = append(errs, err)
+   411	      });
+   412	      function saveRepo(event) {
+   413	        event.preventDefault();
+   414	        const e = s.repoEditor;
+   415	        void work(async () => {
+   416	          const settings = { commands: parseCommands(e.commands), test_command: e.test.trim(), protected: lines(e.protectedPaths), image: e.image.trim(), path: lines(e.path) };
+   417	          let result;
+   418	          if (e.mode === "add") result = await send("/api/repos", { name: e.name.trim(), settings });
+   419	          else result = await send("/api/repos/" + e.name, { version: e.version, settings }, "PUT");
+   420	          s.repoEditor = null;
+   421	          s.notice = (e.mode === "add" ? "Repository added." : "Repository saved.") + (result.github ? " GitHub check: " + result.github.message : "");
+   422	          await loadRepos();
+   423	        });
+   180			return nil, false
+   181		}
+   182		return e.Settings.Repo(), true
+   183	}
+   184	
+   185	// Has reports whether name is on the allowlist.
+   186	func (r *Registry) Has(name string) bool {
+   187		name = Normalize(name)
+   188		if _, ok := r.cfg.Repos[name]; ok {
+   189			return true
+   190		}
+   191		r.mu.RLock()
+   192		defer r.mu.RUnlock()
+   193		_, ok := r.dash[name]
+   194		return ok
+   195	}
+   196	
+   197	// Allowed is the single allowlist question: may runs, ingress and memory touch
+   198	// this repository? It is Has under the name callers outside this package use.
+   199	func (r *Registry) Allowed(name string) bool { return r.Has(name) }
+   200	
+   201	// Get returns one effective repository.
+   202	func (r *Registry) Get(name string) (Entry, bool) {
+   203		name = Normalize(name)
+   204		if c, ok := r.cfg.Repos[name]; ok {
+   205			return configEntry(name, c), true
+   206		}
+   207		r.mu.RLock()
+   208		defer r.mu.RUnlock()
+   209		e, ok := r.dash[name]
+   210		return cloneEntry(e), ok
+   211	}
+   212	
+   213	func configEntry(name string, c *config.Repo) Entry {
+   214		return Entry{Name: name, Source: SourceConfig, Settings: FromRepo(c), BuiltinProtected: workspace.BuiltinProtected()}
+   215	}
+   366				if reuse != nil && r.opts.Dispatch != nil {
+   367					return r.execute(work, id)
+   368				}
+   369				return nil
+   370			})
+   371		}
+   372		if err != nil {
+   373			err = r.fail(ctx, initial, err)
+   374		}
+   375		latest, readErr := r.db.GetRun(context.WithoutCancel(ctx), id)
+   376		return latest, errors.Join(err, readErr)
+   377	}
+   378	
+   379	func (r *Runner) actionChannel() string {
+   380		if r.opts.ActionChannel == "ui" {
+   381			return "ui"
+   382		}
+   383		return "cli"
+   384	}
+   385	
+   386	func (r *Runner) admit(ctx context.Context) (context.Context, func(), error) {
+17:	StatusQueued           Status = "queued"
+18:	StatusRunning          Status = "running"
+19:	StatusNeedsInfo        Status = "needs_info"
+20:	StatusAwaitingApproval Status = "awaiting_approval"
+21:	StatusApproved         Status = "approved"
+22:	StatusSucceeded        Status = "succeeded"
+23:	StatusFailed           Status = "failed"
+24:	StatusCancelled        Status = "cancelled"
+25:	StatusRejected         Status = "rejected"
+29:func (s Status) IsActive() bool {
+
+codex
+- **Medium — [repos.go:209](internal/repos/repos.go:209): stale allowlist across processes.** Registries load once; edits/removals only update the mutating process’s cache. Another server sharing SQLite can start runs after removal or freeze commands/protections superseded by an edit. **Fix:** atomically read current settings, create the run, and persist its snapshot in one database transaction.
+
+- **Medium — [repos.go:366](internal/repos/repos.go:366): incorrect audit “before” snapshots.** With two processes, one can update using the current version while its cached settings remain stale. The database accepts the version, but the audit records the wrong previous settings. **Fix:** obtain `before_json` from the stored row inside the mutation transaction.
+
+- **Medium — [phases.go:663](internal/runner/phases.go:663): accepted settings produce corrupted snapshots.** Validation permits settings larger than 256 KiB, including requests below the API’s 1 MiB limit. `r.artifact` truncates them with an output marker; subsequent `runRepo` JSON decoding fails, breaking every run using those settings. **Fix:** reject oversized serialized settings before saving and persist snapshots without lossy truncation.
+
+- **Medium — [app.js:416](internal/web/assets/app.js:416): default container PATH cannot be inherited through the UI.** Leaving PATH blank sends `[]`; container validation rejects empty lists. Adding or editing a repository that inherits the global PATH therefore fails. **Fix:** omit `path` when blank, preserving `nil` as inheritance.
+tokens used
+44,131
+- **Medium — [repos.go:209](internal/repos/repos.go:209): stale allowlist across processes.** Registries load once; edits/removals only update the mutating process’s cache. Another server sharing SQLite can start runs after removal or freeze commands/protections superseded by an edit. **Fix:** atomically read current settings, create the run, and persist its snapshot in one database transaction.
+
+- **Medium — [repos.go:366](internal/repos/repos.go:366): incorrect audit “before” snapshots.** With two processes, one can update using the current version while its cached settings remain stale. The database accepts the version, but the audit records the wrong previous settings. **Fix:** obtain `before_json` from the stored row inside the mutation transaction.
+
+- **Medium — [phases.go:663](internal/runner/phases.go:663): accepted settings produce corrupted snapshots.** Validation permits settings larger than 256 KiB, including requests below the API’s 1 MiB limit. `r.artifact` truncates them with an output marker; subsequent `runRepo` JSON decoding fails, breaking every run using those settings. **Fix:** reject oversized serialized settings before saving and persist snapshots without lossy truncation.
+
+- **Medium — [app.js:416](internal/web/assets/app.js:416): default container PATH cannot be inherited through the UI.** Leaving PATH blank sends `[]`; container validation rejects empty lists. Adding or editing a repository that inherits the global PATH therefore fails. **Fix:** omit `path` when blank, preserving `nil` as inheritance.
