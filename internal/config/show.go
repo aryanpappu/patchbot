@@ -18,7 +18,7 @@ import (
 // of every value in a trailing comment. Secrets are never printed: each API
 // key appears as a comment that says only whether it is set.
 func (c *Config) WriteEffective(w io.Writer, extra ...*secret.Redactor) error {
-	p := &printer{sources: c.sources, redactor: secret.NewRedactor()}
+	p := &printer{sources: c.sources, redactor: secret.NewRedactor(), cfg: c}
 	p.redactor.AddSecrets(c.Secrets()...)
 	for _, r := range extra {
 		p.redactor.Extend(r)
@@ -38,6 +38,7 @@ type printer struct {
 	b        strings.Builder
 	sources  map[string]Source
 	redactor *secret.Redactor
+	cfg      *Config
 }
 
 func (p *printer) linef(format string, args ...any) {
@@ -81,6 +82,7 @@ func (p *printer) table(key toml.Key, v reflect.Value) {
 		return
 	}
 	provider, isProvider := v.Interface().(Provider)
+	_, isRepo := v.Interface().(Repo)
 	if len(key) > 0 && (len(leaves) > 0 || len(tables) == 0) {
 		p.linef("")
 		p.linef("[%s]", key)
@@ -93,6 +95,9 @@ func (p *printer) table(key toml.Key, v reflect.Value) {
 			continue
 		}
 		name := leaf.key[len(leaf.key)-1]
+		if isRepo && (name == "image" || name == "path") && (text == `""` || text == "[]") {
+			continue // not set: the effective value is shown below
+		}
 		if isProvider && name == "api_key_env" && provider.APIKeyEnv != "" && !envNameRE.MatchString(provider.APIKeyEnv) {
 			text = strconv.Quote(secret.Mask) // most likely a key pasted into the wrong field
 		}
@@ -109,6 +114,14 @@ func (p *printer) table(key toml.Key, v reflect.Value) {
 	}
 	if isProvider {
 		p.linef("%s", p.redactor.Redact(apiKeyStatus(provider)))
+	}
+	if isRepo && p.cfg != nil && p.cfg.Executor.Container() {
+		re := p.cfg.RepoExecutor(key[len(key)-1])
+		if re.Image == "" {
+			p.linef("# effective container image: none (set repos.%q.image or executor.image)", key[len(key)-1])
+		} else {
+			p.linef("# effective container image: %s (from %s)", p.redactor.Redact(re.Image), p.redactor.Redact(re.ImageSource))
+		}
 	}
 	for _, t := range tables {
 		value := t.value

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aryanpappu/patchbot/internal/agent"
+	"github.com/aryanpappu/patchbot/internal/config"
 	"github.com/aryanpappu/patchbot/internal/execx"
 	"github.com/aryanpappu/patchbot/internal/github"
 	"github.com/aryanpappu/patchbot/internal/gitx"
@@ -279,7 +280,7 @@ func TestPreAgentWorkUsesRemainingRunDeadline(t *testing.T) {
 			}
 			opts := f.opts
 			if phase == "baseline" {
-				opts.Executor = func(string) (execx.Executor, error) {
+				opts.Executor = func(string, config.RepoExecutor) (execx.Executor, error) {
 					return executorFunc(func(ctx context.Context, _ execx.Spec) (execx.Result, error) {
 						check(ctx)
 						return execx.Result{}, context.DeadlineExceeded

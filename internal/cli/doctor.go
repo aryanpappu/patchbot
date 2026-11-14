@@ -145,13 +145,13 @@ func (a *App) runDoctor(args []string) int {
 		if rootErr == nil {
 			excluded := []string{filepath.Join(cfg.DataDir(), "workspaces"), opts.Dir}
 			doctorExecutor(ctx, cfg, root, r, lookup, add, excluded...)
-			where := ""
-			if cfg.Executor.Container() {
-				where = " (resolved in the container image)"
-			}
 			for _, name := range sortedNames(cfg.Repos) {
+				where := ""
+				if cfg.Executor.Container() {
+					where = " (resolved in the container image) from " + cfg.RepoExecutor(name).Image
+				}
 				for _, id := range sortedNames(cfg.Repos[name].Commands) {
-					p, err := execx.NewPolicy(root, map[string][]string{id: cfg.Repos[name].Commands[id]}, cfg.CommandPolicyOptions(excluded...))
+					p, err := execx.NewPolicy(root, map[string][]string{id: cfg.Repos[name].Commands[id]}, cfg.CommandPolicyOptions(name, excluded...))
 					if err != nil {
 						add("FAIL", name+" / "+id, err.Error())
 					} else {
@@ -305,13 +305,12 @@ func doctorExecutor(ctx context.Context, cfg *config.Config, root string, r *sec
 		add("PASS", "executor", "local host processes (not a sandbox; use kind = \"container\" for untrusted code)")
 		return
 	}
-	cc, err := cfg.ContainerConfig(lookup, excluded...)
+	cc, err := cfg.ContainerConfig("", lookup, excluded...)
 	if err != nil {
 		add("FAIL", "container runtime", err.Error())
 		return
 	}
 	add("PASS", "container runtime", cc.Runtime)
-	add("PASS", "container image", "digest-pinned "+cc.Image)
 	run := func(args ...string) (string, error) {
 		executor, err := execx.NewLocalExecutor(root)
 		if err != nil {
@@ -336,10 +335,25 @@ func doctorExecutor(ctx context.Context, cfg *config.Config, root string, r *sec
 	default:
 		add("WARN", "container rootless", cc.Flavor+" is not rootless; its daemon is root-equivalent, so use rootless podman or rootless docker")
 	}
-	if _, err := run("image", "inspect", "--format", "{{.Id}}", cc.Image); err != nil {
-		add("WARN", "container image present", "not found locally; runs use --pull never, so pull it first: "+cc.Flavor+" pull "+cc.Image)
-	} else {
-		add("PASS", "container image present", "available locally")
+	if len(cfg.Repos) == 0 {
+		add("WARN", "container image", "no repositories configured, so no image is checked")
+	}
+	for _, name := range sortedNames(cfg.Repos) {
+		re := cfg.RepoExecutor(name)
+		if re.Image == "" {
+			add("FAIL", "container image "+name, fmt.Sprintf("no image: set repos.%q.image or executor.image", name))
+			continue
+		}
+		if err := execx.ValidateImage(re.Image); err != nil {
+			add("FAIL", "container image "+name, re.ImageSource+": "+err.Error())
+			continue
+		}
+		add("PASS", "container image "+name, "digest-pinned "+re.Image+" (from "+re.ImageSource+")")
+		if _, err := run("image", "inspect", "--format", "{{.Id}}", re.Image); err != nil {
+			add("WARN", "container image present "+name, "not found locally; runs use --pull never, so pull it first: "+cc.Flavor+" pull "+re.Image)
+		} else {
+			add("PASS", "container image present "+name, "available locally")
+		}
 	}
 }
 

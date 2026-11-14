@@ -56,7 +56,7 @@ type Options struct {
 	GitHubHTTP   *http.Client
 	Constructors llm.Constructors
 	Clone        func(context.Context, gitx.CloneOptions) (*gitx.Repo, error)
-	Executor     func(string) (execx.Executor, error)
+	Executor     func(dir string, repo config.RepoExecutor) (execx.Executor, error)
 	// ContainerSweep removes containers left by a previous process. Nil uses
 	// execx.SweepContainers when [executor] kind is container.
 	ContainerSweep    func(context.Context) (int, error)
@@ -420,12 +420,12 @@ func (r *Runner) artifact(ctx context.Context, id int64, kind, content string) e
 
 // defaultExecutor selects host or container execution from [executor]. The
 // runtime binary is resolved per run so the workspace is excluded as well.
-func defaultExecutor(cfg *config.Config) func(string) (execx.Executor, error) {
+func defaultExecutor(cfg *config.Config) func(string, config.RepoExecutor) (execx.Executor, error) {
 	if !cfg.Executor.Container() {
-		return func(dir string) (execx.Executor, error) { return execx.NewLocalExecutor(dir) }
+		return func(dir string, _ config.RepoExecutor) (execx.Executor, error) { return execx.NewLocalExecutor(dir) }
 	}
-	return func(dir string) (execx.Executor, error) {
-		containerCfg, err := cfg.ContainerConfig(os.LookupEnv, dir)
+	return func(dir string, re config.RepoExecutor) (execx.Executor, error) {
+		containerCfg, err := cfg.ContainerConfigFor(re, os.LookupEnv, dir)
 		if err != nil {
 			return nil, err
 		}
@@ -441,7 +441,7 @@ func (r *Runner) sweepContainers(ctx context.Context) {
 	sweep := r.opts.ContainerSweep
 	if sweep == nil && r.cfg.Executor.Container() {
 		sweep = func(ctx context.Context) (int, error) {
-			containerCfg, err := r.cfg.ContainerConfig(os.LookupEnv)
+			containerCfg, err := r.cfg.ContainerConfig("", os.LookupEnv)
 			if err != nil {
 				return 0, err
 			}
