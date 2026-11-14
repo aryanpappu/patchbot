@@ -3,6 +3,7 @@ package gitx
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/cgi" // #nosec G504 -- test-only git http-backend; Go 1.27 is not affected by httpoxy.
 	"net/http/httptest"
@@ -22,6 +23,15 @@ type authRemote struct {
 	mu     sync.Mutex
 	denied int
 	leaked bool
+	// want is the only accepted credential; rotate replaces it, as when an
+	// installation token expires and a new one is minted.
+	want string
+}
+
+func (a *authRemote) rotate(token string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.want = base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
 }
 
 func newAuthRemote(t *testing.T, f fixture, token string) *authRemote {
@@ -30,7 +40,6 @@ func newAuthRemote(t *testing.T, f fixture, token string) *authRemote {
 	if err != nil {
 		t.Skip("git is not installed")
 	}
-	want := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
 	backend := &cgi.Handler{
 		Path: gitPath,
 		Args: []string{"http-backend"},
@@ -45,6 +54,7 @@ func newAuthRemote(t *testing.T, f fixture, token string) *authRemote {
 		InheritEnv: []string{"PATH"},
 	}
 	remote := &authRemote{}
+	remote.rotate(token)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		remote.mu.Lock()
 		if strings.Contains(req.URL.String(), token) {
@@ -56,7 +66,7 @@ func newAuthRemote(t *testing.T, f fixture, token string) *authRemote {
 			}
 		}
 		scheme, credential, _ := strings.Cut(req.Header.Get("Authorization"), " ")
-		if !strings.EqualFold(scheme, "basic") || credential != want {
+		if !strings.EqualFold(scheme, "basic") || credential != remote.want {
 			remote.denied++
 			remote.mu.Unlock()
 			w.Header().Set("WWW-Authenticate", `Basic realm="private"`)
@@ -211,5 +221,67 @@ func TestPushLsRemoteFailureWithoutTokenStopsBeforePush(t *testing.T) {
 		if name == "push" {
 			t.Fatal("push ran although the authenticated ls-remote guard failed")
 		}
+	}
+}
+
+// TestTokenFuncFreshTokenPerRemoteOperation: the clone-time token expires
+// (the remote stops accepting it) before push; push must ask TokenFunc again
+// and succeed with the new token. A fixed Token would fail here.
+func TestTokenFuncFreshTokenPerRemoteOperation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := gitFixture(t)
+	first, second := "ghs_firstInstallationToken000000000000", "ghs_secondInstallationToken00000000000"
+	remote := newAuthRemote(t, f, first)
+	var mu sync.Mutex
+	current, calls := first, 0
+	r, err := Clone(ctx, CloneOptions{Dir: filepath.Join(t.TempDir(), "checkout"), Host: "github.com", Branch: "main",
+		testHTTPSRemote: remote.url, TokenFunc: func(context.Context) (string, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			calls++
+			return current, nil
+		}})
+	if err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+	// Expiry: GitHub now only accepts the newly minted token.
+	remote.rotate(second)
+	mu.Lock()
+	current = second
+	mu.Unlock()
+	if err := r.CreateBranch(ctx, "patchbot/issue-9"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(r.Dir(), "late.txt"), "late\n")
+	if _, err := r.CommitAll(ctx, "late change", Author{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Push(ctx, "patchbot/issue-9"); err != nil {
+		t.Fatalf("push after token rotation: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	// clone, ls-remote and push each asked for a token.
+	if calls < 3 {
+		t.Fatalf("TokenFunc calls = %d, want one per remote operation", calls)
+	}
+	config := read(t, filepath.Join(r.Dir(), ".git", "config"))
+	if strings.Contains(config, first) || strings.Contains(config, second) {
+		t.Fatal("token persisted in .git/config")
+	}
+}
+
+func TestTokenFuncErrorFailsClosedWithoutQuoting(t *testing.T) {
+	t.Parallel()
+	f := gitFixture(t)
+	remote := newAuthRemote(t, f, fakeToken)
+	_, err := Clone(context.Background(), CloneOptions{Dir: filepath.Join(t.TempDir(), "checkout"), Host: "github.com", Branch: "main",
+		testHTTPSRemote: remote.url, Token: fakeToken, TokenFunc: func(context.Context) (string, error) {
+			return "", errors.New("mint failed: " + fakeToken)
+		}})
+	if err == nil || strings.Contains(err.Error(), fakeToken) {
+		t.Fatalf("clone with failing TokenFunc = %v; want a closed failure with no fallback to Token", err)
 	}
 }

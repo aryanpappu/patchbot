@@ -37,7 +37,8 @@ when needed. Every ancestor, including symlink locations, must be owned by root
 or your user and have no group/world write bits. Keep data and workspaces
 outside those tool directories.
 
-Set `GITHUB_TOKEN` and the API key variable named in your provider table through
+Set `GITHUB_TOKEN` (or configure a GitHub App, see
+[Set up the GitHub App](#set-up-the-github-app)) and the API key variable named in your provider table through
 your usual secret manager or shell. The GitHub token needs issue and pull request
 access, repository contents write access for publication, and collaborator
 visibility. A dry run needs GitHub read access and local clone access.
@@ -303,6 +304,56 @@ are ignored for substring masking; `config check` and `doctor` warn without
 printing them. Redaction preserves harness phases, statuses and JSON/TOML keys.
 Adapter request deadlines are retryable `unavailable` errors while caller
 cancellation or deadlines stop retries.
+
+## Set up the GitHub App
+
+PAT mode (`[github] auth = "pat"`, the default) is fine for local use and a
+small pilot. For a shared host, use a GitHub App: each run gets a 1-hour token
+that can touch only that run's repository, and comments come from a distinct
+`<slug>[bot]` identity, so the owner's own `/approve` counts normally.
+
+1. GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App**.
+   Any name (its slug becomes the bot login, for example `patchbot[bot]`).
+   Homepage URL: anything. **Webhook: not needed** — untick "Active" (you can
+   enable it later for the optional webhook ingress below).
+2. Repository permissions — exactly these, nothing else:
+   **Contents: Read and write**, **Issues: Read and write**,
+   **Pull requests: Read and write**, **Metadata: Read-only** (mandatory).
+   No organization or account permissions. No events needed.
+3. "Where can this GitHub App be installed?": **Only on this account**.
+4. Create it, note the **App ID**, then **Generate a private key** (a `.pem`).
+5. **Install App** → choose **Only select repositories** and pick the repos you
+   list under `[repos]`. Do not install on all repositories.
+6. Place the key on the server, readable only by the service user, outside the
+   data directory and workspaces, and delete the downloaded copy:
+
+   ```sh
+   sudo install -o patchbot -g patchbot -m 0600 ~/Downloads/patchbot.*.private-key.pem /srv/patchbot/github-app.pem
+   shred -u ~/Downloads/patchbot.*.private-key.pem
+   ```
+
+7. Configure and check:
+
+   ```toml
+   [github]
+   auth = "app"
+   app_id = 123456
+   private_key_file = "/srv/patchbot/github-app.pem"
+   ```
+
+   ```sh
+   sudo -u patchbot ./bin/patchbot doctor --config patchbot.toml --online
+   ```
+
+   Doctor checks the key file (regular, 0600 or stricter, owned by patchbot,
+   outside data), signs a JWT locally, and online confirms the App identity and
+   that every allowlisted repository has the App installed with all four
+   permissions, minting a single-repository token for each. Unset `GITHUB_TOKEN`
+   in app mode; it is ignored and there is no fallback to it.
+
+Commits are authored by `<slug>[bot] <ID+<slug>[bot]@users.noreply.github.com>`.
+To rotate the key: generate a second key in the App settings, replace the file,
+restart patchbot, run `doctor --online`, then delete the old key on GitHub.
 
 ## Optional GitHub webhooks
 

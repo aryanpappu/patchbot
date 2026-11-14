@@ -9,7 +9,6 @@ import (
 
 	"github.com/aryanpappu/patchbot/internal/agent"
 	"github.com/aryanpappu/patchbot/internal/github"
-	"github.com/aryanpappu/patchbot/internal/gitx"
 	"github.com/aryanpappu/patchbot/internal/store"
 	"github.com/aryanpappu/patchbot/internal/tools"
 	"github.com/aryanpappu/patchbot/internal/workspace"
@@ -143,7 +142,7 @@ func (r *Runner) publish(ctx context.Context, run *store.Run, env *toolEnvironme
 	var head string
 	if err := r.operation(ctx, *run, "git", "commit", func() error {
 		var err error
-		head, err = env.repo.CommitAll(ctx, fmt.Sprintf("fix: %s (#%d)", title, run.IssueNumber), gitx.Author{})
+		head, err = env.repo.CommitAll(ctx, fmt.Sprintf("fix: %s (#%d)", title, run.IssueNumber), r.opts.CommitAuthor)
 		if err == nil && review != nil {
 			// The commit must contain exactly the reviewed tree.
 			var tree string

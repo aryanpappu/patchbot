@@ -15,7 +15,7 @@ func (c *HTTPClient) CurrentUser(ctx context.Context) (string, error) {
 	var user struct {
 		Login string `json:"login"`
 	}
-	_, err := c.request(ctx, http.MethodGet, &target, nil, &user, http.StatusOK)
+	_, err := c.request(ctx, nil, http.MethodGet, &target, nil, &user, http.StatusOK)
 	if err != nil {
 		return "", operationError("CurrentUser", err)
 	}

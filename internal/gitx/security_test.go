@@ -208,7 +208,7 @@ func TestDiffBinaryClassification(t *testing.T) {
 			if stat, err := r.DiffStat(context.Background()); err != nil || stat != wantStat {
 				t.Fatalf("binary stat = %+v, %v; want %+v", stat, err, wantStat)
 			}
-			cmd, err := r.command(context.Background(), false, "diff")
+			cmd, err := r.command(context.Background(), false, "", "diff")
 			if err != nil || !slices.Contains(cmd.Args, "core.bigFileThreshold=1m") {
 				t.Fatalf("missing big-file threshold: %v", err)
 			}

@@ -98,6 +98,23 @@ workspace_max_bytes = 2147483648       # 2 GiB
 # a private empty DOCKER_CONFIG under the data dir; select a rootless daemon
 # with DOCKER_HOST (docker contexts are not used).
 
+[github]
+# How patchbot authenticates to GitHub. No credential ever goes in this file.
+#   "pat": a fine-grained personal access token from $GITHUB_TOKEN, used for
+#          every allowlisted repository (local/dev and the pilot).
+#   "app": a GitHub App. patchbot signs a short JWT with the App private key and
+#          mints a 1-hour installation token per run, narrowed to that one
+#          repository's ID with contents/issues/pull_requests write and metadata
+#          read. Comments come from <slug>[bot], so your own /approve counts.
+#          If App auth fails, patchbot fails closed: it never falls back to a PAT.
+auth = "pat"
+# app_id = 123456                    # App settings -> "App ID" (a number)
+# private_key_file = "/srv/patchbot/github-app.pem"
+#                                    # absolute path; regular file, mode 0600 or
+#                                    # stricter, owned by the patchbot user, and
+#                                    # outside [data] dir and workspaces
+# installation_id = 0                # optional; 0 looks it up per repository
+
 [providers.anthropic]
 kind = "anthropic"                  # anthropic, gemini, openai
 base_url = ""                       # empty uses the adapter's official endpoint

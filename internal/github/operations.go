@@ -14,7 +14,7 @@ func (c *HTTPClient) call(ctx context.Context, repo RepoRef, parts []string, met
 	if err != nil {
 		return responseMeta{}, err
 	}
-	return c.request(ctx, method, u, in, out, statuses...)
+	return c.request(ctx, &repo, method, u, in, out, statuses...)
 }
 
 // GetRepo fetches preflight metadata, including push permission and visibility.
@@ -77,7 +77,7 @@ func (c *HTTPClient) listComments(ctx context.Context, repo RepoRef, number int,
 			requestCtx = context.WithValue(ctx, etagKey{}, etag)
 		}
 		var batch []Comment
-		meta, err := c.request(requestCtx, http.MethodGet, u, nil, &batch, http.StatusOK, http.StatusNotModified)
+		meta, err := c.request(requestCtx, &repo, http.MethodGet, u, nil, &batch, http.StatusOK, http.StatusNotModified)
 		if err != nil {
 			return nil, "", false, err
 		}
@@ -147,7 +147,7 @@ func (c *HTTPClient) FindOpenPR(ctx context.Context, repo RepoRef, headBranch st
 	}
 	u.RawQuery = url.Values{"state": {"open"}, "head": {repo.Owner + ":" + headBranch}, "per_page": {"100"}}.Encode()
 	var prs []PullRequest
-	_, err = c.request(ctx, http.MethodGet, u, nil, &prs, http.StatusOK)
+	_, err = c.request(ctx, &repo, http.MethodGet, u, nil, &prs, http.StatusOK)
 	if err != nil {
 		return nil, operationError("FindOpenPR", err)
 	}
@@ -213,6 +213,6 @@ func (c *HTTPClient) ListOpenIssues(ctx context.Context, repo RepoRef, page int)
 	q.Set("page", strconv.Itoa(page))
 	u.RawQuery = q.Encode()
 	var issues []Issue
-	_, err = c.request(ctx, http.MethodGet, u, nil, &issues, http.StatusOK)
+	_, err = c.request(ctx, &repo, http.MethodGet, u, nil, &issues, http.StatusOK)
 	return issues, operationError("ListOpenIssues", err)
 }

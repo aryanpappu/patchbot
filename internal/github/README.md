@@ -6,6 +6,14 @@ include `/api/v3`. The build's `internal/version.Version` supplies the user agen
 Settings are immutable after construction; token sources must support concurrent
 calls. No dependencies were added.
 
+`NewWithRepoTokens(httpClient, baseURL, repoTokens, user)` selects each request's
+credential from the call's own `RepoRef` (GitHub App mode); a 401 invalidates
+that token and retries once. `App` (app.go) signs RS256 JWTs with the standard
+library and mints installation tokens narrowed to one repository ID with
+contents/issues/pull_requests write and metadata read, cached, single-flighted
+and refreshed five minutes before expiry. `LoadAppPrivateKey` enforces key file
+placement (regular, 0600 or stricter, owner, outside excluded roots).
+
 The runner can use `ListIssueComments(ctx, repo, number, since)` for ordinary
 listing, or `ListIssueCommentsSince(..., since, etag)` for conditional polling.
 Both follow `Link` headers and stop at 300 comments. Only single-page results

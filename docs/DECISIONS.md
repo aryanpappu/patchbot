@@ -75,3 +75,4 @@ engineering questions together and record them here.
   webhook state belongs to 0005. Reconcile those placeholders before using M20/M21
   migrations against an existing database, since migration checksums are immutable.
 - M22 review fixes: coalesce pending receipts per issue (cap 1000 pending, 10 attempts, 404/410 done, 14-day prune), poll labels on `webhook.label_poll_interval` (5m) from listing data only, and treat a repository's first label sweep as a no-start baseline; schema in 0006 because 0005 is deployed.
+- M27: GitHub App auth (`[github] auth = "app"`) mints per-run installation tokens narrowed to one repository ID with contents/issues/pull_requests write + metadata read, routed by explicit `RepoRef` (REST) and a per-operation `TokenFunc` (git); PAT mode unchanged and explicit; no fallback from App to PAT; key file only, never env/DB.

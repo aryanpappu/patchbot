@@ -103,6 +103,7 @@ var envBindings = []struct {
 	{"PATCHBOT_ADDR", []string{"server.addr"}},
 	{"PATCHBOT_LOG_LEVEL", []string{"log.level"}},
 	{"PATCHBOT_LOG_FORMAT", []string{"log.format"}},
+	{"PATCHBOT_GITHUB_AUTH", []string{"github.auth"}},
 }
 
 // Default returns the embedded defaults with no file, environment or flags.
@@ -349,6 +350,10 @@ func covered(seen map[string]bool, key toml.Key) bool {
 // holds a secret. Segments the user names freely (a provider, a repository, a
 // model, a command ID) are not checked.
 func secretLookingSegment(key toml.Key) (string, bool) {
+	// github.private_key_file names a protected file; it never holds the key.
+	if len(key) == 2 && key[0] == "github" && key[1] == "private_key_file" {
+		return "", false
+	}
 	for i, seg := range key {
 		if freeName(key, i) {
 			continue
