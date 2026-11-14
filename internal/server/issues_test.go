@@ -547,9 +547,9 @@ func TestRecoveryIgnoresCopiedMarkerFromAnotherAuthor(t *testing.T) {
 	g.lostReply = true
 	requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, nil)), http.StatusBadGateway)
 	g.lostReply = false
-	real := g.issues[0]
+	genuine := g.issues[0]
 	// An outsider opens a newer issue carrying a copy of the same body and marker.
-	g.issues = append(g.issues, github.Issue{Number: 2, Author: "mallory", Title: real.Title, Body: real.Body, State: "open"})
+	g.issues = append(g.issues, github.Issue{Number: 2, Author: "mallory", Title: genuine.Title, Body: genuine.Body, State: "open"})
 	f.server.issueGrace = time.Millisecond
 	time.Sleep(5 * time.Millisecond)
 	w := f.request("POST", "/api/issues", issueJSON(t, nil))
@@ -604,12 +604,9 @@ func TestRecoveryAmbiguousMatchesAreUnknown(t *testing.T) {
 func TestConcurrentStartRunRetriesReturnOneRun(t *testing.T) {
 	f, _ := newIssueFixture(t, fake.New("anthropic", specStep()))
 	f.withRepo()
-	req := issueJSON(t, map[string]any{"start_run": true, "mode": "refine", "dry_run": true})
-	// Create the issue first so only the run step races.
-	g0 := decodeIssue(t, f.request("POST", "/api/issues", issueJSON(t, nil)))
-	_ = g0
-	// Same key but start_run differs: refused, so use a fresh key for the race.
-	req = issueJSON(t, map[string]any{"start_run": true, "mode": "refine", "dry_run": true, "idempotency_key": "race-key-123456"})
+	// Create an issue first so the raced one is issue 2.
+	requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, nil)), http.StatusCreated)
+	req := issueJSON(t, map[string]any{"start_run": true, "mode": "refine", "dry_run": true, "idempotency_key": "race-key-123456"})
 	var wg sync.WaitGroup
 	ids := make(chan int64, 8)
 	for range 8 {
