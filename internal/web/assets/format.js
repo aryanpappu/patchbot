@@ -40,6 +40,9 @@ export function linkHref(url) {
   return "";
 }
 
+// runHref builds an in-app run URL from an integer ID only.
+export const runHref = id => Number.isSafeInteger(id) && id > 0 ? `/runs/${id}` : "/runs";
+
 export const specText = spec => (spec?.body_md || "").replace(/\n<!-- patchbot:spec-data [A-Za-z0-9+/=]+ -->\n$/, "");
 
 // decodeSpec recovers the structured fields hidden in the spec marker, or null.

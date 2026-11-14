@@ -1,5 +1,5 @@
 // One run as a card: used by the inbox and the run list.
-import { human, money } from "../format.js";
+import { human, money, runHref } from "../format.js";
 import { chip, icon, link } from "../ui.js";
 
 const { h } = window.Vue;
@@ -18,7 +18,7 @@ export function runCard(run, hint) {
   const waited = run.waiting_since ? ago(run.waiting_since) : "";
   return h("li", { key: run.id, class: "card" }, [
     h("div", { class: "card-head" }, [
-      h("h3", h("a", { href: `/runs/${run.id}` }, `${run.repo} #${run.issue_number}`)),
+      h("h3", h("a", { href: runHref(run.id) }, `${run.repo} #${run.issue_number}`)),
       chip(run.status)
     ]),
     h("p", { class: "card-title" }, run.issue_title || "(untitled)"),

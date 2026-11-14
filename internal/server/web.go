@@ -13,11 +13,15 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 	if !s.method(w, r, http.MethodGet) {
 		return
 	}
-	state := web.State{Page: "runs", AuthRequired: s.authenticated, Email: sessionEmail(r)}
-	if r.URL.Path == "/runs/new" {
+	state := web.State{Page: "inbox", AuthRequired: s.authenticated, Email: sessionEmail(r)}
+	if r.URL.Path == "/runs" {
+		state.Page = "runs"
+	} else if r.URL.Path == "/runs/new" {
 		state.Page = "new"
 	} else if r.URL.Path == "/repos" {
 		state.Page = "repos"
+	} else if r.URL.Path == "/memory" {
+		state.Page = "memory"
 	} else if value := r.PathValue("id"); value != "" {
 		id, err := strconv.ParseInt(value, 10, 64)
 		if err != nil || id <= 0 {

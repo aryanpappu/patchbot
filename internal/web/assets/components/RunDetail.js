@@ -1,6 +1,6 @@
 // Run detail: header, phase stepper, budget, tabs (Spec / Live log / Changes)
 // and the sticky action bar. Lifecycle rules stay on the server.
-import { decodeSpec, human, shortHash } from "../format.js";
+import { decodeSpec, human, runHref, shortHash } from "../format.js";
 import { block, chip, errorPanel, link, loading } from "../ui.js";
 import { useRunStream } from "../composables/useRunStream.js";
 import { useTask } from "../composables/useTask.js";
@@ -51,7 +51,7 @@ export const RunDetail = {
     }
     const stream = useRunStream(api, id, scheduleRefresh, () => loadDetail());
     const can = name => !!s.detail?.capabilities?.["can_" + name];
-    const navigate = run => { location.assign(`/runs/${run.id}`); };
+    const navigate = run => { location.assign(runHref(run.id)); };
 
     function act(name, body = {}) {
       if (!can(name) || task.state.busy) return Promise.resolve();
@@ -130,7 +130,7 @@ export const RunDetail = {
         h("h1", `${run.repo} #${run.issue_number}`), h("p", { class: "lead" }, run.issue_title),
         h("div", { class: "actions" }, [chip(run.status), run.dry_run ? h("span", { class: "tag" }, "Dry run") : null, run.prurl ? link(run.prurl, "Open pull request") : null]),
         h("p", { class: "meta" }, `run ${run.id} · ${run.mode} · ${run.provider} · refine: ${run.refine_model} · code: ${run.code_model}`),
-        run.retry_of ? h("p", ["Retry of ", h("a", { href: `/runs/${run.retry_of}` }, `run ${run.retry_of}`)]) : null,
+        run.retry_of ? h("p", ["Retry of ", h("a", { href: runHref(run.retry_of) }, `run ${run.retry_of}`)]) : null,
         d.dashboard_issue ? h("p", { class: "meta" }, `Requested from the dashboard by ${d.dashboard_issue.requested_by}`) : null,
         task.state.error ? errorPanel(task.state.error) : null,
         phaseStepper(run), budgetMeters(run),

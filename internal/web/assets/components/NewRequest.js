@@ -1,5 +1,6 @@
 // New request: start a run for an existing issue, or write a new request that
 // patchbot opens as a GitHub issue (POST /api/issues, idempotent by key).
+import { runHref } from "../format.js";
 import { button, checkbox, errorPanel, field, input, area, link, loading, select } from "../ui.js";
 import { useTask } from "../composables/useTask.js";
 import { modelFields } from "./ModelFields.js";
@@ -23,7 +24,7 @@ export const NewRequest = {
 
     onMounted(() => task.run(async () => { await providers.load(); void providers.loadModels(); }));
     onUnmounted(() => clearTimeout(redirect));
-    const go = run => { location.assign(`/runs/${run.id}`); };
+    const go = run => { location.assign(runHref(run.id)); };
     const modelBody = () => ({ mode: form.mode, provider: form.provider, code_model: form.model, refine_model: form.separate ? form.refine : form.model,
       max_cost_micros: Math.round(Number(form.budget) * 1000000), dry_run: form.dry });
 

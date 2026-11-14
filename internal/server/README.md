@@ -107,8 +107,8 @@ The included Vue asset is checked against the shared SHA-384 pin by an offline t
 
 `[server.auth] mode` is `token` (default: `PATCHBOT_UI_TOKEN` bearer, loopback
 may run without one) or `cloudflare_access`. In Access mode the bearer token is
-ignored and every request except `GET /assets/app.js`, `/assets/app.css` and
-`/assets/vue.global.prod.js` (and the HMAC-checked webhook path) must carry a
+ignored and every request except `GET` of the fixed asset list in `web.AssetNames` (the
+ES modules, `/assets/app.css`, `/assets/vue.global.prod.js`; no wildcards) (and the HMAC-checked webhook path) must carry a
 valid `Cf-Access-Jwt-Assertion` for an allowed email (`internal/cfaccess`).
 Missing or invalid tokens return 401, a valid token for a disallowed email
 returns 403; API errors use the usual JSON envelope with a generic message and

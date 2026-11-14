@@ -8,6 +8,7 @@ import (
 
 	"github.com/aryanpappu/patchbot/internal/cfaccess"
 	"github.com/aryanpappu/patchbot/internal/runner"
+	"github.com/aryanpappu/patchbot/internal/web"
 )
 
 type emailKey struct{}
@@ -18,11 +19,7 @@ func accessPublic(r *http.Request) bool {
 	if r.Method != http.MethodGet {
 		return false
 	}
-	switch r.URL.Path {
-	case "/assets/app.js", "/assets/app.css", "/assets/vue.global.prod.js":
-		return true
-	}
-	return false
+	return web.AssetPath(r.URL.Path)
 }
 
 // accessAuth verifies the Cloudflare Access JWT. On success it returns a

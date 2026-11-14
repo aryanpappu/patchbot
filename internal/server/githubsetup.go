@@ -141,7 +141,7 @@ var setupTemplate = template.Must(template.New("setup").Parse(`<!doctype html>
 <title>patchbot · connect GitHub</title>
 <link rel="stylesheet" href="/assets/app.css">
 <script defer src="/assets/setup.js"></script></head>
-<body><header><a href="/runs">patchbot</a><nav aria-label="Main"><a href="/runs">Runs</a><a href="/runs/new">New run</a></nav></header>
+<body><header><a href="/runs">patchbot</a><nav aria-label="Main"><a href="/">Inbox</a><a href="/runs">Runs</a><a href="/runs/new">New request</a><a href="/repos">Repositories</a><a href="/memory">Memory</a></nav></header>
 <main id="main"><h1>{{.Title}}</h1>
 {{with .Message}}<p role="status">{{.}}</p>{{end}}
 {{if .Connect}}<div class="panel"><p>patchbot asks GitHub to create a private App named in the manifest, with only contents, issues and pull requests (write) and metadata (read), and no webhook. GitHub shows you the request first; you confirm it there. The private key goes straight to this server and is never shown to you.</p>
