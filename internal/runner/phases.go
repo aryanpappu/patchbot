@@ -657,6 +657,9 @@ func (r *Runner) runRepo(ctx context.Context, run store.Run) (*config.Repo, erro
 	if err != nil {
 		return nil, err
 	}
+	if len(content) > repos.MaxSettingsBytes {
+		return nil, fmt.Errorf("settings of %s are too large to record on the run", run.Repo)
+	}
 	if r.redactor.Redact(string(content)) != string(content) {
 		return nil, fmt.Errorf("settings of %s look like a credential and cannot be recorded on the run", run.Repo)
 	}

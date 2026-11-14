@@ -81,3 +81,31 @@ func TestRunRepoRefusesUnknownRepo(t *testing.T) {
 }
 
 func mkData(dir string) error { return os.MkdirAll(dir, 0o700) }
+
+func TestRunRepoSeesRemovalFromAnotherHandle(t *testing.T) {
+	cfg := loadRepoConfig(t, "/usr/bin", repoTables)
+	if err := mkData(cfg.DataDir()); err != nil {
+		t.Fatal(err)
+	}
+	db1, err := store.Open(t.Context(), cfg.DatabasePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db1.Close() })
+	db2, err := store.Open(t.Context(), cfg.DatabasePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db2.Close() })
+	r1 := &Runner{cfg: cfg, db: db1, redactor: secret.NewRedactor(), repos: testRegistry(t, cfg, db1)}
+	other := testRegistry(t, cfg, db2)
+	if _, err := other.Add(t.Context(), "acme/widgets", repos.Settings{Commands: map[string][]string{"test": {"go"}}}, "cli", "cli"); err != nil {
+		t.Fatal(err)
+	}
+	if err := other.Remove(t.Context(), "acme/widgets", 0, "cli", "cli"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r1.prepare(Request{Repo: "acme/widgets", Issue: 1}); err == nil {
+		t.Fatal("a repository removed by another process started a run")
+	}
+}

@@ -31,9 +31,15 @@ limits, credential refusal, builtin protection, concurrency, Merge.
 without restart, delete refused with active run, auth required on all endpoints (token and Access), Access email in
 audit, XSS payload inert. `runner`: frozen settings survive an edit and a resume.
 
+## Review fixes
+
+- Registry is read-through (no cache): every lookup reads SQLite, so another process's add/edit/remove is seen by the next run start and a removed repo cannot start runs anywhere; the freeze re-reads right before saving.
+- Audit `before` is read from the stored row inside the mutation transaction.
+- Serialized settings are capped at 64 KiB (413 on add/edit) and the freeze fails closed above the cap; nothing is truncated.
+- A blank image/PATH is omitted by the UI and an empty PATH list is treated as inherit.
+
 ## Open issues
 
-- Registry caches DB rows per process; another process editing the DB is seen after restart only.
 - CLI has no repo add/edit commands (parity optional).
 - Removed config repos mid-run still fail preflight (existing behaviour).
 - Frozen settings are not shown in the run UI; UI is compact pending M29.

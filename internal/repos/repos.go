@@ -48,6 +48,9 @@ const (
 	maxArgBytes = 4096
 	maxProtect  = 64
 	maxPathLen  = 512
+	// MaxSettingsBytes caps the serialized settings, far below the 256 KiB
+	// artifact cap, so a frozen snapshot is never truncated.
+	MaxSettingsBytes = 64 << 10
 )
 
 // Settings is the editable part of a repository, in the shape of a
@@ -78,6 +81,9 @@ func FromRepo(r *config.Repo) Settings {
 // Repo converts Settings back to a config.Repo (deep copy).
 func (s Settings) Repo() *config.Repo {
 	r := &config.Repo{TestCommand: s.TestCommand, Image: s.Image, Protected: slices.Clone(s.Protected), Path: slices.Clone(s.Path)}
+	if len(r.Path) == 0 {
+		r.Path = nil // blank means inherit [executor].path, not "empty PATH"
+	}
 	r.Commands = make(map[string][]string, len(s.Commands))
 	for id, argv := range s.Commands {
 		r.Commands[id] = slices.Clone(argv)
@@ -108,9 +114,7 @@ type Registry struct {
 	redact func(string) string
 	now    func() time.Time
 
-	wmu  sync.Mutex // serializes mutations
-	mu   sync.RWMutex
-	dash map[string]Entry
+	wmu sync.Mutex // serializes mutations in this process; the store enforces the rest
 }
 
 // New loads the dashboard repositories. db may be nil (config repositories
@@ -120,26 +124,40 @@ func New(ctx context.Context, cfg *config.Config, db store.RepoStore, redact fun
 	if redact == nil {
 		redact = cfg.Redactor().Redact
 	}
-	r := &Registry{cfg: cfg, db: db, redact: redact, now: time.Now, dash: map[string]Entry{}}
+	r := &Registry{cfg: cfg, db: db, redact: redact, now: time.Now}
 	if err := r.Reload(ctx); err != nil {
 		return nil, err
 	}
 	return r, nil
 }
 
-// Reload re-reads the dashboard repositories from the database. A stored row
-// that no longer validates (for example after the executor mode changed) is
-// skipped, so it can never widen the allowlist; List still reports nothing for
-// it and the operator can remove or fix it by editing config.
+// Reload checks that the dashboard repositories can be read. The registry
+// keeps no cache of them: every lookup reads the database, so an edit or a
+// removal made by another process (the CLI shares the SQLite file) is seen by
+// the next run start, and a removed repository cannot start a run anywhere.
 func (r *Registry) Reload(ctx context.Context) error {
 	if r.db == nil {
 		return nil
 	}
+	_, err := r.db.ListRepos(ctx)
+	return err
+}
+
+// dashboard reads the valid dashboard repositories from the database. A stored
+// row that no longer validates, or that collides with a config repository,
+// is skipped so it can never widen the allowlist. A read error yields nothing:
+// the lookup fails closed.
+func (r *Registry) dashboard() map[string]Entry {
+	out := map[string]Entry{}
+	if r.db == nil {
+		return out
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	recs, err := r.db.ListRepos(ctx)
 	if err != nil {
-		return err
+		return out
 	}
-	next := make(map[string]Entry, len(recs))
 	for _, rec := range recs {
 		e, err := r.entry(rec)
 		if err != nil {
@@ -148,12 +166,9 @@ func (r *Registry) Reload(ctx context.Context) error {
 		if _, clash := r.cfg.Repos[e.Name]; clash {
 			continue // the config file wins; the row stays inert
 		}
-		next[e.Name] = e
+		out[e.Name] = e
 	}
-	r.mu.Lock()
-	r.dash = next
-	r.mu.Unlock()
-	return nil
+	return out
 }
 
 func (r *Registry) entry(rec store.RepoRecord) (Entry, error) {
@@ -188,10 +203,22 @@ func (r *Registry) Has(name string) bool {
 	if _, ok := r.cfg.Repos[name]; ok {
 		return true
 	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	_, ok := r.dash[name]
+	_, ok := r.dashboardEntry(name)
 	return ok
+}
+
+func (r *Registry) dashboardEntry(name string) (Entry, bool) {
+	if r.db == nil {
+		return Entry{}, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rec, err := r.db.GetRepo(ctx, name)
+	if err != nil {
+		return Entry{}, false
+	}
+	e, err := r.entry(rec)
+	return e, err == nil
 }
 
 // Allowed is the single allowlist question: may runs, ingress and memory touch
@@ -204,9 +231,7 @@ func (r *Registry) Get(name string) (Entry, bool) {
 	if c, ok := r.cfg.Repos[name]; ok {
 		return configEntry(name, c), true
 	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	e, ok := r.dash[name]
+	e, ok := r.dashboardEntry(name)
 	return cloneEntry(e), ok
 }
 
@@ -221,12 +246,11 @@ func cloneEntry(e Entry) Entry {
 
 // Names returns every allowlisted repository, sorted.
 func (r *Registry) Names() []string {
-	r.mu.RLock()
-	names := make([]string, 0, len(r.cfg.Repos)+len(r.dash))
-	for name := range r.dash {
+	dash := r.dashboard()
+	names := make([]string, 0, len(r.cfg.Repos)+len(dash))
+	for name := range dash {
 		names = append(names, name)
 	}
-	r.mu.RUnlock()
 	for name := range r.cfg.Repos {
 		names = append(names, name)
 	}
@@ -284,6 +308,9 @@ func (r *Registry) Validate(name string, s Settings) error {
 	if err != nil {
 		return invalid("settings cannot be encoded")
 	}
+	if len(raw) > MaxSettingsBytes {
+		return &ValidationError{msg: fmt.Sprintf("settings are %d bytes; the limit is %d", len(raw), MaxSettingsBytes), tooLarge: true}
+	}
 	// The frozen run artifact and the audit rows are redacted on save. A value
 	// that redaction would change cannot be stored losslessly: fail closed.
 	if r.redact(string(raw)) != string(raw) {
@@ -293,7 +320,13 @@ func (r *Registry) Validate(name string, s Settings) error {
 }
 
 // ValidationError carries an operator-facing message.
-type ValidationError struct{ msg string }
+type ValidationError struct {
+	msg      string
+	tooLarge bool
+}
+
+// TooLarge reports a settings document over MaxSettingsBytes.
+func (e *ValidationError) TooLarge() bool { return e.tooLarge }
 
 func (e *ValidationError) Error() string { return e.msg }
 
@@ -357,13 +390,9 @@ func (r *Registry) Update(ctx context.Context, name string, s Settings, expected
 	}
 	r.wmu.Lock()
 	defer r.wmu.Unlock()
-	before, ok := r.Get(name)
-	if !ok {
-		return Entry{}, ErrNotFound
-	}
 	now := r.now()
 	rec, err := r.db.UpdateRepo(ctx, store.RepoRecord{Name: name, SettingsJSON: r.auditJSON(&s), UpdatedAt: now, UpdatedBy: r.redact(actor)}, expectedVersion,
-		store.RepoAudit{Repo: name, Action: store.RepoActionEdit, Actor: r.redact(actor), Channel: channel, BeforeJSON: r.auditJSON(&before.Settings), AfterJSON: r.auditJSON(&s), At: now})
+		store.RepoAudit{Repo: name, Action: store.RepoActionEdit, Actor: r.redact(actor), Channel: channel, AfterJSON: r.auditJSON(&s), At: now}) // BeforeJSON is read from the stored row in the transaction
 	if err != nil {
 		return Entry{}, err
 	}
@@ -382,18 +411,11 @@ func (r *Registry) Remove(ctx context.Context, name string, expectedVersion int6
 	}
 	r.wmu.Lock()
 	defer r.wmu.Unlock()
-	before, ok := r.Get(name)
-	if !ok {
-		return ErrNotFound
-	}
 	err := r.db.RemoveRepo(ctx, name, expectedVersion,
-		store.RepoAudit{Repo: name, Action: store.RepoActionRemove, Actor: r.redact(actor), Channel: channel, BeforeJSON: r.auditJSON(&before.Settings), At: r.now()})
+		store.RepoAudit{Repo: name, Action: store.RepoActionRemove, Actor: r.redact(actor), Channel: channel, At: r.now()})
 	if err != nil {
 		return err
 	}
-	r.mu.Lock()
-	delete(r.dash, name)
-	r.mu.Unlock()
 	return nil
 }
 
@@ -402,9 +424,6 @@ func (r *Registry) publish(rec store.RepoRecord) (Entry, error) {
 	if err != nil {
 		return Entry{}, err
 	}
-	r.mu.Lock()
-	r.dash[e.Name] = e
-	r.mu.Unlock()
 	return cloneEntry(e), nil
 }
 

@@ -55,6 +55,8 @@ type RepoAudit struct {
 // row in the same transaction.
 type RepoStore interface {
 	ListRepos(ctx context.Context) ([]RepoRecord, error)
+	// GetRepo reads one row; ErrNotFound when it does not exist.
+	GetRepo(ctx context.Context, name string) (RepoRecord, error)
 	// AddRepo inserts at version 1; ErrRepoExists when the name is taken.
 	AddRepo(ctx context.Context, rec RepoRecord, audit RepoAudit) (RepoRecord, error)
 	// UpdateRepo replaces the settings and bumps the version when the stored
@@ -87,6 +89,12 @@ func (s *SQLite) ListRepos(ctx context.Context) ([]RepoRecord, error) {
 		return nil, mapError(err)
 	}
 	return collectRepos(rows)
+}
+
+// GetRepo implements RepoStore.
+func (s *SQLite) GetRepo(ctx context.Context, name string) (RepoRecord, error) {
+	rec, err := scanRepo(s.db.QueryRowContext(ctx, `SELECT `+repoColumns+` FROM dashboard_repos WHERE name=?`, name))
+	return rec, mapError(err)
 }
 
 func collectRepos(rows *sql.Rows) ([]RepoRecord, error) {
@@ -138,9 +146,11 @@ func (s *SQLite) UpdateRepo(ctx context.Context, rec RepoRecord, expectedVersion
 	var saved RepoRecord
 	err := s.withTx(ctx, func(tx *eventTx) error {
 		var current int64
-		if err := tx.QueryRowContext(ctx, `SELECT version FROM dashboard_repos WHERE name=?`, rec.Name).Scan(&current); err != nil {
+		var before string
+		if err := tx.QueryRowContext(ctx, `SELECT version,settings_json FROM dashboard_repos WHERE name=?`, rec.Name).Scan(&current, &before); err != nil {
 			return err
 		}
+		audit.BeforeJSON = before // the stored row, never a cache
 		if current != expectedVersion {
 			return ErrVersionConflict
 		}
@@ -160,9 +170,11 @@ func (s *SQLite) UpdateRepo(ctx context.Context, rec RepoRecord, expectedVersion
 func (s *SQLite) RemoveRepo(ctx context.Context, name string, expectedVersion int64, audit RepoAudit) error {
 	return s.withTx(ctx, func(tx *eventTx) error {
 		var current int64
-		if err := tx.QueryRowContext(ctx, `SELECT version FROM dashboard_repos WHERE name=?`, name).Scan(&current); err != nil {
+		var before string
+		if err := tx.QueryRowContext(ctx, `SELECT version,settings_json FROM dashboard_repos WHERE name=?`, name).Scan(&current, &before); err != nil {
 			return err
 		}
+		audit.BeforeJSON = before // the stored row, never a cache
 		if expectedVersion != 0 && current != expectedVersion {
 			return ErrVersionConflict
 		}

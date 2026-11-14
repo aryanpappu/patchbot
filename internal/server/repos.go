@@ -117,6 +117,11 @@ func (s *Server) repoAudit(w http.ResponseWriter, r *http.Request) {
 func (s *Server) repoError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, repos.ErrInvalid):
+		var ve *repos.ValidationError
+		if errors.As(err, &ve) && ve.TooLarge() {
+			s.writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", err.Error())
+			return
+		}
 		s.writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 	case errors.Is(err, repos.ErrCollision):
 		s.writeError(w, http.StatusConflict, "name_in_config", err.Error())

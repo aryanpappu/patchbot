@@ -257,3 +257,105 @@ func TestMergeReportsProblems(t *testing.T) {
 		t.Fatalf("problems: %v", problems)
 	}
 }
+
+func TestSecondProcessRemovalBlocksRunStart(t *testing.T) {
+	cfg := testConfig(false)
+	path := filepath.Join(t.TempDir(), "p.sqlite")
+	open := func() (*Registry, *store.SQLite) {
+		db, err := store.Open(t.Context(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		reg, err := New(t.Context(), cfg, db, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return reg, db
+	}
+	first, _ := open()
+	second, _ := open() // stands in for another process (CLI) on the same database
+	if _, err := second.Add(t.Context(), "acme/widgets", goSettings(), "cli", "cli"); err != nil {
+		t.Fatal(err)
+	}
+	if !first.Has("acme/widgets") {
+		t.Fatal("a repository added elsewhere must be visible")
+	}
+	if err := second.Remove(t.Context(), "acme/widgets", 0, "cli", "cli"); err != nil {
+		t.Fatal(err)
+	}
+	if first.Has("acme/widgets") || first.Allowed("acme/widgets") {
+		t.Fatal("removed repository is still allowed")
+	}
+	if _, ok := first.Lookup("acme/widgets"); ok {
+		t.Fatal("removed repository can still be frozen")
+	}
+}
+
+func TestAuditBeforeComesFromStoredRow(t *testing.T) {
+	cfg := testConfig(false)
+	path := filepath.Join(t.TempDir(), "p.sqlite")
+	var regs [2]*Registry
+	for i := range regs {
+		db, err := store.Open(t.Context(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		if regs[i], err = New(t.Context(), cfg, db, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := t.Context()
+	if _, err := regs[0].Add(ctx, "acme/widgets", goSettings(), "a", "ui"); err != nil {
+		t.Fatal(err)
+	}
+	other := goSettings()
+	other.Commands = map[string][]string{"test": {"make", "check"}}
+	if _, err := regs[1].Update(ctx, "acme/widgets", other, 1, "b", "cli"); err != nil {
+		t.Fatal(err)
+	}
+	third := goSettings()
+	third.Protected = []string{"secrets"}
+	if _, err := regs[0].Update(ctx, "acme/widgets", third, 2, "a", "ui"); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := regs[0].Audit(ctx, "acme/widgets")
+	if len(rows) != 3 || !strings.Contains(rows[0].BeforeJSON, "make") || strings.Contains(rows[0].BeforeJSON, `"go"`) {
+		t.Fatalf("before must be the DB row written by the other handle: %+v", rows[0])
+	}
+}
+
+func TestOversizedSettingsRefused(t *testing.T) {
+	reg, _ := testRegistry(t, testConfig(false))
+	big := Settings{Commands: map[string][]string{}}
+	for i := range 20 {
+		argv := []string{"go"}
+		for range 60 {
+			argv = append(argv, strings.Repeat("x", 100))
+		}
+		big.Commands[fmt.Sprintf("c%d", i)] = argv
+	}
+	err := reg.Validate("acme/widgets", big)
+	var ve *ValidationError
+	if !errors.As(err, &ve) || !ve.TooLarge() || !errors.Is(err, ErrInvalid) {
+		t.Fatalf("oversized: %v", err)
+	}
+}
+
+func TestBlankPathInherits(t *testing.T) {
+	reg, _ := testRegistry(t, testConfig(true))
+	s := goSettings()
+	s.Path = []string{} // what an empty list decodes to
+	e, err := reg.Add(t.Context(), "acme/widgets", s, "me", "ui")
+	if err != nil {
+		t.Fatalf("blank path: %v", err)
+	}
+	if got, _ := reg.Lookup("acme/widgets"); got.Path != nil {
+		t.Fatalf("path must inherit (nil), got %v", got.Path)
+	}
+	re := reg.cfg.ExecutorFor(e.Name, e.Settings.Repo())
+	if re.Image != digest || re.ImageSource != "executor.image" {
+		t.Fatalf("image must inherit: %+v", re)
+	}
+}

@@ -224,3 +224,17 @@ func TestRepoSettingsXSSStaysInert(t *testing.T) {
 		t.Fatal("payload did not round-trip")
 	}
 }
+
+func TestRepoAPIOversizedSettingsAndBlankPath(t *testing.T) {
+	f := newFixture(t, nil, nil)
+	cmds := []string{}
+	for i := range 20 {
+		args := []string{`"go"`}
+		for range 60 {
+			args = append(args, `"`+strings.Repeat("x", 100)+`"`)
+		}
+		cmds = append(cmds, fmt.Sprintf(`"c%d":[%s]`, i, strings.Join(args, ",")))
+	}
+	requireStatus(t, f.request("POST", "/api/repos", `{"name":"acme/big","settings":{"commands":{`+strings.Join(cmds, ",")+`}}}`), 413)
+	requireStatus(t, f.request("POST", "/api/repos", `{"name":"acme/blank","settings":{"commands":{"test":["go","test"]},"path":[],"image":""}}`), 201)
+}

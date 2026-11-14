@@ -413,7 +413,10 @@
         event.preventDefault();
         const e = s.repoEditor;
         void work(async () => {
-          const settings = { commands: parseCommands(e.commands), test_command: e.test.trim(), protected: lines(e.protectedPaths), image: e.image.trim(), path: lines(e.path) };
+          const settings = { commands: parseCommands(e.commands), test_command: e.test.trim(), protected: lines(e.protectedPaths) };
+          // Blank image/PATH are omitted so the repository inherits [executor].
+          if (e.image.trim()) settings.image = e.image.trim();
+          if (lines(e.path).length) settings.path = lines(e.path);
           let result;
           if (e.mode === "add") result = await send("/api/repos", { name: e.name.trim(), settings });
           else result = await send("/api/repos/" + e.name, { version: e.version, settings }, "PUT");

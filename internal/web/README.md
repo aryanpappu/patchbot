@@ -88,3 +88,12 @@ vue_src = "local" # default: "cdn"
 
 Both modes retain SRI and crossorigin. Changing mode requires restarting the
 server; installing a vendor asset requires rebuilding the binary.
+
+## Repositories page (M24)
+
+`/repos` lists the effective allowlist: config-file repositories (read-only) and dashboard repositories (edit,
+remove with confirm, audit view), plus an add form. Commands are typed as one JSON argv array per line
+(`test: ["go","test","./..."]`), never a shell string; blank image and PATH fields are omitted so the repository
+inherits `[executor]`. All values (commands, paths, audit JSON, actors) are rendered as text nodes; the page adds
+no new sinks, libraries or CSP changes, and writes go through `send()` with `credentials: same-origin`. The server
+re-validates everything and decides conflicts (409 on a stale version, 409 while runs are active).
