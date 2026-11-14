@@ -146,3 +146,30 @@ func TestLocalExecutorRecordsNothing(t *testing.T) {
 		t.Fatalf("executor is %T", e)
 	}
 }
+
+func TestRunExecutorRefusesToFreezeRedactableSettings(t *testing.T) {
+	token := "sk-abcdefghijklmnopqrstuvwx"
+	cfg := loadRepoConfig(t, "/usr/bin", "[executor]\nkind=\"container\"\nimage=\"example.test/"+token+"@sha256:"+strings.Repeat("a", 64)+"\"\n"+
+		"[repos.\"owner/php\"]\ncommands={test=[\"x\"]}\npath=[\"/opt/"+token+"/bin\"]\n")
+	if err := os.MkdirAll(cfg.DataDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(t.Context(), cfg.DatabasePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	run, err := db.CreateRun(t.Context(), store.Run{Repo: "owner/php", IssueNumber: 1, Mode: "fix", Provider: "anthropic", Status: store.StatusRunning})
+	if err != nil {
+		t.Fatal(err)
+	}
+	red := secret.NewRedactor()
+	red.AddSecrets(secret.New(token))
+	r := &Runner{cfg: cfg, db: db, redactor: red}
+	if _, err := r.runExecutor(t.Context(), run); err == nil || strings.Contains(err.Error(), token) {
+		t.Fatalf("want a fail-closed error without the value, got %v", err)
+	}
+	if _, err := db.GetArtifact(t.Context(), run.ID, "executor", 0); err == nil {
+		t.Fatal("a corrupted executor artifact was stored")
+	}
+}

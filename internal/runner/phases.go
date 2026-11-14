@@ -141,6 +141,12 @@ func (r *Runner) runExecutor(ctx context.Context, run store.Run) (config.RepoExe
 	if err != nil {
 		return config.RepoExecutor{}, err
 	}
+	// The artifact is redacted on save and shown in the UI, so a value that
+	// redaction would change cannot be stored losslessly: fail closed rather
+	// than freeze settings that a resume would read back corrupted.
+	if r.redactor.Redact(string(content)) != string(content) {
+		return config.RepoExecutor{}, fmt.Errorf("container image or path for %s looks like a credential and cannot be recorded; use a different image name or path", run.Repo)
+	}
 	return re, r.artifact(ctx, run.ID, executorArtifact, string(content))
 }
 

@@ -38,3 +38,4 @@ Date: 2026-11-14. Branch `m25-repo-image`.
 - The run's frozen image is not shown in the web UI/`runs show`; it is in the `executor` artifact only.
 - A repository's image is looked up once per run; a revision after a config change keeps the old image by design.
 - Doctor runs `image inspect` once per repo even when repos share an image.
+- A repo image or PATH that redaction would alter (credential-shaped) is refused at freeze time (fail closed), since the stored artifact is redacted and a resume would read it back corrupted.
