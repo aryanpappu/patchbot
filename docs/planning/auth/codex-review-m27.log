@@ -1,0 +1,3494 @@
+Reading additional input from stdin...
+2026-11-14T00:18:10.085930Z ERROR codex_models_manager::manager: failed to refresh available models: request timed out
+2026-11-14T00:18:10.108693Z ERROR codex_models_manager::manager: failed to refresh available models: request timed out
+OpenAI Codex v0.166.0
+--------
+workdir: /Users/pappumishra/Documents/selfproject/patchbot-m27-app
+model: gpt-6.1-sol
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: none
+reasoning summaries: none
+session id: 01a1d76b-22a8-7770-b988-fb244544d3da
+--------
+user
+Security review of branch m27-github-app vs development (git diff development...HEAD): GitHub App auth for patchbot. Read docs/planning/auth/DECISION.md and docs/M27-REPORT.md. Check: key file custody and parsing (internal/github/appkey*.go), JWT claims, installation token minting scope (exactly one repo id + 4 permissions, response verified), cache keying and cross-repo isolation, single-flight correctness, 401 handling, no PAT fallback, redaction of minted tokens and git header form, gitx TokenFunc per remote op, bot identity and approval logic, unauthenticated GET /users lookup spoofing, doctor online checks. Report only real findings: file:line, severity, failure scenario, fix. Be concise.
+codex
+I’ll read the design docs and branch diff, then trace the auth and git paths for concrete security failures.
+exec
+/bin/zsh -lc "pwd; git status --short; git diff --stat development...HEAD; rg --files -g AGENTS.md -g '*appkey*' -g '*github*' -g '*token*' -g '*doctor*' -g '*gitx*'" in /Users/pappumishra/Documents/selfproject/patchbot-m27-app
+ succeeded in 276ms:
+/Users/pappumishra/Documents/selfproject/patchbot-m27-app
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-GXA56ZGm' (errno=Operation not permitted)
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-7ulf07gK' (errno=Operation not permitted)
+ CHANGELOG.md                      |   6 +
+ README.md                         |  53 +++-
+ SECURITY.md                       |  21 ++
+ docs/ARCHITECTURE.md              |  19 +-
+ docs/DECISIONS.md                 |   1 +
+ docs/M27-REPORT.md                | 111 +++++++
+ internal/cli/doctor.go            |  95 +++++-
+ internal/cli/doctor_app_test.go   | 144 +++++++++
+ internal/config/config.go         |  26 ++
+ internal/config/defaults.toml     |   6 +
+ internal/config/github_test.go    |  62 ++++
+ internal/config/load.go           |   5 +
+ internal/config/validate.go       |  27 ++
+ internal/github/README.md         |   8 +
+ internal/github/app.go            | 499 ++++++++++++++++++++++++++++++
+ internal/github/app_test.go       | 635 ++++++++++++++++++++++++++++++++++++++
+ internal/github/appkey.go         | 175 +++++++++++
+ internal/github/appkey_other.go   |  16 +
+ internal/github/appkey_unix.go    |  21 ++
+ internal/github/commands.go       |   6 +
+ internal/github/http.go           | 110 +++++--
+ internal/github/identity.go       |   2 +-
+ internal/github/operations.go     |   8 +-
+ internal/github/types.go          |  32 +-
+ internal/gitx/auth_remote_test.go |  76 ++++-
+ internal/gitx/command.go          |  36 ++-
+ internal/gitx/gitx.go             |  16 +-
+ internal/gitx/gitx_test.go        |  10 +-
+ internal/gitx/security_test.go    |   2 +-
+ internal/runner/app_auth_test.go  | 350 +++++++++++++++++++++
+ internal/runner/auth.go           |  98 ++++++
+ internal/runner/phases.go         |  11 +-
+ internal/runner/publish.go        |   3 +-
+ internal/runner/runner.go         |  35 ++-
+ patchbot.example.toml             |  17 +
+ 35 files changed, 2669 insertions(+), 73 deletions(-)
+internal/github/appkey.go
+internal/github/appkey_unix.go
+internal/github/appkey_other.go
+internal/cli/doctor_process_m15_test.go
+internal/cli/doctor.go
+internal/cli/doctor_app_test.go
+internal/cli/doctor_test.go
+internal/cli/doctor_container_test.go
+internal/config/github_test.go
+internal/gitx/gitx_test.go
+internal/gitx/gitx.go
+internal/llm/gemini/testdata/max_tokens.resp.json
+internal/llm/gemini/testdata/max_tokens.req.golden.json
+internal/llm/anthropic/testdata/max_tokens.resp.json
+internal/llm/anthropic/testdata/max_tokens.req.golden.json
+
+exec
+/bin/zsh -lc 'cat docs/planning/auth/DECISION.md docs/M27-REPORT.md' in /Users/pappumishra/Documents/selfproject/patchbot-m27-app
+ succeeded in 0ms:
+# GitHub auth decision (2026-11-13, Claude + Codex)
+
+## Decision
+1. **Now (pilot): one fine-grained PAT, "only selected repositories"** (patchbot-demo, pappumishra),
+   contents/issues/pull_requests write + metadata read, short expiry (30-90 days), env-only.
+   Not account-wide (classic `repo` PAT = every repo you own on a shared host). Not one PAT per repo
+   (N manual secrets, needs per-repo token routing that does not exist, secrets would move into SQLite).
+2. **Next (before M24 "add repo from dashboard" is enabled broadly): GitHub App "patchbot".**
+   Installed only on chosen repos; patchbot mints 1-hour installation tokens per run, narrowed to ONE repo
+   ID and only contents/issues/pull_requests. Bot identity `patchbot[bot]` separates bot comments from the
+   owner's `/approve`. App private key = protected file readable only by user patchbot, never in DB,
+   backups, workspaces or containers. PAT mode stays explicit for local/dev; no silent fallback.
+3. Repo policy (commands, protected paths, image) goes in SQLite with M24; **credentials never do**.
+   The dashboard never accepts a token.
+
+## Found during review — must fix before the pilot on a PRIVATE repo (verified in code)
+- `gitx.Push` runs `ls-remote` unauthenticated (internal/gitx/publish.go:71 and :100, `complete(ctx, false, ...)`),
+  and `CheckoutSHA` fetches unauthenticated (internal/gitx/gitx.go:276). pappumishra is private, so push/
+  re-clone would fail with an auth error. Offline smoke used a local fake remote, so tests never caught it.
+  Fix: use the same header-only auth (GIT_CONFIG_*) for these network calls, with tests against an
+  auth-requiring fake remote.
+  **Status: fixed (branch auth-fixes).** clone, fetch (CheckoutSHA), both ls-remote calls and push all
+  use the header-only extraheader; `gitx.command` now refuses a remote subcommand without it and refuses
+  credentials for local ones. Tested against an HTTPS `git http-backend` remote that requires the header
+  (succeeds with the token, fails without; token absent from argv, .git/config and errors).
+- With a PAT owned by `aryanpappu`, GitHub comments by `aryanpappu` are the bot's own identity, so
+  `/approve` and `/revise` comments are ignored (sync.go → EligibleCommand). **Approve from the dashboard**
+  for the pilot. The App (decision 2) fixes this properly.
+  **Status: fixed for the PAT pilot (branch auth-fixes), "shared identity" rule.** A comment by the token
+  owner counts only if that login is a configured approver and live collaborator, the comment is unedited
+  and in the current waiting window, has no `<!-- patchbot` marker, and its ID is not in `posted_comments`
+  (migration 0007). Every comment patchbot posts now carries a marker and its ID is recorded right after
+  posting. Other authors keep the old rules. The App remains the target identity separation.
+- The token is loaded once per run and reused for push; fine for a PAT, must be refreshed per network call
+  with an App (1-hour expiry).
+
+## App milestone acceptance criteria (from Codex)
+Concurrent cross-repo isolation; token expiry between clone/push/PR; revocation and key rotation;
+correct bot identity + owner approval; private-repo publication; rate-limit backoff; M24 refuses to save
+a repo the App cannot reach with the needed permissions; zero secrets in logs/artifacts/DB/container env;
+`make ci` + disposable-repo end-to-end drill.
+# M27: GitHub App authentication
+
+Implements decision 2 of `docs/planning/auth/DECISION.md` and the requirements
+of `docs/planning/auth/codex-round1.md`. No new Go dependencies.
+
+## What changed
+
+- **Config.** `[github] auth = "pat" | "app"` (default `pat`, behaviour
+  unchanged; `PATCHBOT_GITHUB_AUTH` overrides). App mode needs `app_id` and an
+  absolute `private_key_file` outside the data directory; `installation_id` is
+  optional (0 resolves per repository with `GET /repos/{o}/{r}/installation`).
+  `config show` prints the section with sources; `private_key_file` is exempt
+  from the secret-looking-key check because it holds a path, while an inline
+  `private_key` value is still refused.
+- **Key and JWT** (`internal/github/appkey*.go`). The key file must be a regular
+  file (symlinks refused, opened with `O_NOFOLLOW`, re-checked with `SameFile`),
+  mode 0600 or stricter, owned by the effective user, at most 64 KiB, and not
+  inside the data directory or workspaces (checked on both the given and the
+  symlink-resolved path). PKCS#1 and PKCS#8 RSA keys of at least 2048 bits are
+  accepted; it is parsed once and only the `*rsa.PrivateKey` is kept. All errors
+  are fixed strings. JWTs are RS256 via `crypto/rsa`, `iat = now-60s`,
+  `exp = now+9m`, `iss = app_id`.
+- **Installation tokens** (`internal/github/app.go`, `github.App`). Run tokens
+  are minted with `repository_ids: [id]` and exactly contents/issues/
+  pull_requests write plus metadata read; the response's permissions and
+  repository list are verified. The immutable repository ID is resolved once
+  per process with a metadata-only token narrowed by repository name. Tokens are
+  cached per (installation, repo ID, permission set), concurrent mints are
+  single-flighted (the mint runs on a detached, 2-minute-bounded context; each
+  caller stops waiting on its own cancellation), refreshed with less than
+  5 minutes left, and invalidated on a REST 401 with exactly one re-mint. App API
+  calls retry at most 4 times: rate limits wait for Retry-After/reset plus
+  jitter when it is within 2 minutes, 5xx/network errors back off
+  exponentially, 401/403/404/422 are `MintError{Kind: "denied"}` and never
+  retried. `OnMint` registers every token before it is used.
+- **Repository-bound routing.** New `github.RepoTokenSource` (explicit
+  `RepoRef` argument) and `github.StaticRepoTokens` (PAT for every repository).
+  `HTTPClient` selects the credential from each call's own repository; PAT-mode
+  clients built with `github.New` behave exactly as before. Runs, waiting
+  comment sync, label ingress, preflight, publication and failure comments all
+  go through these per-repository calls. `runner.Options` gains `RepoTokens`,
+  `CommitAuthor` and test seams `GitHubAPI`/`GitHubHTTP`; `runner.New` builds the
+  App source from config (`internal/runner/auth.go`) and fails startup on any
+  App error. `Options.Tokens` (PAT) is ignored in app mode.
+- **Git.** `gitx.CloneOptions.TokenFunc` is called for every remote operation
+  (clone, CheckoutSHA fetch, both ls-remote calls, push), so a run longer than
+  one hour pushes with a fresh token. Header-only auth and every existing guard
+  are unchanged; a TokenFunc error is never quoted and never falls back to
+  `Token`.
+- **Identity.** App mode resolves `<slug>[bot]` from `GET /app` (JWT) and the
+  bot user ID from an unauthenticated `GET /users/<slug>[bot]`; either failing
+  stops startup. `EligibleCommand` always rejects comments by a `[bot]` bot
+  login, so the owner's `/approve` goes through the normal approver +
+  collaborator + unedited path; the shared-identity rule remains for PAT mode.
+  Commits are authored as `<slug>[bot] <ID+<slug>[bot]@users.noreply.github.com>`.
+- **Doctor.** App mode checks key file safety and local JWT signing, warns that
+  `GITHUB_TOKEN` is ignored, and with `--online` checks the App identity and,
+  for every allowlisted repository, installation reachability, the configured
+  `installation_id`, the four granted permissions, and a single-repository mint.
+
+## Tests (all with `-race`, fake GitHub over httptest)
+
+- `internal/github/app_test.go`: JWT header/claims and signature verified with
+  the public key (and rejected with another key); key formats and file safety
+  (mode, symlink, inside data, relative, non-PEM, directory) without key
+  material in errors; run token has exactly one repository ID and the four
+  permissions, ID lookup is metadata-only, every token passes `OnMint`; cache
+  reuse and refresh near expiry with a fake clock; 32 concurrent callers share
+  one mint; two repositories never share a token and a token for one is refused
+  for the other; 401 invalidates and re-mints exactly once; revoked installation
+  fails closed even when a PAT source is present; rate limit waits on
+  Retry-After, refuses long resets, and stops on cancellation; bot identity and
+  commit email; `[bot]` comments never eligible while owner approval is; JWTs
+  are not quoted in errors.
+- `internal/gitx/auth_remote_test.go`: the HTTPS `git http-backend` remote
+  rotates its accepted token after clone; push succeeds because each remote
+  operation asks `TokenFunc`; a failing `TokenFunc` fails closed without quoting
+  and without using `Token`.
+- `internal/runner/app_auth_test.go`: full app-mode fix run. The bot's own
+  `/approve` is ignored, the owner's approves through sync; within the execute
+  checkout the push token differs from the clone token (mutation-checked: pinning
+  the clone token fails the test); every REST call carries a token minted for
+  that repository and none the PAT; the commit author is the bot; no minted
+  token, its git header form, or the PAT appears in the SQLite files, slog
+  output, posted comments, or any repository command's environment, and every
+  minted token is registered in the caller's redactor. Revoked installation
+  fails the run with no REST call reaching GitHub; an unsafe key mode stops
+  `runner.New`.
+- `internal/cli/doctor_app_test.go` and `internal/config/github_test.go`:
+  doctor offline/online app checks (missing permission, missing installation,
+  unsafe key, ignored `GITHUB_TOKEN`, no key or token printed); config
+  validation and `config show`.
+- PAT regression: all existing github, gitx, runner, cli, server and config
+  tests pass unchanged apart from the internal `gitx.command` signature.
+
+## Open issues
+
+- M24 "refuse to save a repository the App cannot reach" is not built (M24 does
+  not exist yet); `doctor --online` provides the same check for config repos.
+- Git network failures are not classified, so a git 401 does not invalidate
+  the cache; the next operation still gets a fresh token once the cached one
+  is within the refresh margin, and REST 401s do invalidate.
+- Key rotation needs a restart (the key is parsed once); outstanding tokens
+  remain valid until expiry (at most 1 hour) unless the installation is
+  suspended. Documented in README and SECURITY.md.
+- The repository-ID cache lives for the process lifetime; a transferred or
+  renamed repository needs a restart.
+- Ordinary REST calls still have no rate-limit backoff (only App API calls do);
+  `SyncWaiting` still lists comments unconditionally.
+- A disposable-repository end-to-end drill against real GitHub has not been run
+  (no network in this milestone).
+
+exec
+/bin/zsh -lc 'cat internal/github/app.go internal/github/appkey.go internal/github/appkey_unix.go internal/github/appkey_other.go' in /Users/pappumishra/Documents/selfproject/patchbot-m27-app
+ succeeded in 0ms:
+package github
+
+import (
+	"context"
+	"crypto/rsa"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"math/rand/v2"
+	"net/http"
+	"net/url"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+// RunPermissions are the only permissions a run token is minted with.
+var RunPermissions = map[string]string{
+	"contents": "write", "issues": "write", "pull_requests": "write", "metadata": "read",
+}
+
+const (
+	// refreshMargin re-mints a cached token with less than this much life left.
+	refreshMargin = 5 * time.Minute
+	// maxMintAttempts bounds retries of one App API call.
+	maxMintAttempts = 4
+	// maxRateWait is the longest rate-limit reset patchbot waits for inline.
+	maxRateWait = 2 * time.Minute
+	// flightTimeout bounds a shared mint that outlives its first caller.
+	flightTimeout = 2 * time.Minute
+)
+
+// MintError is a credential-free failure to obtain an App credential. Kind is
+// "denied" (revoked/uninstalled/missing grant: never retried, never falls back
+// to another credential), "rate_limited" or "unavailable".
+type MintError struct {
+	Kind  string
+	Reset time.Time
+	msg   string
+}
+
+func (e *MintError) Error() string { return "GitHub App authentication " + e.Kind + ": " + e.msg }
+
+type appClock func() time.Time
+
+// AppOptions configure an App token source.
+type AppOptions struct {
+	AppID int64
+	Key   *rsa.PrivateKey
+	// InstallationID is optional; zero resolves each repository's installation.
+	InstallationID int64
+	BaseURL        string
+	HTTPClient     *http.Client
+	// OnMint is called with every minted token before it is used anywhere,
+	// so it can be registered with redactors.
+	OnMint func(token string)
+	// Clock and Sleep are test seams.
+	Clock func() time.Time
+	Sleep func(context.Context, time.Duration) error
+}
+
+// AppIdentity is the App's bot account.
+type AppIdentity struct {
+	Slug   string
+	Login  string // <slug>[bot]
+	UserID int64
+}
+
+// CommitEmail is GitHub's noreply address that attributes commits to the bot.
+func (i AppIdentity) CommitEmail() string {
+	return fmt.Sprintf("%d+%s@users.noreply.github.com", i.UserID, i.Login)
+}
+
+// Installation describes the App installation covering one repository.
+type Installation struct {
+	ID          int64             `json:"id"`
+	Permissions map[string]string `json:"permissions"`
+}
+
+type tokenKey struct {
+	installation, repo int64
+	permissions        string
+}
+
+type cachedToken struct {
+	token   string
+	expires time.Time
+}
+
+type flight struct {
+	done  chan struct{}
+	value any
+	err   error
+}
+
+// App mints repository-scoped installation tokens. It is safe for concurrent
+// use. Tokens are cached per (installation, repository ID, permission set);
+// concurrent requests for the same key share one mint.
+type App struct {
+	opts      AppOptions
+	jwtClient *HTTPClient
+	anon      *HTTPClient
+	clock     appClock
+
+	mu       sync.Mutex
+	installs map[string]int64
+	repoIDs  map[string]int64
+	tokens   map[tokenKey]cachedToken
+	flights  map[string]*flight
+}
+
+var _ RepoTokenSource = (*App)(nil)
+var _ TokenInvalidator = (*App)(nil)
+
+// NewApp validates options. It performs no network calls.
+func NewApp(opts AppOptions) (*App, error) {
+	if opts.AppID <= 0 || opts.Key == nil || opts.InstallationID < 0 {
+		return nil, errors.New("GitHub App requires app_id and a private key")
+	}
+	if opts.Clock == nil {
+		opts.Clock = time.Now
+	}
+	if opts.Sleep == nil {
+		opts.Sleep = sleepContext
+	}
+	a := &App{opts: opts, clock: opts.Clock, installs: map[string]int64{}, repoIDs: map[string]int64{},
+		tokens: map[tokenKey]cachedToken{}, flights: map[string]*flight{}}
+	var err error
+	a.jwtClient, err = newClient(opts.HTTPClient, opts.BaseURL, jwtSource{a}, nil)
+	if err != nil {
+		return nil, err
+	}
+	a.anon, err = newClient(opts.HTTPClient, opts.BaseURL, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	a.anon.anonymous = true
+	return a, nil
+}
+
+type jwtSource struct{ a *App }
+
+func (s jwtSource) Token(context.Context) (string, error) {
+	return SignAppJWT(s.a.opts.Key, s.a.opts.AppID, s.a.clock())
+}
+
+// SignJWT signs a JWT locally (doctor's offline check).
+func (a *App) SignJWT() (string, error) { return jwtSource{a}.Token(context.Background()) }
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func repoKey(repo RepoRef) string { return strings.ToLower(repo.Owner + "/" + repo.Name) }
+
+func permissionKey(perms map[string]string) string {
+	keys := make([]string, 0, len(perms))
+	for k, v := range perms {
+		keys = append(keys, k+"="+v)
+	}
+	slices.Sort(keys)
+	return strings.Join(keys, ",")
+}
+
+// RepoToken returns an installation token narrowed to exactly this repository's
+// immutable ID with RunPermissions. It never returns any other credential.
+func (a *App) RepoToken(ctx context.Context, repo RepoRef) (string, error) {
+	if !validRepoPart(repo.Owner) || !validRepoPart(repo.Name) {
+		return "", errors.New("invalid repository reference")
+	}
+	installation, err := a.installationID(ctx, repo)
+	if err != nil {
+		return "", err
+	}
+	repoID, err := a.repositoryID(ctx, installation, repo)
+	if err != nil {
+		return "", err
+	}
+	key := tokenKey{installation, repoID, permissionKey(RunPermissions)}
+	if token, ok := a.cached(key); ok {
+		return token, nil
+	}
+	value, err := a.share(ctx, fmt.Sprintf("token/%d/%d/%s", key.installation, key.repo, key.permissions), func(ctx context.Context) (any, error) {
+		if token, ok := a.cached(key); ok {
+			return token, nil
+		}
+		minted, err := a.mint(ctx, installation, map[string]any{"repository_ids": []int64{repoID}, "permissions": RunPermissions}, RunPermissions)
+		if err != nil {
+			return nil, err
+		}
+		if len(minted.Repositories) > 0 && (len(minted.Repositories) != 1 || minted.Repositories[0].ID != repoID) {
+			return nil, &MintError{Kind: "denied", msg: "minted token is not limited to the requested repository"}
+		}
+		a.mu.Lock()
+		a.tokens[key] = cachedToken{token: minted.Token, expires: minted.ExpiresAt}
+		a.mu.Unlock()
+		return minted.Token, nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return value.(string), nil
+}
+
+func (a *App) cached(key tokenKey) (string, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	entry, ok := a.tokens[key]
+	if ok && entry.expires.Sub(a.clock()) > refreshMargin {
+		return entry.token, true
+	}
+	return "", false
+}
+
+// Invalidate drops a cached token that GitHub rejected (401), so the next
+// RepoToken mints a new one. The installation lookup is dropped too, which
+// lets a reinstalled App be found again.
+func (a *App) Invalidate(repo RepoRef, token string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for key, entry := range a.tokens {
+		if entry.token == token {
+			delete(a.tokens, key)
+		}
+	}
+	if a.opts.InstallationID == 0 {
+		delete(a.installs, repoKey(repo))
+	}
+}
+
+// share runs fn once per key across concurrent callers. fn runs on a context
+// detached from any one caller (bounded by flightTimeout); each caller stops
+// waiting when its own context ends.
+func (a *App) share(ctx context.Context, key string, fn func(context.Context) (any, error)) (any, error) {
+	a.mu.Lock()
+	f, ok := a.flights[key]
+	if !ok {
+		f = &flight{done: make(chan struct{})}
+		a.flights[key] = f
+		go func() {
+			work, cancel := context.WithTimeout(context.WithoutCancel(ctx), flightTimeout)
+			defer cancel()
+			f.value, f.err = fn(work)
+			a.mu.Lock()
+			delete(a.flights, key)
+			a.mu.Unlock()
+			close(f.done)
+		}()
+	}
+	a.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-f.done:
+		return f.value, f.err
+	}
+}
+
+func (a *App) installationID(ctx context.Context, repo RepoRef) (int64, error) {
+	if a.opts.InstallationID > 0 {
+		return a.opts.InstallationID, nil
+	}
+	name := repoKey(repo)
+	a.mu.Lock()
+	id, ok := a.installs[name]
+	a.mu.Unlock()
+	if ok {
+		return id, nil
+	}
+	value, err := a.share(ctx, "install/"+name, func(ctx context.Context) (any, error) {
+		info, err := a.Installation(ctx, repo)
+		if err != nil {
+			return nil, err
+		}
+		a.mu.Lock()
+		a.installs[name] = info.ID
+		a.mu.Unlock()
+		return info.ID, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return value.(int64), nil
+}
+
+// Installation returns the installation covering repo and the permissions the
+// owner granted it (GET /repos/{owner}/{repo}/installation with the App JWT).
+func (a *App) Installation(ctx context.Context, repo RepoRef) (Installation, error) {
+	target, err := a.jwtClient.endpoint(repo, "installation")
+	if err != nil {
+		return Installation{}, err
+	}
+	var info Installation
+	err = a.retry(ctx, func() error {
+		_, err := a.jwtClient.request(ctx, nil, http.MethodGet, target, nil, &info, http.StatusOK)
+		return err
+	})
+	if err != nil {
+		return Installation{}, err
+	}
+	if info.ID <= 0 {
+		return Installation{}, &MintError{Kind: "denied", msg: "installation response has no ID"}
+	}
+	return info, nil
+}
+
+// repositoryID resolves the immutable repository ID once per process with a
+// metadata-only token narrowed to the repository's name. Later run tokens are
+// narrowed by that ID, so a deleted and recreated owner/name fails closed.
+func (a *App) repositoryID(ctx context.Context, installation int64, repo RepoRef) (int64, error) {
+	name := repoKey(repo)
+	a.mu.Lock()
+	id, ok := a.repoIDs[name]
+	a.mu.Unlock()
+	if ok {
+		return id, nil
+	}
+	value, err := a.share(ctx, fmt.Sprintf("repoid/%d/%s", installation, name), func(ctx context.Context) (any, error) {
+		perms := map[string]string{"metadata": "read"}
+		minted, err := a.mint(ctx, installation, map[string]any{"repositories": []string{repo.Name}, "permissions": perms}, perms)
+		if err != nil {
+			return nil, err
+		}
+		var id int64
+		for _, r := range minted.Repositories {
+			if strings.EqualFold(r.FullName, repo.Owner+"/"+repo.Name) {
+				id = r.ID
+			}
+		}
+		if len(minted.Repositories) != 1 || id <= 0 {
+			return nil, &MintError{Kind: "denied", msg: "installation does not cover the repository"}
+		}
+		a.mu.Lock()
+		a.repoIDs[name] = id
+		a.mu.Unlock()
+		return id, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return value.(int64), nil
+}
+
+type mintedToken struct {
+	Token        string            `json:"token"`
+	ExpiresAt    time.Time         `json:"expires_at"`
+	Permissions  map[string]string `json:"permissions"`
+	Repositories []struct {
+		ID       int64  `json:"id"`
+		FullName string `json:"full_name"`
+	} `json:"repositories"`
+}
+
+// mint calls POST /app/installations/{id}/access_tokens. The token is passed
+// to OnMint before it is returned or cached.
+func (a *App) mint(ctx context.Context, installation int64, body map[string]any, want map[string]string) (mintedToken, error) {
+	target := *a.jwtClient.baseURL
+	target.Path = strings.TrimRight(target.Path, "/") + "/app/installations/" + strconv.FormatInt(installation, 10) + "/access_tokens"
+	target.RawPath = ""
+	var out mintedToken
+	err := a.retry(ctx, func() error {
+		out = mintedToken{}
+		_, err := a.jwtClient.request(ctx, nil, http.MethodPost, &target, body, &out, http.StatusCreated)
+		return err
+	})
+	if err != nil {
+		return mintedToken{}, err
+	}
+	if out.Token == "" || strings.ContainsAny(out.Token, " \t\r\n\x00") || out.ExpiresAt.IsZero() {
+		return mintedToken{}, &MintError{Kind: "unavailable", msg: "invalid installation token response"}
+	}
+	if a.opts.OnMint != nil {
+		a.opts.OnMint(out.Token)
+	}
+	if !out.ExpiresAt.After(a.clock()) {
+		return mintedToken{}, &MintError{Kind: "unavailable", msg: "installation token already expired"}
+	}
+	if out.Permissions != nil {
+		for name, level := range want {
+			if out.Permissions[name] != level {
+				return mintedToken{}, &MintError{Kind: "denied", msg: "installation lacks permission " + name + ":" + level}
+			}
+		}
+		for name := range out.Permissions {
+			if _, ok := want[name]; !ok {
+				return mintedToken{}, &MintError{Kind: "denied", msg: "token carries unrequested permission " + name}
+			}
+		}
+	}
+	return out, nil
+}
+
+// retry runs one App API call with bounded attempts. Rate limits wait for the
+// reset (with jitter) when it is near; server errors back off exponentially.
+// Revocation, missing installations and permission denials are not retried.
+func (a *App) retry(ctx context.Context, call func() error) error {
+	backoff := time.Second
+	for attempt := 1; ; attempt++ {
+		err := call()
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var wait time.Duration
+		var limited *ErrRateLimited
+		var api *APIError
+		switch {
+		case errors.As(err, &limited):
+			// Reset comes from GitHub's headers against the real clock.
+			wait = time.Second
+			if !limited.Reset.IsZero() {
+				wait = max(time.Until(limited.Reset), time.Second)
+			}
+			if wait > maxRateWait || attempt >= maxMintAttempts {
+				return &MintError{Kind: "rate_limited", Reset: limited.Reset, msg: "GitHub rate limit; retry after the reset"}
+			}
+			wait += time.Duration(rand.Int64N(int64(time.Second))) // #nosec G404 -- jitter only.
+		case errors.As(err, &api) && (api.StatusCode == http.StatusUnauthorized || api.StatusCode == http.StatusForbidden ||
+			api.StatusCode == http.StatusNotFound || api.StatusCode == http.StatusUnprocessableEntity):
+			return &MintError{Kind: "denied", msg: fmt.Sprintf("GitHub refused the App request (HTTP %d); check the installation, its repositories and permissions", api.StatusCode)}
+		case errors.As(err, &api) && api.StatusCode < 500:
+			return &MintError{Kind: "unavailable", msg: fmt.Sprintf("unexpected GitHub response (HTTP %d)", api.StatusCode)}
+		default:
+			if attempt >= maxMintAttempts {
+				return &MintError{Kind: "unavailable", msg: "GitHub App API unreachable"}
+			}
+			wait, backoff = backoff, backoff*2
+		}
+		if err := a.opts.Sleep(ctx, wait); err != nil {
+			return err
+		}
+	}
+}
+
+// Identity resolves the App's bot login from GET /app (JWT) and the bot user
+// ID from GET /users/<slug>[bot]. Either failing is fatal for app mode.
+func (a *App) Identity(ctx context.Context) (AppIdentity, error) {
+	target := *a.jwtClient.baseURL
+	target.Path = strings.TrimRight(target.Path, "/") + "/app"
+	target.RawPath = ""
+	var app struct {
+		Slug string `json:"slug"`
+	}
+	err := a.retry(ctx, func() error {
+		_, err := a.jwtClient.request(ctx, nil, http.MethodGet, &target, nil, &app, http.StatusOK)
+		return err
+	})
+	if err != nil {
+		return AppIdentity{}, err
+	}
+	if app.Slug == "" || !validSlug(app.Slug) {
+		return AppIdentity{}, errors.New("GitHub App identity: missing or invalid slug")
+	}
+	login := app.Slug + "[bot]"
+	user := *a.anon.baseURL
+	escaped := strings.TrimRight(user.EscapedPath(), "/") + "/users/" + url.PathEscape(login)
+	user.Path, user.RawPath = strings.TrimRight(user.Path, "/")+"/users/"+login, escaped
+	var bot struct {
+		ID    int64  `json:"id"`
+		Login string `json:"login"`
+	}
+	err = a.retry(ctx, func() error {
+		_, err := a.anon.request(ctx, nil, http.MethodGet, &user, nil, &bot, http.StatusOK)
+		return err
+	})
+	if err != nil {
+		return AppIdentity{}, fmt.Errorf("GitHub App bot user %s unavailable: %w", login, err)
+	}
+	if bot.ID <= 0 || !strings.EqualFold(bot.Login, login) {
+		return AppIdentity{}, fmt.Errorf("GitHub App bot user %s unavailable", login)
+	}
+	return AppIdentity{Slug: app.Slug, Login: login, UserID: bot.ID}, nil
+}
+
+func validSlug(slug string) bool {
+	for _, ch := range slug {
+		if (ch < 'a' || ch > 'z') && (ch < 'A' || ch > 'Z') && (ch < '0' || ch > '9') && ch != '-' && ch != '_' {
+			return false
+		}
+	}
+	return len(slug) <= 100
+}
+
+// GitHeaderForm is the base64 value git sends in its extraheader for token.
+// Registering it with redactors covers the encoded credential as well.
+func GitHeaderForm(token string) string {
+	return base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+}
+package github
+
+import (
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const (
+	maxKeyFileBytes = 64 << 10
+	minKeyBits      = 2048
+	// jwtBackdate absorbs clock drift between this host and GitHub.
+	jwtBackdate = 60 * time.Second
+	// jwtLifetime keeps exp under GitHub's 10 minute maximum, measured from now.
+	jwtLifetime = 9 * time.Minute
+)
+
+// LoadAppPrivateKey reads and parses a GitHub App private key file once. The
+// file must be an absolute path to a regular file (no symlink), mode 0600 or
+// stricter, owned by the current user, and not inside any excluded root (the
+// data directory and its workspaces). Errors never contain key material.
+func LoadAppPrivateKey(path string, excludedRoots ...string) (*rsa.PrivateKey, error) {
+	if err := CheckAppKeyFile(path, excludedRoots...); err != nil {
+		return nil, err
+	}
+	file, err := openNoFollow(path)
+	if err != nil {
+		return nil, errors.New("private_key_file: cannot open")
+	}
+	defer func() { _ = file.Close() }()
+	opened, err := file.Stat()
+	if err != nil {
+		return nil, errors.New("private_key_file: cannot stat")
+	}
+	linked, err := os.Lstat(path)
+	if err != nil || !os.SameFile(opened, linked) {
+		return nil, errors.New("private_key_file: changed while opening")
+	}
+	if err := checkKeyInfo(opened); err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxKeyFileBytes+1))
+	if err != nil || len(data) > maxKeyFileBytes {
+		return nil, errors.New("private_key_file: cannot read or larger than 64 KiB")
+	}
+	defer clear(data)
+	return ParseAppPrivateKey(data)
+}
+
+// CheckAppKeyFile reports whether the key file is safely placed without
+// reading it. Doctor uses it; LoadAppPrivateKey repeats it on the open file.
+func CheckAppKeyFile(path string, excludedRoots ...string) error {
+	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsRune(path, 0) {
+		return errors.New("private_key_file: must be a clean absolute path")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return errors.New("private_key_file: not found or not accessible")
+	}
+	if err := checkKeyInfo(info); err != nil {
+		return err
+	}
+	resolvedDir, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return errors.New("private_key_file: cannot resolve its directory")
+	}
+	resolved := filepath.Join(resolvedDir, filepath.Base(path))
+	for _, root := range excludedRoots {
+		if root == "" {
+			continue
+		}
+		candidates := []string{filepath.Clean(root)}
+		if resolvedRoot, err := filepath.EvalSymlinks(root); err == nil {
+			candidates = append(candidates, resolvedRoot)
+		}
+		for _, candidate := range candidates {
+			for _, p := range []string{path, resolved} {
+				if within(candidate, p) {
+					return errors.New("private_key_file: must not be inside the data directory or workspaces")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func within(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+func checkKeyInfo(info os.FileInfo) error {
+	if !info.Mode().IsRegular() {
+		return errors.New("private_key_file: must be a regular file, not a symlink or device")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return errors.New("private_key_file: mode must be 0600 or stricter")
+	}
+	return keyOwner(info)
+}
+
+// ParseAppPrivateKey accepts a PKCS#1 ("RSA PRIVATE KEY") or PKCS#8
+// ("PRIVATE KEY") PEM block holding an RSA key of at least 2048 bits.
+func ParseAppPrivateKey(data []byte) (*rsa.PrivateKey, error) {
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, errors.New("private_key_file: no PEM block")
+	}
+	defer clear(block.Bytes)
+	var key *rsa.PrivateKey
+	switch block.Type {
+	case "RSA PRIVATE KEY":
+		parsed, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, errors.New("private_key_file: invalid PKCS#1 RSA key")
+		}
+		key = parsed
+	case "PRIVATE KEY":
+		parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, errors.New("private_key_file: invalid PKCS#8 key")
+		}
+		rsaKey, ok := parsed.(*rsa.PrivateKey)
+		if !ok {
+			return nil, errors.New("private_key_file: PKCS#8 key is not RSA")
+		}
+		key = rsaKey
+	default:
+		return nil, errors.New("private_key_file: unsupported PEM block type")
+	}
+	if key.N.BitLen() < minKeyBits {
+		return nil, errors.New("private_key_file: RSA key must be at least 2048 bits")
+	}
+	if err := key.Validate(); err != nil {
+		return nil, errors.New("private_key_file: RSA key failed validation")
+	}
+	return key, nil
+}
+
+// SignAppJWT builds a GitHub App JWT: RS256, iat = now-60s, exp = now+9m,
+// iss = app ID. It uses only the standard library.
+func SignAppJWT(key *rsa.PrivateKey, appID int64, now time.Time) (string, error) {
+	if key == nil || appID <= 0 {
+		return "", errors.New("app JWT requires a key and a positive app ID")
+	}
+	header, _ := json.Marshal(map[string]string{"alg": "RS256", "typ": "JWT"})
+	claims, err := json.Marshal(struct {
+		IAT int64  `json:"iat"`
+		EXP int64  `json:"exp"`
+		ISS string `json:"iss"`
+	}{now.Add(-jwtBackdate).Unix(), now.Add(jwtLifetime).Unix(), strconv.FormatInt(appID, 10)})
+	if err != nil {
+		return "", errors.New("cannot encode app JWT claims")
+	}
+	enc := base64.RawURLEncoding
+	signing := enc.EncodeToString(header) + "." + enc.EncodeToString(claims)
+	digest := sha256.Sum256([]byte(signing))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
+	if err != nil {
+		return "", errors.New("cannot sign app JWT")
+	}
+	return signing + "." + enc.EncodeToString(signature), nil
+}
+//go:build unix
+
+package github
+
+import (
+	"errors"
+	"os"
+	"syscall"
+)
+
+func keyOwner(info os.FileInfo) error {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || int64(stat.Uid) != int64(os.Geteuid()) {
+		return errors.New("private_key_file: must be owned by the patchbot service user")
+	}
+	return nil
+}
+
+func openNoFollow(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0) // #nosec G304 -- operator-configured, validated key path.
+}
+//go:build !unix
+
+package github
+
+import (
+	"errors"
+	"os"
+)
+
+func keyOwner(os.FileInfo) error {
+	return errors.New("private_key_file: GitHub App keys require a Unix host")
+}
+
+func openNoFollow(path string) (*os.File, error) {
+	return os.Open(path) // #nosec G304 -- operator-configured, validated key path.
+}
+
+exec
+/bin/zsh -lc 'git diff development...HEAD -- internal/github/http.go internal/runner/auth.go internal/runner/runner.go internal/gitx/command.go internal/gitx/gitx.go internal/github/commands.go internal/cli/doctor.go' in /Users/pappumishra/Documents/selfproject/patchbot-m27-app
+ succeeded in 0ms:
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-azJWdNbM' (errno=Operation not permitted)
+diff --git a/internal/cli/doctor.go b/internal/cli/doctor.go
+index 6d1ed4c..f560c03 100644
+--- a/internal/cli/doctor.go
++++ b/internal/cli/doctor.go
+@@ -28,7 +28,9 @@ import (
+ const doctorUsage = `Usage: patchbot doctor [--config FILE] [--online]
+ 
+ Check tools, config, credentials, private storage, migrations and repo commands.
+-Offline by default. --online only lists provider models and calls GitHub /user.
++Offline by default. --online lists provider models and checks GitHub identity:
++/user (PAT mode), or the App, its installations and granted permissions for
++every configured repository (app mode).
+ PASS and WARN exit 0; any FAIL exits 1. No secrets are printed.
+ `
+ 
+@@ -113,9 +115,16 @@ func (a *App) runDoctor(args []string) int {
+ 			}
+ 		}
+ 	}
+-	if strings.TrimSpace(token) == "" {
++	var app *github.App
++	switch {
++	case cfg.GitHub.App():
++		app = doctorAppKey(cfg, a.RunnerOptions, r, add)
++		if strings.TrimSpace(token) != "" {
++			add("WARN", "GitHub credential", "GITHUB_TOKEN is set but ignored in app mode (there is no PAT fallback); unset it")
++		}
++	case strings.TrimSpace(token) == "":
+ 		add("FAIL", "GitHub credential", "set GITHUB_TOKEN")
+-	} else {
++	default:
+ 		add("PASS", "GitHub credential", "GITHUB_TOKEN is set")
+ 	}
+ 	if cfg != nil {
+@@ -156,7 +165,7 @@ func (a *App) runDoctor(args []string) int {
+ 			add("WARN", "config", warning)
+ 		}
+ 		if *online {
+-			a.doctorOnline(ctx, cfg, token, add)
++			a.doctorOnline(ctx, cfg, token, app, add)
+ 		}
+ 	}
+ 	for _, warning := range a.credentialWarnings() {
+@@ -211,7 +220,7 @@ func doctorStorage(ctx context.Context, cfg *config.Config, add func(string, str
+ 	}
+ }
+ 
+-func (a *App) doctorOnline(ctx context.Context, cfg *config.Config, token string, add func(string, string, string)) {
++func (a *App) doctorOnline(ctx context.Context, cfg *config.Config, token string, app *github.App, add func(string, string, string)) {
+ 	configs, err := cfg.LLMProviders()
+ 	if err != nil {
+ 		add("FAIL", "provider models", err.Error())
+@@ -237,6 +246,10 @@ func (a *App) doctorOnline(ctx context.Context, cfg *config.Config, token string
+ 			add("PASS", "models "+p.Name, "ListModels succeeded")
+ 		}
+ 	}
++	if cfg.GitHub.App() {
++		doctorAppOnline(ctx, cfg, app, add)
++		return
++	}
+ 	client := a.RunnerOptions.GitHub
+ 	if client == nil {
+ 		client, err = github.New(nil, "", runner.Token{Value: secret.New(token)})
+@@ -338,3 +351,75 @@ func sortedNames[V any](values map[string]V) []string {
+ 	slices.Sort(names)
+ 	return names
+ }
++
++// doctorAppKey checks the App key file placement and signs a JWT locally.
++// Errors are fixed strings; key material is never printed.
++func doctorAppKey(cfg *config.Config, opts runner.Options, r *secret.Redactor, add func(string, string, string)) *github.App {
++	excluded := []string{cfg.DataDir(), filepath.Join(cfg.DataDir(), "workspaces")}
++	key, err := github.LoadAppPrivateKey(cfg.GitHub.PrivateKeyFile, excluded...)
++	if err != nil {
++		add("FAIL", "GitHub App key", err.Error())
++		return nil
++	}
++	add("PASS", "GitHub App key", "regular file, mode 0600 or stricter, owned by this user, outside the data directory")
++	app, err := github.NewApp(github.AppOptions{AppID: cfg.GitHub.AppID, Key: key, InstallationID: cfg.GitHub.InstallationID,
++		BaseURL: opts.GitHubAPI, HTTPClient: opts.GitHubHTTP, OnMint: func(token string) { r.Add(token, github.GitHeaderForm(token)) }})
++	if err == nil {
++		_, err = app.SignJWT()
++	}
++	if err != nil {
++		add("FAIL", "GitHub App JWT", "cannot sign a JWT with the configured key")
++		return nil
++	}
++	add("PASS", "GitHub App JWT", "signed locally (RS256)")
++	return app
++}
++
++// doctorAppOnline checks the App identity and, for every allowlisted
++// repository, that the App is installed with the permissions runs need and
++// that a single-repository token can be minted.
++func doctorAppOnline(ctx context.Context, cfg *config.Config, app *github.App, add func(string, string, string)) {
++	if app == nil {
++		add("FAIL", "GitHub App", "skipped: the key check failed")
++		return
++	}
++	identity, err := app.Identity(ctx)
++	if err != nil {
++		add("FAIL", "GitHub App identity", err.Error())
++		return
++	}
++	add("PASS", "GitHub App identity", fmt.Sprintf("%s (commit author id %d)", identity.Login, identity.UserID))
++	if len(cfg.Repos) == 0 {
++		add("WARN", "GitHub App installation", "no repositories configured")
++	}
++	for _, name := range sortedNames(cfg.Repos) {
++		owner, repoName, _ := strings.Cut(name, "/")
++		repo := github.RepoRef{Owner: owner, Name: repoName}
++		check := "GitHub App " + name
++		info, err := app.Installation(ctx, repo)
++		if err != nil {
++			add("FAIL", check, "App is not installed on this repository or cannot reach it: "+err.Error())
++			continue
++		}
++		if cfg.GitHub.InstallationID > 0 && info.ID != cfg.GitHub.InstallationID {
++			add("FAIL", check, fmt.Sprintf("repository belongs to installation %d, not the configured installation_id", info.ID))
++			continue
++		}
++		var missing []string
++		for _, perm := range sortedNames(github.RunPermissions) {
++			want, got := github.RunPermissions[perm], info.Permissions[perm]
++			if got != want && (want != "read" || got != "write") {
++				missing = append(missing, perm+":"+want)
++			}
++		}
++		if len(missing) > 0 {
++			add("FAIL", check, "installation lacks permissions: "+strings.Join(missing, ", "))
++			continue
++		}
++		if _, err := app.RepoToken(ctx, repo); err != nil {
++			add("FAIL", check, "cannot mint a single-repository token: "+err.Error())
++			continue
++		}
++		add("PASS", check, fmt.Sprintf("installation %d; contents/issues/pull_requests write, metadata read; token minted", info.ID))
++	}
++}
+diff --git a/internal/github/commands.go b/internal/github/commands.go
+index c185061..26e2615 100644
+--- a/internal/github/commands.go
++++ b/internal/github/commands.go
+@@ -79,11 +79,17 @@ func Marker(kind string) string { return "<!-- patchbot:" + kind + " -->" }
+ // comment IDs and return true on error. Such a comment must also carry no
+ // patchbot marker, be unedited and pass the approver and collaborator checks.
+ // Every other combination fails closed. Other authors keep the plain rules.
++// In GitHub App mode botLogin is "<slug>[bot]" and its comments never count.
+ func EligibleCommand(comment Comment, approvers []string, isCollaborator func(string) bool, botLogin string, postedByPatchbot func(int64) bool) bool {
+ 	if botLogin == "" || comment.Author == "" || comment.CreatedAt.IsZero() ||
+ 		!comment.UpdatedAt.Equal(comment.CreatedAt) || isCollaborator == nil {
+ 		return false
+ 	}
++	// A GitHub App bot ("<slug>[bot]") is a distinct identity: its comments are
++	// always patchbot's own, so the shared-identity path never applies to it.
++	if strings.EqualFold(comment.Author, botLogin) && strings.HasSuffix(strings.ToLower(botLogin), "[bot]") {
++		return false
++	}
+ 	if strings.EqualFold(comment.Author, botLogin) &&
+ 		(comment.ID <= 0 || HasPatchbotMarker(comment.Body) || postedByPatchbot == nil || postedByPatchbot(comment.ID)) {
+ 		return false
+diff --git a/internal/github/http.go b/internal/github/http.go
+index f492880..662ecc2 100644
+--- a/internal/github/http.go
++++ b/internal/github/http.go
+@@ -28,8 +28,15 @@ const (
+ type HTTPClient struct {
+ 	httpClient *http.Client
+ 	baseURL    *url.URL
+-	tokens     TokenSource
+-	userAgent  string
++	// tokens authenticates requests without a repository (and, when
++	// repoTokens is nil, every request: PAT mode).
++	tokens TokenSource
++	// repoTokens, when set, authenticates every repository request with a
++	// credential bound to that request's repository.
++	repoTokens RepoTokenSource
++	// anonymous sends no Authorization header (public user lookups only).
++	anonymous bool
++	userAgent string
+ }
+ 
+ var _ Client = (*HTTPClient)(nil)
+@@ -42,6 +49,22 @@ func New(httpClient *http.Client, baseURL string, tokens TokenSource) (*HTTPClie
+ 	if tokens == nil {
+ 		return nil, errors.New("New: token source is required")
+ 	}
++	return newClient(httpClient, baseURL, tokens, nil)
++}
++
++// NewWithRepoTokens constructs a client whose repository requests use a
++// credential bound to the request's repository (GitHub App mode). Requests
++// without a repository (CurrentUser) are refused unless user is non-nil. A 401
++// on a repository request invalidates that token once and retries with a
++// freshly minted one; there is never a fallback to another credential.
++func NewWithRepoTokens(httpClient *http.Client, baseURL string, repoTokens RepoTokenSource, user TokenSource) (*HTTPClient, error) {
++	if repoTokens == nil {
++		return nil, errors.New("NewWithRepoTokens: repository token source is required")
++	}
++	return newClient(httpClient, baseURL, user, repoTokens)
++}
++
++func newClient(httpClient *http.Client, baseURL string, tokens TokenSource, repoTokens RepoTokenSource) (*HTTPClient, error) {
+ 	if baseURL == "" {
+ 		baseURL = defaultBaseURL
+ 	}
+@@ -56,7 +79,7 @@ func New(httpClient *http.Client, baseURL string, tokens TokenSource) (*HTTPClie
+ 	transport := *httpClient
+ 	transport.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+ 	return &HTTPClient{
+-		httpClient: &transport, baseURL: base, tokens: tokens, userAgent: "patchbot/" + version.Version,
++		httpClient: &transport, baseURL: base, tokens: tokens, repoTokens: repoTokens, userAgent: "patchbot/" + version.Version,
+ 	}, nil
+ }
+ 
+@@ -90,32 +113,81 @@ type responseMeta struct {
+ 	status int
+ }
+ 
+-func (c *HTTPClient) request(ctx context.Context, method string, target *url.URL, body, out any, statuses ...int) (responseMeta, error) {
+-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+-	defer cancel()
+-	token, err := c.tokens.Token(ctx)
++// credential returns the token for one request: the repository's own token when
++// a repository source is configured, else the client-wide source.
++func (c *HTTPClient) credential(ctx context.Context, repo *RepoRef) (string, error) {
++	if c.anonymous {
++		return "", nil
++	}
++	var token string
++	var err error
++	switch {
++	case repo != nil && c.repoTokens != nil:
++		token, err = c.repoTokens.RepoToken(ctx, *repo)
++	case c.tokens != nil:
++		token, err = c.tokens.Token(ctx)
++	default:
++		return "", errors.New("no credential for a request without a repository")
++	}
+ 	if err != nil {
+ 		if ctx.Err() != nil {
+-			return responseMeta{}, ctx.Err()
++			return "", ctx.Err()
++		}
++		// A token source's error can itself contain a credential. Typed
++		// minting failures (revoked, rate limited) keep their safe type.
++		var mint *MintError
++		if errors.As(err, &mint) {
++			return "", mint
+ 		}
+-		// A token source's error can itself contain a credential.
+-		return responseMeta{}, errors.New("authentication token unavailable")
++		return "", errors.New("authentication token unavailable")
+ 	}
+ 	if token == "" || strings.ContainsAny(token, "\r\n") {
+-		return responseMeta{}, errors.New("invalid authentication token")
+-	}
+-	for _, secret := range tokenForms(token) {
+-		if strings.Contains(target.String(), secret) {
+-			return responseMeta{}, errors.New("credential found in request URL")
+-		}
++		return "", errors.New("invalid authentication token")
+ 	}
++	return token, nil
++}
++
++// request sends one API call. repo is the repository the call is about (nil for
++// account- or App-level endpoints) and selects the credential.
++func (c *HTTPClient) request(ctx context.Context, repo *RepoRef, method string, target *url.URL, body, out any, statuses ...int) (responseMeta, error) {
++	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
++	defer cancel()
+ 	var data []byte
+ 	if body != nil {
++		var err error
+ 		data, err = json.Marshal(body)
+ 		if err != nil {
+ 			return responseMeta{}, errors.New("cannot encode request body")
+ 		}
+ 	}
++	meta, token, err := c.attempt(ctx, repo, method, target, data, out, statuses...)
++	// A 401 means GitHub rejected the credential before acting, so a single
++	// retry with a fresh token cannot duplicate a write. Only a caching
++	// repository source is retried; a PAT is not re-read.
++	if invalidator, ok := c.repoTokens.(TokenInvalidator); ok && repo != nil && token != "" {
++		if _, unauthorized := errors.AsType[*ErrUnauthorized](err); unauthorized {
++			invalidator.Invalidate(*repo, token)
++			meta, _, err = c.attempt(ctx, repo, method, target, data, out, statuses...)
++		}
++	}
++	return meta, err
++}
++
++func (c *HTTPClient) attempt(ctx context.Context, repo *RepoRef, method string, target *url.URL, data []byte, out any, statuses ...int) (responseMeta, string, error) {
++	token, err := c.credential(ctx, repo)
++	if err != nil {
++		return responseMeta{}, "", err
++	}
++	for _, secret := range tokenForms(token) {
++		if strings.Contains(target.String(), secret) {
++			return responseMeta{}, "", errors.New("credential found in request URL")
++		}
++	}
++	meta, err := c.send(ctx, token, method, target, data, out, statuses...)
++	return meta, token, err
++}
++
++func (c *HTTPClient) send(ctx context.Context, token, method string, target *url.URL, data []byte, out any, statuses ...int) (responseMeta, error) {
+ 	req, err := http.NewRequestWithContext(ctx, method, target.String(), bytes.NewReader(data))
+ 	if err != nil {
+ 		return responseMeta{}, errors.New("cannot construct API request")
+@@ -123,8 +195,10 @@ func (c *HTTPClient) request(ctx context.Context, method string, target *url.URL
+ 	req.Header.Set("Accept", "application/vnd.github+json")
+ 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+ 	req.Header.Set("User-Agent", c.userAgent)
+-	req.Header.Set("Authorization", "Bearer "+token)
+-	if body != nil {
++	if token != "" {
++		req.Header.Set("Authorization", "Bearer "+token)
++	}
++	if data != nil {
+ 		req.Header.Set("Content-Type", "application/json")
+ 	}
+ 	if etag, ok := ctx.Value(etagKey{}).(string); ok && etag != "" {
+diff --git a/internal/gitx/command.go b/internal/gitx/command.go
+index 7894899..c0f0d81 100644
+--- a/internal/gitx/command.go
++++ b/internal/gitx/command.go
+@@ -22,7 +22,26 @@ var remoteCommands = map[string]bool{"clone": true, "fetch": true, "ls-remote":
+ // command builds the entire environment explicitly. Credentials are deliberately
+ // absent from argv, including -c arguments, and from all local calls. They reach
+ // git only as an ephemeral, host-scoped http.extraheader via GIT_CONFIG_*.
+-func (r *Repo) command(_ context.Context, authenticated bool, args ...string) (*exec.Cmd, error) {
++// credential returns the token for one remote operation: a fresh one from
++// tokenFunc when configured, else the fixed clone-time token.
++func (r *Repo) credential(ctx context.Context) (string, error) {
++	if r.tokenFunc == nil {
++		return r.token, nil
++	}
++	token, err := r.tokenFunc(ctx)
++	if err != nil {
++		if ctx.Err() != nil {
++			return "", fmt.Errorf("git credential: %w", ctx.Err())
++		}
++		return "", errors.New("git credential unavailable")
++	}
++	if token == "" || strings.ContainsAny(token, "\x00\r\n") {
++		return "", errors.New("invalid git credential")
++	}
++	return token, nil
++}
++
++func (r *Repo) command(_ context.Context, authenticated bool, token string, args ...string) (*exec.Cmd, error) {
+ 	remote := len(args) > 0 && remoteCommands[args[0]]
+ 	if authenticated && !remote {
+ 		return nil, errors.New("credentials are restricted to remote operations")
+@@ -31,7 +50,7 @@ func (r *Repo) command(_ context.Context, authenticated bool, args ...string) (*
+ 		return nil, errors.New("remote operations must use the authenticated path")
+ 	}
+ 	for _, arg := range args {
+-		if strings.ContainsRune(arg, 0) || (r.token != "" && strings.Contains(arg, r.token)) {
++		if strings.ContainsRune(arg, 0) || (token != "" && strings.Contains(arg, token)) {
+ 			return nil, errors.New("invalid git argument")
+ 		}
+ 	}
+@@ -72,8 +91,8 @@ func (r *Repo) command(_ context.Context, authenticated bool, args ...string) (*
+ 		// Test-only: the fake HTTPS remote uses a self-signed certificate.
+ 		cmd.Env = append(cmd.Env, "GIT_SSL_NO_VERIFY=1")
+ 	}
+-	if authenticated && r.token != "" {
+-		encoded := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + r.token))
++	if authenticated && token != "" {
++		encoded := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+ 		cmd.Env = append(cmd.Env, "GIT_CONFIG_COUNT=1",
+ 			"GIT_CONFIG_KEY_0=http.https://"+r.host+"/.extraheader",
+ 			"GIT_CONFIG_VALUE_0=AUTHORIZATION: basic "+encoded)
+@@ -98,7 +117,14 @@ func (r *Repo) runIndexLimit(ctx context.Context, authenticated bool, index stri
+ 	}
+ 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+ 	defer cancel()
+-	cmd, err := r.command(ctx, authenticated, args...)
++	var token string
++	if authenticated {
++		var err error
++		if token, err = r.credential(ctx); err != nil {
++			return "", false, err
++		}
++	}
++	cmd, err := r.command(ctx, authenticated, token, args...)
+ 	if err != nil {
+ 		return "", false, err
+ 	}
+diff --git a/internal/gitx/gitx.go b/internal/gitx/gitx.go
+index 0ade7db..5063d7b 100644
+--- a/internal/gitx/gitx.go
++++ b/internal/gitx/gitx.go
+@@ -53,9 +53,14 @@ type CloneOptions struct {
+ 	Branch        string
+ 	DefaultBranch string
+ 	Depth         int
+-	Token         string
+-	Timeout       time.Duration
+-	OutputCap     int
++	// Token is a fixed credential (PAT mode). Prefer TokenFunc.
++	Token string
++	// TokenFunc, when set, is called for every remote operation (clone, fetch,
++	// ls-remote, push) so a long run always uses a fresh, unexpired token.
++	// It wins over Token. Its errors are never quoted.
++	TokenFunc func(context.Context) (string, error)
++	Timeout   time.Duration
++	OutputCap int
+ 	// TrustedPath is shared with command policies and doctor. Nil selects defaults.
+ 	TrustedPath []string
+ 	// ExcludedRoots includes the application data and workspace roots.
+@@ -80,6 +85,7 @@ type Repo struct {
+ 	mu                                                    sync.Mutex
+ 	dir, git, home, hooks, temp, private                  string
+ 	host, remote, localRemote, token, base, defaultBranch string
++	tokenFunc                                             func(context.Context) (string, error)
+ 	configHash                                            string
+ 	author                                                Author
+ 	timeout                                               time.Duration
+@@ -116,7 +122,7 @@ func Clone(ctx context.Context, opts CloneOptions) (_ *Repo, cloneErr error) {
+ 	if _, err := os.Lstat(opts.Dir); !errors.Is(err, os.ErrNotExist) {
+ 		return nil, errors.New("clone destination must not exist")
+ 	}
+-	r := &Repo{dir: opts.Dir, host: opts.Host, token: opts.Token, defaultBranch: opts.DefaultBranch,
++	r := &Repo{dir: opts.Dir, host: opts.Host, token: opts.Token, tokenFunc: opts.TokenFunc, defaultBranch: opts.DefaultBranch,
+ 		timeout: opts.Timeout, outputCap: opts.OutputCap, localRemote: opts.TestOnlyLocalRemote,
+ 		author: Author{"patchbot", "patchbot@users.noreply.github.com"}}
+ 	if r.timeout == 0 {
+@@ -223,7 +229,7 @@ func (r *Repo) Dir() string { return r.dir }
+ func (r *Repo) Close() error {
+ 	r.mu.Lock()
+ 	defer r.mu.Unlock()
+-	r.closed, r.token = true, ""
++	r.closed, r.token, r.tokenFunc = true, "", nil
+ 	if err := os.RemoveAll(r.private); err != nil {
+ 		return errors.New("remove private git directories failed")
+ 	}
+diff --git a/internal/runner/auth.go b/internal/runner/auth.go
+new file mode 100644
+index 0000000..996eace
+--- /dev/null
++++ b/internal/runner/auth.go
+@@ -0,0 +1,98 @@
++package runner
++
++import (
++	"context"
++	"errors"
++	"net/http"
++	"os"
++	"path/filepath"
++
++	"github.com/aryanpappu/patchbot/internal/config"
++	"github.com/aryanpappu/patchbot/internal/github"
++	"github.com/aryanpappu/patchbot/internal/gitx"
++	"github.com/aryanpappu/patchbot/internal/secret"
++)
++
++// setupGitHub selects the per-repository credential source and the REST
++// client. PAT mode keeps the old behaviour (one token for every repository).
++// App mode loads the private key once, resolves the bot identity and commit
++// author, and fails startup on any error: there is no fallback to a PAT.
++func (r *Runner) setupGitHub(ctx context.Context) error {
++	opts := &r.opts
++	if opts.RepoTokens == nil && r.cfg.GitHub.App() {
++		app, identity, err := NewGitHubApp(ctx, r.cfg, opts.GitHubAPI, opts.GitHubHTTP, r.registerToken)
++		if err != nil {
++			return err
++		}
++		opts.RepoTokens = app
++		opts.BotLogin = identity.Login
++		opts.CommitAuthor = gitx.Author{Name: identity.Login, Email: identity.CommitEmail()}
++	}
++	if opts.RepoTokens == nil {
++		if opts.Tokens == nil {
++			opts.Tokens = Token{Value: secret.New(os.Getenv("GITHUB_TOKEN"))}
++		}
++		if token, err := opts.Tokens.Token(ctx); err == nil {
++			r.redactor.AddSecrets(secret.New(token))
++			r.redactor.Add(github.GitHeaderForm(token))
++		}
++		opts.RepoTokens = github.StaticRepoTokens{Source: opts.Tokens}
++	}
++	r.tokens = opts.RepoTokens
++	r.gh = opts.GitHub
++	if r.gh == nil {
++		var err error
++		if r.cfg.GitHub.App() {
++			r.gh, err = github.NewWithRepoTokens(opts.GitHubHTTP, opts.GitHubAPI, opts.RepoTokens, nil)
++		} else {
++			r.gh, err = github.New(opts.GitHubHTTP, opts.GitHubAPI, opts.Tokens)
++		}
++		if err != nil {
++			return err
++		}
++	}
++	return nil
++}
++
++// registerToken masks a minted token, and its git header form, in every
++// redactor that output can pass through: the runner's own and the caller's
++// (CLI or server). It runs before the token is used anywhere.
++func (r *Runner) registerToken(token string) {
++	for _, redactor := range []*secret.Redactor{r.redactor, r.opts.Redactor} {
++		if redactor != nil {
++			redactor.Add(token, github.GitHeaderForm(token))
++		}
++	}
++}
++
++// NewGitHubApp builds the App token source from [github] and resolves the bot
++// identity. onMint receives every minted token before it is used.
++func NewGitHubApp(ctx context.Context, cfg *config.Config, baseURL string, client *http.Client, onMint func(string)) (*github.App, github.AppIdentity, error) {
++	g := cfg.GitHub
++	key, err := github.LoadAppPrivateKey(g.PrivateKeyFile, cfg.DataDir(), filepath.Join(cfg.DataDir(), "workspaces"))
++	if err != nil {
++		return nil, github.AppIdentity{}, err
++	}
++	app, err := github.NewApp(github.AppOptions{AppID: g.AppID, Key: key, InstallationID: g.InstallationID,
++		BaseURL: baseURL, HTTPClient: client, OnMint: onMint})
++	if err != nil {
++		return nil, github.AppIdentity{}, err
++	}
++	identity, err := app.Identity(ctx)
++	if err != nil {
++		return nil, github.AppIdentity{}, errors.Join(errors.New("GitHub App identity check failed; refusing to start (no PAT fallback)"), err)
++	}
++	return app, identity, nil
++}
++
++// githubCredentialError never quotes a token source's error text.
++func githubCredentialError(err error) error {
++	var mint *github.MintError
++	if errors.As(err, &mint) {
++		return mint
++	}
++	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
++		return err
++	}
++	return errors.New("GitHub credential unavailable; check GITHUB_TOKEN or the [github] App settings")
++}
+diff --git a/internal/runner/runner.go b/internal/runner/runner.go
+index 8210888..75bae94 100644
+--- a/internal/runner/runner.go
++++ b/internal/runner/runner.go
+@@ -7,6 +7,7 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"log/slog"
++	"net/http"
+ 	"os"
+ 	"regexp"
+ 	"strings"
+@@ -39,8 +40,20 @@ type Options struct {
+ 	// Redactor adds CLI/server credentials to model and persistence boundaries.
+ 	Redactor *secret.Redactor
+ 
+-	GitHub       github.Client
+-	Tokens       github.TokenSource
++	GitHub github.Client
++	// Tokens is the PAT used in [github] auth = "pat" mode. It is ignored in
++	// app mode, so an App failure never falls back to a broader PAT.
++	Tokens github.TokenSource
++	// RepoTokens supplies a credential per repository for REST and git. Nil
++	// selects the configured mode: the PAT for every repository, or a GitHub
++	// App source built from [github].
++	RepoTokens github.RepoTokenSource
++	// CommitAuthor is the git identity of patchbot commits. Zero selects
++	// patchbot <patchbot@users.noreply.github.com>; app mode sets the bot.
++	CommitAuthor gitx.Author
++	// GitHubAPI and GitHubHTTP are test seams for the App API endpoint.
++	GitHubAPI    string
++	GitHubHTTP   *http.Client
+ 	Constructors llm.Constructors
+ 	Clone        func(context.Context, gitx.CloneOptions) (*gitx.Repo, error)
+ 	Executor     func(string) (execx.Executor, error)
+@@ -73,6 +86,7 @@ type Runner struct {
+ 	cfg      *config.Config
+ 	db       store.Store
+ 	gh       github.Client
++	tokens   github.RepoTokenSource
+ 	opts     Options
+ 	redactor *secret.Redactor
+ 	mu       sync.Mutex
+@@ -124,21 +138,10 @@ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options)
+ 	if opts.StaleAfter <= 0 {
+ 		opts.StaleAfter = time.Minute
+ 	}
+-	if opts.Tokens == nil {
+-		opts.Tokens = Token{Value: secret.New(os.Getenv("GITHUB_TOKEN"))}
+-	}
+-	gh := opts.GitHub
+-	if gh == nil {
+-		var err error
+-		gh, err = github.New(nil, "", opts.Tokens)
+-		if err != nil {
+-			return nil, err
+-		}
+-	}
+-	r := &Runner{cfg: cfg, db: db, gh: gh, opts: opts, redactor: cfg.Redactor(), active: make(map[int64]context.CancelFunc), controls: make(map[int64]*sync.Mutex)}
++	r := &Runner{cfg: cfg, db: db, opts: opts, redactor: cfg.Redactor(), active: make(map[int64]context.CancelFunc), controls: make(map[int64]*sync.Mutex)}
+ 	r.redactor.Extend(opts.Redactor)
+-	if token, err := opts.Tokens.Token(ctx); err == nil {
+-		r.redactor.AddSecrets(secret.New(token))
++	if err := r.setupGitHub(ctx); err != nil {
++		return nil, err
+ 	}
+ 	if err := r.RecoverStale(ctx); err != nil {
+ 		return nil, err
+
+exec
+/bin/zsh -lc 'cat internal/github/appkey.go internal/github/appkey_unix.go internal/github/appkey_other.go; cat internal/github/http.go' in /Users/pappumishra/Documents/selfproject/patchbot-m27-app
+ succeeded in 0ms:
+package github
+
+import (
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const (
+	maxKeyFileBytes = 64 << 10
+	minKeyBits      = 2048
+	// jwtBackdate absorbs clock drift between this host and GitHub.
+	jwtBackdate = 60 * time.Second
+	// jwtLifetime keeps exp under GitHub's 10 minute maximum, measured from now.
+	jwtLifetime = 9 * time.Minute
+)
+
+// LoadAppPrivateKey reads and parses a GitHub App private key file once. The
+// file must be an absolute path to a regular file (no symlink), mode 0600 or
+// stricter, owned by the current user, and not inside any excluded root (the
+// data directory and its workspaces). Errors never contain key material.
+func LoadAppPrivateKey(path string, excludedRoots ...string) (*rsa.PrivateKey, error) {
+	if err := CheckAppKeyFile(path, excludedRoots...); err != nil {
+		return nil, err
+	}
+	file, err := openNoFollow(path)
+	if err != nil {
+		return nil, errors.New("private_key_file: cannot open")
+	}
+	defer func() { _ = file.Close() }()
+	opened, err := file.Stat()
+	if err != nil {
+		return nil, errors.New("private_key_file: cannot stat")
+	}
+	linked, err := os.Lstat(path)
+	if err != nil || !os.SameFile(opened, linked) {
+		return nil, errors.New("private_key_file: changed while opening")
+	}
+	if err := checkKeyInfo(opened); err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxKeyFileBytes+1))
+	if err != nil || len(data) > maxKeyFileBytes {
+		return nil, errors.New("private_key_file: cannot read or larger than 64 KiB")
+	}
+	defer clear(data)
+	return ParseAppPrivateKey(data)
+}
+
+// CheckAppKeyFile reports whether the key file is safely placed without
+// reading it. Doctor uses it; LoadAppPrivateKey repeats it on the open file.
+func CheckAppKeyFile(path string, excludedRoots ...string) error {
+	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsRune(path, 0) {
+		return errors.New("private_key_file: must be a clean absolute path")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return errors.New("private_key_file: not found or not accessible")
+	}
+	if err := checkKeyInfo(info); err != nil {
+		return err
+	}
+	resolvedDir, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return errors.New("private_key_file: cannot resolve its directory")
+	}
+	resolved := filepath.Join(resolvedDir, filepath.Base(path))
+	for _, root := range excludedRoots {
+		if root == "" {
+			continue
+		}
+		candidates := []string{filepath.Clean(root)}
+		if resolvedRoot, err := filepath.EvalSymlinks(root); err == nil {
+			candidates = append(candidates, resolvedRoot)
+		}
+		for _, candidate := range candidates {
+			for _, p := range []string{path, resolved} {
+				if within(candidate, p) {
+					return errors.New("private_key_file: must not be inside the data directory or workspaces")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func within(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+func checkKeyInfo(info os.FileInfo) error {
+	if !info.Mode().IsRegular() {
+		return errors.New("private_key_file: must be a regular file, not a symlink or device")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return errors.New("private_key_file: mode must be 0600 or stricter")
+	}
+	return keyOwner(info)
+}
+
+// ParseAppPrivateKey accepts a PKCS#1 ("RSA PRIVATE KEY") or PKCS#8
+// ("PRIVATE KEY") PEM block holding an RSA key of at least 2048 bits.
+func ParseAppPrivateKey(data []byte) (*rsa.PrivateKey, error) {
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, errors.New("private_key_file: no PEM block")
+	}
+	defer clear(block.Bytes)
+	var key *rsa.PrivateKey
+	switch block.Type {
+	case "RSA PRIVATE KEY":
+		parsed, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, errors.New("private_key_file: invalid PKCS#1 RSA key")
+		}
+		key = parsed
+	case "PRIVATE KEY":
+		parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, errors.New("private_key_file: invalid PKCS#8 key")
+		}
+		rsaKey, ok := parsed.(*rsa.PrivateKey)
+		if !ok {
+			return nil, errors.New("private_key_file: PKCS#8 key is not RSA")
+		}
+		key = rsaKey
+	default:
+		return nil, errors.New("private_key_file: unsupported PEM block type")
+	}
+	if key.N.BitLen() < minKeyBits {
+		return nil, errors.New("private_key_file: RSA key must be at least 2048 bits")
+	}
+	if err := key.Validate(); err != nil {
+		return nil, errors.New("private_key_file: RSA key failed validation")
+	}
+	return key, nil
+}
+
+// SignAppJWT builds a GitHub App JWT: RS256, iat = now-60s, exp = now+9m,
+// iss = app ID. It uses only the standard library.
+func SignAppJWT(key *rsa.PrivateKey, appID int64, now time.Time) (string, error) {
+	if key == nil || appID <= 0 {
+		return "", errors.New("app JWT requires a key and a positive app ID")
+	}
+	header, _ := json.Marshal(map[string]string{"alg": "RS256", "typ": "JWT"})
+	claims, err := json.Marshal(struct {
+		IAT int64  `json:"iat"`
+		EXP int64  `json:"exp"`
+		ISS string `json:"iss"`
+	}{now.Add(-jwtBackdate).Unix(), now.Add(jwtLifetime).Unix(), strconv.FormatInt(appID, 10)})
+	if err != nil {
+		return "", errors.New("cannot encode app JWT claims")
+	}
+	enc := base64.RawURLEncoding
+	signing := enc.EncodeToString(header) + "." + enc.EncodeToString(claims)
+	digest := sha256.Sum256([]byte(signing))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
+	if err != nil {
+		return "", errors.New("cannot sign app JWT")
+	}
+	return signing + "." + enc.EncodeToString(signature), nil
+}
+//go:build unix
+
+package github
+
+import (
+	"errors"
+	"os"
+	"syscall"
+)
+
+func keyOwner(info os.FileInfo) error {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || int64(stat.Uid) != int64(os.Geteuid()) {
+		return errors.New("private_key_file: must be owned by the patchbot service user")
+	}
+	return nil
+}
+
+func openNoFollow(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0) // #nosec G304 -- operator-configured, validated key path.
+}
+//go:build !unix
+
+package github
+
+import (
+	"errors"
+	"os"
+)
+
+func keyOwner(os.FileInfo) error {
+	return errors.New("private_key_file: GitHub App keys require a Unix host")
+}
+
+func openNoFollow(path string) (*os.File, error) {
+	return os.Open(path) // #nosec G304 -- operator-configured, validated key path.
+}
+package github
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/version"
+)
+
+const (
+	defaultBaseURL  = "https://api.github.com"
+	requestTimeout  = 30 * time.Second
+	maxResponseBody = 10 << 20
+	maxComments     = 300
+)
+
+// HTTPClient implements Client using the versioned GitHub REST API. Its settings
+// are immutable after construction, making it safe for concurrent use.
+type HTTPClient struct {
+	httpClient *http.Client
+	baseURL    *url.URL
+	// tokens authenticates requests without a repository (and, when
+	// repoTokens is nil, every request: PAT mode).
+	tokens TokenSource
+	// repoTokens, when set, authenticates every repository request with a
+	// credential bound to that request's repository.
+	repoTokens RepoTokenSource
+	// anonymous sends no Authorization header (public user lookups only).
+	anonymous bool
+	userAgent string
+}
+
+var _ Client = (*HTTPClient)(nil)
+
+// New constructs a REST client. Empty baseURL selects api.github.com; an
+// Enterprise base URL can include /api/v3. A nil httpClient uses http.DefaultClient.
+// Each request has a 30 second deadline, including token acquisition and reads.
+// The supplied http.Client is copied; redirects are refused to protect credentials.
+func New(httpClient *http.Client, baseURL string, tokens TokenSource) (*HTTPClient, error) {
+	if tokens == nil {
+		return nil, errors.New("New: token source is required")
+	}
+	return newClient(httpClient, baseURL, tokens, nil)
+}
+
+// NewWithRepoTokens constructs a client whose repository requests use a
+// credential bound to the request's repository (GitHub App mode). Requests
+// without a repository (CurrentUser) are refused unless user is non-nil. A 401
+// on a repository request invalidates that token once and retries with a
+// freshly minted one; there is never a fallback to another credential.
+func NewWithRepoTokens(httpClient *http.Client, baseURL string, repoTokens RepoTokenSource, user TokenSource) (*HTTPClient, error) {
+	if repoTokens == nil {
+		return nil, errors.New("NewWithRepoTokens: repository token source is required")
+	}
+	return newClient(httpClient, baseURL, user, repoTokens)
+}
+
+func newClient(httpClient *http.Client, baseURL string, tokens TokenSource, repoTokens RepoTokenSource) (*HTTPClient, error) {
+	if baseURL == "" {
+		baseURL = defaultBaseURL
+	}
+	base, err := url.Parse(baseURL)
+	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" ||
+		base.User != nil || base.RawQuery != "" || base.ForceQuery || base.Fragment != "" || base.Opaque != "" {
+		return nil, errors.New("New: invalid GitHub API base URL")
+	}
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	transport := *httpClient
+	transport.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &HTTPClient{
+		httpClient: &transport, baseURL: base, tokens: tokens, repoTokens: repoTokens, userAgent: "patchbot/" + version.Version,
+	}, nil
+}
+
+func (c *HTTPClient) endpoint(repo RepoRef, parts ...string) (*url.URL, error) {
+	if !validRepoPart(repo.Owner) || !validRepoPart(repo.Name) {
+		return nil, errors.New("invalid repository reference")
+	}
+	path := strings.TrimRight(c.baseURL.EscapedPath(), "/") + "/repos/" +
+		url.PathEscape(repo.Owner) + "/" + url.PathEscape(repo.Name)
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." || strings.ContainsRune(part, 0) {
+			return nil, errors.New("invalid API path component")
+		}
+		path += "/" + url.PathEscape(part)
+	}
+	u := *c.baseURL
+	decoded, err := url.PathUnescape(path)
+	if err != nil {
+		return nil, errors.New("invalid API path")
+	}
+	u.Path, u.RawPath = decoded, path
+	return &u, nil
+}
+
+func validRepoPart(part string) bool {
+	return part != "" && part != "." && part != ".." && !strings.ContainsAny(part, "/\\\x00")
+}
+
+type responseMeta struct {
+	header http.Header
+	status int
+}
+
+// credential returns the token for one request: the repository's own token when
+// a repository source is configured, else the client-wide source.
+func (c *HTTPClient) credential(ctx context.Context, repo *RepoRef) (string, error) {
+	if c.anonymous {
+		return "", nil
+	}
+	var token string
+	var err error
+	switch {
+	case repo != nil && c.repoTokens != nil:
+		token, err = c.repoTokens.RepoToken(ctx, *repo)
+	case c.tokens != nil:
+		token, err = c.tokens.Token(ctx)
+	default:
+		return "", errors.New("no credential for a request without a repository")
+	}
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		// A token source's error can itself contain a credential. Typed
+		// minting failures (revoked, rate limited) keep their safe type.
+		var mint *MintError
+		if errors.As(err, &mint) {
+			return "", mint
+		}
+		return "", errors.New("authentication token unavailable")
+	}
+	if token == "" || strings.ContainsAny(token, "\r\n") {
+		return "", errors.New("invalid authentication token")
+	}
+	return token, nil
+}
+
+// request sends one API call. repo is the repository the call is about (nil for
+// account- or App-level endpoints) and selects the credential.
+func (c *HTTPClient) request(ctx context.Context, repo *RepoRef, method string, target *url.URL, body, out any, statuses ...int) (responseMeta, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	var data []byte
+	if body != nil {
+		var err error
+		data, err = json.Marshal(body)
+		if err != nil {
+			return responseMeta{}, errors.New("cannot encode request body")
+		}
+	}
+	meta, token, err := c.attempt(ctx, repo, method, target, data, out, statuses...)
+	// A 401 means GitHub rejected the credential before acting, so a single
+	// retry with a fresh token cannot duplicate a write. Only a caching
+	// repository source is retried; a PAT is not re-read.
+	if invalidator, ok := c.repoTokens.(TokenInvalidator); ok && repo != nil && token != "" {
+		if _, unauthorized := errors.AsType[*ErrUnauthorized](err); unauthorized {
+			invalidator.Invalidate(*repo, token)
+			meta, _, err = c.attempt(ctx, repo, method, target, data, out, statuses...)
+		}
+	}
+	return meta, err
+}
+
+func (c *HTTPClient) attempt(ctx context.Context, repo *RepoRef, method string, target *url.URL, data []byte, out any, statuses ...int) (responseMeta, string, error) {
+	token, err := c.credential(ctx, repo)
+	if err != nil {
+		return responseMeta{}, "", err
+	}
+	for _, secret := range tokenForms(token) {
+		if strings.Contains(target.String(), secret) {
+			return responseMeta{}, "", errors.New("credential found in request URL")
+		}
+	}
+	meta, err := c.send(ctx, token, method, target, data, out, statuses...)
+	return meta, token, err
+}
+
+func (c *HTTPClient) send(ctx context.Context, token, method string, target *url.URL, data []byte, out any, statuses ...int) (responseMeta, error) {
+	req, err := http.NewRequestWithContext(ctx, method, target.String(), bytes.NewReader(data))
+	if err != nil {
+		return responseMeta{}, errors.New("cannot construct API request")
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", c.userAgent)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if data != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if etag, ok := ctx.Value(etagKey{}).(string); ok && etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return responseMeta{}, safeIOError(ctx, err, "API request failed")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	meta := responseMeta{header: resp.Header, status: resp.StatusCode}
+	if !slices.Contains(statuses, resp.StatusCode) {
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+		if readErr != nil {
+			return meta, safeIOError(ctx, readErr, "cannot read API error response")
+		}
+		return meta, responseError(resp.StatusCode, resp.Header, data, token)
+	}
+	data, err = io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
+	if err != nil {
+		return meta, safeIOError(ctx, err, "cannot read API response")
+	}
+	if len(data) > maxResponseBody {
+		return meta, errors.New("API response exceeds 10 MB")
+	}
+	if out != nil && resp.StatusCode != http.StatusNotModified {
+		if err := json.Unmarshal(data, out); err != nil {
+			// Decoder errors can quote response data, including echoed credentials.
+			return meta, errors.New("invalid API JSON response")
+		}
+	}
+	return meta, nil
+}
+
+func safeIOError(ctx context.Context, err error, message string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	return errors.New(message)
+}
+
+// nextPage accepts only links to the same API endpoint, preventing pagination
+// from sending authorization to another host or an unrelated API path.
+func nextPage(current *url.URL, header http.Header) (*url.URL, error) {
+	for _, line := range header.Values("Link") {
+		for _, link := range strings.Split(line, ",") {
+			parts := strings.Split(link, ";")
+			next := false
+			for _, parameter := range parts[1:] {
+				key, value, ok := strings.Cut(strings.TrimSpace(parameter), "=")
+				if ok && strings.EqualFold(key, "rel") && slices.Contains(strings.Fields(strings.Trim(value, "\"")), "next") {
+					next = true
+				}
+			}
+			if !next {
+				continue
+			}
+			ref, err := url.Parse(strings.Trim(strings.TrimSpace(parts[0]), "<>"))
+			if err != nil {
+				return nil, errors.New("invalid pagination URL")
+			}
+			u := current.ResolveReference(ref)
+			if u.Scheme != current.Scheme || u.Host != current.Host || u.EscapedPath() != current.EscapedPath() ||
+				u.User != nil || u.Fragment != "" || u.Opaque != "" {
+				return nil, errors.New("unsafe pagination URL")
+			}
+			return u, nil
+		}
+	}
+	return nil, nil
+}
+
+func operationError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", operation, err)
+}
+
+exec
+/bin/zsh -lc "cat internal/cli/doctor.go; cat internal/gitx/command.go; git diff development...HEAD -- internal/runner/phases.go internal/runner/publish.go internal/github/operations.go internal/github/identity.go internal/config/validate.go; rg -n 'Token|redact|Author|EligibleCommand' internal/runner/phases.go internal/runner/sync.go internal/gitx/*.go internal/secret/*.go" in /Users/pappumishra/Documents/selfproject/patchbot-m27-app
+ succeeded in 0ms:
+package cli
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"go/version"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+	"text/tabwriter"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/execx"
+	"github.com/aryanpappu/patchbot/internal/github"
+	"github.com/aryanpappu/patchbot/internal/gitx"
+	"github.com/aryanpappu/patchbot/internal/llm/providers"
+	"github.com/aryanpappu/patchbot/internal/runner"
+	"github.com/aryanpappu/patchbot/internal/secret"
+	"github.com/aryanpappu/patchbot/internal/store"
+)
+
+const doctorUsage = `Usage: patchbot doctor [--config FILE] [--online]
+
+Check tools, config, credentials, private storage, migrations and repo commands.
+Offline by default. --online lists provider models and checks GitHub identity:
+/user (PAT mode), or the App, its installations and granted permissions for
+every configured repository (app mode).
+PASS and WARN exit 0; any FAIL exits 1. No secrets are printed.
+`
+
+var doctorEnvName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,63}$`)
+
+type doctorRow struct{ status, check, detail string }
+
+func (a *App) runDoctor(args []string) int {
+	opts := a.Config
+	flags := flag.NewFlagSet("patchbot doctor", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.StringVar(&opts.Path, "config", opts.Path, "configuration file")
+	online := flags.Bool("online", false, "check provider models and GitHub identity")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		if errors.Is(err, flag.ErrHelp) {
+			_, _ = fmt.Fprint(a.Stdout, doctorUsage)
+			return 0
+		}
+		_, _ = fmt.Fprint(a.Stderr, doctorUsage)
+		return 2
+	}
+	lookup := opts.LookupEnv
+	if lookup == nil {
+		lookup = os.LookupEnv
+	}
+	token, _ := lookup("GITHUB_TOKEN")
+	r := secret.NewRedactor()
+	r.Extend(a.outputRedactor)
+	r.AddExact(token)
+	rows := []doctorRow{}
+	add := func(status, check, detail string) { rows = append(rows, doctorRow{status, check, detail}) }
+	cfg, err := a.loadConfig(opts)
+	if err != nil {
+		add("FAIL", "config", err.Error())
+		return a.printDoctor(rows, r)
+	}
+	r.Extend(cfg.Redactor())
+	if err := cfg.Validate(); err != nil {
+		add("FAIL", "config", err.Error())
+		return a.printDoctor(rows, r)
+	}
+	if cfg.Path() == "" {
+		add("WARN", "config", "no file found; using defaults and overrides")
+	} else {
+		add("PASS", "config", cfg.Path())
+	}
+
+	parent := a.Context
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
+	defer cancel()
+	dirs := config.Default().Limits.TrustedPath
+	if cfg != nil {
+		dirs = cfg.Limits.TrustedPath
+	}
+	root, rootErr := os.Getwd()
+	if rootErr != nil {
+		add("FAIL", "tools", "cannot determine working directory")
+	} else {
+		for _, tool := range []string{"go", "git"} {
+			if tool == "go" && cfg.Executor.Container() {
+				add("PASS", "go version", "not required on the host; repository commands run in the container image")
+				continue
+			}
+			output, err := doctorVersion(ctx, root, dirs, tool, r, cfg.DataDir(), filepath.Join(cfg.DataDir(), "workspaces"), opts.Dir)
+			if err == nil {
+				if tool == "git" {
+					err = gitx.CheckVersion(output)
+				} else {
+					fields := strings.Fields(output)
+					if len(fields) < 3 || !version.IsValid(fields[2]) || version.Compare(fields[2], "go1.27") < 0 {
+						err = errors.New("go >= 1.27 is required")
+					}
+				}
+			}
+			if err != nil {
+				add("FAIL", tool+" version", err.Error())
+			} else {
+				add("PASS", tool+" version", output)
+			}
+		}
+	}
+	var app *github.App
+	switch {
+	case cfg.GitHub.App():
+		app = doctorAppKey(cfg, a.RunnerOptions, r, add)
+		if strings.TrimSpace(token) != "" {
+			add("WARN", "GitHub credential", "GITHUB_TOKEN is set but ignored in app mode (there is no PAT fallback); unset it")
+		}
+	case strings.TrimSpace(token) == "":
+		add("FAIL", "GitHub credential", "set GITHUB_TOKEN")
+	default:
+		add("PASS", "GitHub credential", "GITHUB_TOKEN is set")
+	}
+	if cfg != nil {
+		for _, name := range sortedNames(cfg.Providers) {
+			p := cfg.Providers[name]
+			switch {
+			case p.APIKeyEnv == "" && p.Kind == config.KindOpenAI:
+				add("WARN", "provider "+name, "no api_key_env; unauthenticated local endpoints are allowed")
+			case !doctorEnvName.MatchString(p.APIKeyEnv):
+				add("FAIL", "provider "+name, "api_key_env must name an uppercase environment variable")
+			case !p.APIKey.IsSet():
+				add("FAIL", "provider "+name, "set "+p.APIKeyEnv)
+			default:
+				add("PASS", "provider "+name, p.APIKeyEnv+" is set")
+			}
+		}
+		doctorStorage(ctx, cfg, add)
+		if rootErr == nil {
+			excluded := []string{filepath.Join(cfg.DataDir(), "workspaces"), opts.Dir}
+			doctorExecutor(ctx, cfg, root, r, lookup, add, excluded...)
+			where := ""
+			if cfg.Executor.Container() {
+				where = " (resolved in the container image)"
+			}
+			for _, name := range sortedNames(cfg.Repos) {
+				for _, id := range sortedNames(cfg.Repos[name].Commands) {
+					p, err := execx.NewPolicy(root, map[string][]string{id: cfg.Repos[name].Commands[id]}, cfg.CommandPolicyOptions(excluded...))
+					if err != nil {
+						add("FAIL", name+" / "+id, err.Error())
+					} else {
+						argv, _ := p.Resolve(id, nil)
+						add("PASS", name+" / "+id, argv[0]+where)
+					}
+				}
+			}
+		}
+		for _, warning := range cfg.Warnings() {
+			add("WARN", "config", warning)
+		}
+		if *online {
+			a.doctorOnline(ctx, cfg, token, app, add)
+		}
+	}
+	for _, warning := range a.credentialWarnings() {
+		add("WARN", "credential masking", warning)
+	}
+	if !*online {
+		add("WARN", "online checks", "skipped; use --online for ListModels and GitHub /user")
+	}
+	return a.printDoctor(rows, r)
+}
+
+func (a *App) printDoctor(rows []doctorRow, r *secret.Redactor) int {
+	table := tabwriter.NewWriter(a.Stdout, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(table, "RESULT\tCHECK\tDETAIL")
+	code := 0
+	for _, row := range rows {
+		if row.status == "FAIL" {
+			code = 1
+		}
+		detail := strings.Join(strings.Fields(r.Redact(row.detail)), " ")
+		_, _ = fmt.Fprintf(table, "%s\t%s\t%s\n", row.status, r.Redact(row.check), detail)
+	}
+	if err := table.Flush(); err != nil {
+		return 1
+	}
+	return code
+}
+
+func doctorStorage(ctx context.Context, cfg *config.Config, add func(string, string, string)) {
+	info, err := os.Lstat(cfg.DataDir())
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		add("WARN", "data directory", "absent; first run creates it with mode 0700")
+	case err != nil || !info.IsDir() || info.Mode().Perm() != 0o700:
+		add("FAIL", "data directory", "must be a real directory with mode 0700")
+	default:
+		add("PASS", "data directory", "mode 0700")
+	}
+	info, err = os.Lstat(cfg.DatabasePath())
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		add("WARN", "database", "absent; first run creates it and applies migrations")
+	case err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600:
+		add("FAIL", "database", "must be a regular file with mode 0600")
+	default:
+		count, err := store.CheckMigrations(ctx, cfg.DatabasePath())
+		if err != nil {
+			add("FAIL", "database migrations", err.Error())
+		} else {
+			add("PASS", "database migrations", fmt.Sprintf("%d migrations; checksums match", count))
+		}
+	}
+}
+
+func (a *App) doctorOnline(ctx context.Context, cfg *config.Config, token string, app *github.App, add func(string, string, string)) {
+	configs, err := cfg.LLMProviders()
+	if err != nil {
+		add("FAIL", "provider models", err.Error())
+		return
+	}
+	constructors := a.RunnerOptions.Constructors
+	if constructors == nil {
+		constructors = providers.Constructors(a.Providers)
+	}
+	for _, p := range configs {
+		construct := constructors[p.Kind]
+		if construct == nil {
+			add("FAIL", "models "+p.Name, "provider adapter unavailable")
+			continue
+		}
+		provider, err := construct(p)
+		if err == nil {
+			_, err = provider.ListModels(ctx)
+		}
+		if err != nil {
+			add("FAIL", "models "+p.Name, "ListModels failed; check credentials and endpoint")
+		} else {
+			add("PASS", "models "+p.Name, "ListModels succeeded")
+		}
+	}
+	if cfg.GitHub.App() {
+		doctorAppOnline(ctx, cfg, app, add)
+		return
+	}
+	client := a.RunnerOptions.GitHub
+	if client == nil {
+		client, err = github.New(nil, "", runner.Token{Value: secret.New(token)})
+	}
+	identity, ok := client.(interface {
+		CurrentUser(context.Context) (string, error)
+	})
+	if err == nil && ok {
+		_, err = identity.CurrentUser(ctx)
+	}
+	if err != nil || !ok {
+		add("FAIL", "GitHub /user", "identity check failed; check GITHUB_TOKEN")
+	} else {
+		add("PASS", "GitHub /user", "authenticated")
+	}
+}
+
+func doctorVersion(ctx context.Context, root string, dirs []string, tool string, r *secret.Redactor, excluded ...string) (string, error) {
+	roots := append([]string{root}, excluded...)
+	var binary string
+	var err error
+	args := []string{"version"}
+	if tool == "git" {
+		binary, err = gitx.ResolveGit(dirs, roots...)
+		args[0] = "--version"
+	} else {
+		binary, err = execx.ResolveExecutable(tool, dirs, roots...)
+	}
+	if err != nil {
+		return "", err
+	}
+	executor, err := execx.NewLocalExecutor(root)
+	if err != nil {
+		return "", err
+	}
+	result, err := executor.Run(ctx, execx.Spec{
+		Argv: append([]string{binary}, args...), Dir: root,
+		Env:     []string{"PATH=" + strings.Join(dirs, string(os.PathListSeparator)), "GOTOOLCHAIN=local", "GOENV=off"},
+		Timeout: 5 * time.Second, OutputCap: 4096, Redactor: r,
+	})
+	if err != nil || result.ExitCode != 0 || result.TimedOut || result.Cancelled || result.Truncated {
+		return "", errors.New("version command failed, timed out or exceeded its output limit")
+	}
+	return strings.TrimSpace(result.Output), nil
+}
+
+// doctorExecutor checks the container runtime binary, rootless mode, the
+// digest-pinned image and whether the image is present locally (runs use
+// --pull never). A rootful runtime is a warning: it still works, but the
+// runtime daemon is root-equivalent and must not be reachable by patchbot.
+func doctorExecutor(ctx context.Context, cfg *config.Config, root string, r *secret.Redactor, lookup func(string) (string, bool), add func(string, string, string), excluded ...string) {
+	if !cfg.Executor.Container() {
+		add("PASS", "executor", "local host processes (not a sandbox; use kind = \"container\" for untrusted code)")
+		return
+	}
+	cc, err := cfg.ContainerConfig(lookup, excluded...)
+	if err != nil {
+		add("FAIL", "container runtime", err.Error())
+		return
+	}
+	add("PASS", "container runtime", cc.Runtime)
+	add("PASS", "container image", "digest-pinned "+cc.Image)
+	run := func(args ...string) (string, error) {
+		executor, err := execx.NewLocalExecutor(root)
+		if err != nil {
+			return "", err
+		}
+		result, err := executor.Run(ctx, execx.Spec{Argv: append([]string{cc.Runtime}, args...), Dir: root, Env: cc.HostEnv, Timeout: 15 * time.Second, OutputCap: 4096, Redactor: r})
+		if err != nil || result.ExitCode != 0 || result.TimedOut || result.Cancelled {
+			return "", errors.New("command failed or timed out")
+		}
+		return strings.TrimSpace(result.Output), nil
+	}
+	format := "{{.SecurityOptions}}"
+	if cc.Flavor == execx.RuntimePodman {
+		format = "{{.Host.Security.Rootless}}"
+	}
+	output, err := run("info", "--format", format)
+	switch {
+	case err != nil:
+		add("FAIL", "container rootless", cc.Flavor+" info failed; is the runtime installed and XDG_RUNTIME_DIR/DOCKER_HOST set?")
+	case cc.Flavor == execx.RuntimePodman && output == "true", cc.Flavor == execx.RuntimeDocker && strings.Contains(output, "rootless"):
+		add("PASS", "container rootless", cc.Flavor+" runs rootless")
+	default:
+		add("WARN", "container rootless", cc.Flavor+" is not rootless; its daemon is root-equivalent, so use rootless podman or rootless docker")
+	}
+	if _, err := run("image", "inspect", "--format", "{{.Id}}", cc.Image); err != nil {
+		add("WARN", "container image present", "not found locally; runs use --pull never, so pull it first: "+cc.Flavor+" pull "+cc.Image)
+	} else {
+		add("PASS", "container image present", "available locally")
+	}
+}
+
+func sortedNames[V any](values map[string]V) []string {
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// doctorAppKey checks the App key file placement and signs a JWT locally.
+// Errors are fixed strings; key material is never printed.
+func doctorAppKey(cfg *config.Config, opts runner.Options, r *secret.Redactor, add func(string, string, string)) *github.App {
+	excluded := []string{cfg.DataDir(), filepath.Join(cfg.DataDir(), "workspaces")}
+	key, err := github.LoadAppPrivateKey(cfg.GitHub.PrivateKeyFile, excluded...)
+	if err != nil {
+		add("FAIL", "GitHub App key", err.Error())
+		return nil
+	}
+	add("PASS", "GitHub App key", "regular file, mode 0600 or stricter, owned by this user, outside the data directory")
+	app, err := github.NewApp(github.AppOptions{AppID: cfg.GitHub.AppID, Key: key, InstallationID: cfg.GitHub.InstallationID,
+		BaseURL: opts.GitHubAPI, HTTPClient: opts.GitHubHTTP, OnMint: func(token string) { r.Add(token, github.GitHeaderForm(token)) }})
+	if err == nil {
+		_, err = app.SignJWT()
+	}
+	if err != nil {
+		add("FAIL", "GitHub App JWT", "cannot sign a JWT with the configured key")
+		return nil
+	}
+	add("PASS", "GitHub App JWT", "signed locally (RS256)")
+	return app
+}
+
+// doctorAppOnline checks the App identity and, for every allowlisted
+// repository, that the App is installed with the permissions runs need and
+// that a single-repository token can be minted.
+func doctorAppOnline(ctx context.Context, cfg *config.Config, app *github.App, add func(string, string, string)) {
+	if app == nil {
+		add("FAIL", "GitHub App", "skipped: the key check failed")
+		return
+	}
+	identity, err := app.Identity(ctx)
+	if err != nil {
+		add("FAIL", "GitHub App identity", err.Error())
+		return
+	}
+	add("PASS", "GitHub App identity", fmt.Sprintf("%s (commit author id %d)", identity.Login, identity.UserID))
+	if len(cfg.Repos) == 0 {
+		add("WARN", "GitHub App installation", "no repositories configured")
+	}
+	for _, name := range sortedNames(cfg.Repos) {
+		owner, repoName, _ := strings.Cut(name, "/")
+		repo := github.RepoRef{Owner: owner, Name: repoName}
+		check := "GitHub App " + name
+		info, err := app.Installation(ctx, repo)
+		if err != nil {
+			add("FAIL", check, "App is not installed on this repository or cannot reach it: "+err.Error())
+			continue
+		}
+		if cfg.GitHub.InstallationID > 0 && info.ID != cfg.GitHub.InstallationID {
+			add("FAIL", check, fmt.Sprintf("repository belongs to installation %d, not the configured installation_id", info.ID))
+			continue
+		}
+		var missing []string
+		for _, perm := range sortedNames(github.RunPermissions) {
+			want, got := github.RunPermissions[perm], info.Permissions[perm]
+			if got != want && (want != "read" || got != "write") {
+				missing = append(missing, perm+":"+want)
+			}
+		}
+		if len(missing) > 0 {
+			add("FAIL", check, "installation lacks permissions: "+strings.Join(missing, ", "))
+			continue
+		}
+		if _, err := app.RepoToken(ctx, repo); err != nil {
+			add("FAIL", check, "cannot mint a single-repository token: "+err.Error())
+			continue
+		}
+		add("PASS", check, fmt.Sprintf("installation %d; contents/issues/pull_requests write, metadata read; token minted", info.ID))
+	}
+}
+package gitx
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/execx"
+)
+
+const trustedPath = execx.TrustedPath
+
+// remoteCommands are the only git subcommands that talk to the remote. Each of
+// them must use the authenticated path (a private repository refuses anonymous
+// reads), and no other subcommand ever receives the credential.
+var remoteCommands = map[string]bool{"clone": true, "fetch": true, "ls-remote": true, "push": true}
+
+// command builds the entire environment explicitly. Credentials are deliberately
+// absent from argv, including -c arguments, and from all local calls. They reach
+// git only as an ephemeral, host-scoped http.extraheader via GIT_CONFIG_*.
+// credential returns the token for one remote operation: a fresh one from
+// tokenFunc when configured, else the fixed clone-time token.
+func (r *Repo) credential(ctx context.Context) (string, error) {
+	if r.tokenFunc == nil {
+		return r.token, nil
+	}
+	token, err := r.tokenFunc(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("git credential: %w", ctx.Err())
+		}
+		return "", errors.New("git credential unavailable")
+	}
+	if token == "" || strings.ContainsAny(token, "\x00\r\n") {
+		return "", errors.New("invalid git credential")
+	}
+	return token, nil
+}
+
+func (r *Repo) command(_ context.Context, authenticated bool, token string, args ...string) (*exec.Cmd, error) {
+	remote := len(args) > 0 && remoteCommands[args[0]]
+	if authenticated && !remote {
+		return nil, errors.New("credentials are restricted to remote operations")
+	}
+	if remote && !authenticated {
+		return nil, errors.New("remote operations must use the authenticated path")
+	}
+	for _, arg := range args {
+		if strings.ContainsRune(arg, 0) || (token != "" && strings.Contains(arg, token)) {
+			return nil, errors.New("invalid git argument")
+		}
+	}
+	protocol := "never"
+	if r.localRemote != "" {
+		protocol = "always"
+	}
+	argv := []string{
+		"--literal-pathspecs",
+		"-c", "core.hooksPath=" + r.hooks,
+		"-c", "core.fsmonitor=false",
+		"-c", "protocol.allow=never",
+		"-c", "protocol.https.allow=always",
+		"-c", "protocol.file.allow=" + protocol,
+		"-c", "submodule.recurse=false",
+		"-c", "fetch.recurseSubmodules=false",
+		"-c", "credential.helper=",
+		"-c", "credential.interactive=false",
+		"-c", "http.followRedirects=false",
+		"-c", "core.attributesFile=/dev/null",
+		"-c", "core.quotePath=false",
+		"-c", "core.pager=cat",
+		"-c", "core.bigFileThreshold=1m",
+		"-c", "commit.gpgSign=false",
+		"-c", "tag.gpgSign=false",
+	}
+	argv = append(argv, args...)
+	cmd := exec.Command(r.git, argv...) // #nosec G204 -- executable is resolved from the configured trusted PATH; literal git subcommands, no shell.
+	cmd.Dir = r.dir
+	cmd.Env = []string{
+		"PATH=" + r.path, "HOME=" + r.home, "TMPDIR=" + r.temp,
+		"LANG=C", "LC_ALL=C", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_TERMINAL_PROMPT=0", "GIT_ATTR_NOSYSTEM=1", "GIT_NO_REPLACE_OBJECTS=1",
+		"GIT_AUTHOR_NAME=" + r.author.Name, "GIT_AUTHOR_EMAIL=" + r.author.Email,
+		"GIT_COMMITTER_NAME=" + r.author.Name, "GIT_COMMITTER_EMAIL=" + r.author.Email,
+	}
+	if r.testInsecureTLS {
+		// Test-only: the fake HTTPS remote uses a self-signed certificate.
+		cmd.Env = append(cmd.Env, "GIT_SSL_NO_VERIFY=1")
+	}
+	if authenticated && token != "" {
+		encoded := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+		cmd.Env = append(cmd.Env, "GIT_CONFIG_COUNT=1",
+			"GIT_CONFIG_KEY_0=http.https://"+r.host+"/.extraheader",
+			"GIT_CONFIG_VALUE_0=AUTHORIZATION: basic "+encoded)
+	}
+	cmd.WaitDelay = time.Second
+	return cmd, nil
+}
+
+// run never includes argv, environment, stderr, or OS error strings in errors.
+// Even a remote that echoes an encoded/fragmented secret cannot leak it there.
+func (r *Repo) run(ctx context.Context, authenticated bool, args ...string) (string, bool, error) {
+	return r.runIndex(ctx, authenticated, "", args...)
+}
+
+func (r *Repo) runIndex(ctx context.Context, authenticated bool, index string, args ...string) (string, bool, error) {
+	return r.runIndexLimit(ctx, authenticated, index, r.outputCap, args...)
+}
+
+func (r *Repo) runIndexLimit(ctx context.Context, authenticated bool, index string, limit int, args ...string) (string, bool, error) {
+	if r.observeCommand != nil {
+		r.observeCommand(args)
+	}
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+	var token string
+	if authenticated {
+		var err error
+		if token, err = r.credential(ctx); err != nil {
+			return "", false, err
+		}
+	}
+	cmd, err := r.command(ctx, authenticated, token, args...)
+	if err != nil {
+		return "", false, err
+	}
+	if index != "" {
+		cmd.Env = append(cmd.Env, "GIT_INDEX_FILE="+index)
+	}
+	out, diagnostic := &cappedBuffer{limit: limit}, &cappedBuffer{limit: r.outputCap}
+	cmd.Stdout, cmd.Stderr = out, diagnostic
+	err = execx.RunProcessGroup(ctx, cmd, execx.DefaultGracePeriod)
+	if ctx.Err() != nil {
+		return "", false, fmt.Errorf("git command: %w", ctx.Err())
+	}
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return "", false, fmt.Errorf("git command failed (exit %d)", exitErr.ExitCode())
+		}
+		return "", false, errors.New("git command could not complete")
+	}
+	return string(out.data), out.truncated, nil
+}
+
+func (r *Repo) complete(ctx context.Context, authenticated bool, args ...string) (string, error) {
+	out, truncated, err := r.run(ctx, authenticated, args...)
+	if err == nil && truncated {
+		err = ErrOutputLimit
+	}
+	return out, err
+}
+
+// os/exec serializes writes to each buffer. Continue draining after the cap.
+type cappedBuffer struct {
+	data      []byte
+	limit     int
+	truncated bool
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	keep := min(n, b.limit-len(b.data))
+	b.data = append(b.data, p[:keep]...)
+	b.truncated = b.truncated || keep != n
+	return n, nil
+}
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-Ii3kEZP7' (errno=Operation not permitted)
+diff --git a/internal/config/validate.go b/internal/config/validate.go
+index a20039a..b882f5e 100644
+--- a/internal/config/validate.go
++++ b/internal/config/validate.go
+@@ -7,6 +7,7 @@ import (
+ 	"net"
+ 	"net/url"
+ 	"path"
++	"path/filepath"
+ 	"regexp"
+ 	"slices"
+ 	"strings"
+@@ -42,6 +43,7 @@ func (c *Config) Validate() error {
+ 	c.validateLimits(&v)
+ 	c.validateFixed(&v)
+ 	c.validateExecutor(&v)
++	c.validateGitHub(&v)
+ 	w := c.Webhook
+ 	v.check(envNameRE.MatchString(w.SecretEnv), "webhook.secret_env: must name an environment variable")
+ 	v.check(strings.HasPrefix(w.Path, "/") && w.Path != "/" && path.Clean(w.Path) == w.Path && !strings.ContainsAny(w.Path, "{} ?#\\"), "webhook.path: must be a clean literal path starting with /")
+@@ -59,6 +61,31 @@ func (c *Config) Validate() error {
+ 	return errors.Join(v.errs...)
+ }
+ 
++// validateGitHub checks [github] statically. The key file's type, mode and
++// owner are checked when it is loaded (startup and doctor), never printed.
++func (c *Config) validateGitHub(v *validator) {
++	g := c.GitHub
++	if g.Auth != GitHubAuthPAT && g.Auth != GitHubAuthApp {
++		v.addf(`github.auth: must be "pat" or "app"`)
++		return
++	}
++	if !g.App() {
++		return
++	}
++	v.check(g.AppID > 0, "github.app_id: app mode requires the numeric GitHub App ID")
++	v.check(g.InstallationID >= 0, "github.installation_id: must be 0 (resolve per repository) or a positive ID")
++	keyPath := g.PrivateKeyFile
++	if keyPath == "" || !filepath.IsAbs(keyPath) || filepath.Clean(keyPath) != keyPath || strings.ContainsRune(keyPath, 0) {
++		v.addf("github.private_key_file: app mode requires a clean absolute path")
++		return
++	}
++	if data := c.DataDir(); data != "" && filepath.IsAbs(data) {
++		if rel, err := filepath.Rel(filepath.Clean(data), keyPath); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
++			v.addf("github.private_key_file: must not be inside the data directory or workspaces")
++		}
++	}
++}
++
+ type validator struct {
+ 	errs     []error
+ 	redactor *secret.Redactor
+diff --git a/internal/github/identity.go b/internal/github/identity.go
+index d3c6ee4..f6a8c98 100644
+--- a/internal/github/identity.go
++++ b/internal/github/identity.go
+@@ -15,7 +15,7 @@ func (c *HTTPClient) CurrentUser(ctx context.Context) (string, error) {
+ 	var user struct {
+ 		Login string `json:"login"`
+ 	}
+-	_, err := c.request(ctx, http.MethodGet, &target, nil, &user, http.StatusOK)
++	_, err := c.request(ctx, nil, http.MethodGet, &target, nil, &user, http.StatusOK)
+ 	if err != nil {
+ 		return "", operationError("CurrentUser", err)
+ 	}
+diff --git a/internal/github/operations.go b/internal/github/operations.go
+index 67cfa05..a9f7fce 100644
+--- a/internal/github/operations.go
++++ b/internal/github/operations.go
+@@ -14,7 +14,7 @@ func (c *HTTPClient) call(ctx context.Context, repo RepoRef, parts []string, met
+ 	if err != nil {
+ 		return responseMeta{}, err
+ 	}
+-	return c.request(ctx, method, u, in, out, statuses...)
++	return c.request(ctx, &repo, method, u, in, out, statuses...)
+ }
+ 
+ // GetRepo fetches preflight metadata, including push permission and visibility.
+@@ -77,7 +77,7 @@ func (c *HTTPClient) listComments(ctx context.Context, repo RepoRef, number int,
+ 			requestCtx = context.WithValue(ctx, etagKey{}, etag)
+ 		}
+ 		var batch []Comment
+-		meta, err := c.request(requestCtx, http.MethodGet, u, nil, &batch, http.StatusOK, http.StatusNotModified)
++		meta, err := c.request(requestCtx, &repo, http.MethodGet, u, nil, &batch, http.StatusOK, http.StatusNotModified)
+ 		if err != nil {
+ 			return nil, "", false, err
+ 		}
+@@ -147,7 +147,7 @@ func (c *HTTPClient) FindOpenPR(ctx context.Context, repo RepoRef, headBranch st
+ 	}
+ 	u.RawQuery = url.Values{"state": {"open"}, "head": {repo.Owner + ":" + headBranch}, "per_page": {"100"}}.Encode()
+ 	var prs []PullRequest
+-	_, err = c.request(ctx, http.MethodGet, u, nil, &prs, http.StatusOK)
++	_, err = c.request(ctx, &repo, http.MethodGet, u, nil, &prs, http.StatusOK)
+ 	if err != nil {
+ 		return nil, operationError("FindOpenPR", err)
+ 	}
+@@ -213,6 +213,6 @@ func (c *HTTPClient) ListOpenIssues(ctx context.Context, repo RepoRef, page int)
+ 	q.Set("page", strconv.Itoa(page))
+ 	u.RawQuery = q.Encode()
+ 	var issues []Issue
+-	_, err = c.request(ctx, http.MethodGet, u, nil, &issues, http.StatusOK)
++	_, err = c.request(ctx, &repo, http.MethodGet, u, nil, &issues, http.StatusOK)
+ 	return issues, operationError("ListOpenIssues", err)
+ }
+diff --git a/internal/runner/phases.go b/internal/runner/phases.go
+index 4c32603..eac56d7 100644
+--- a/internal/runner/phases.go
++++ b/internal/runner/phases.go
+@@ -55,9 +55,12 @@ func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha
+ 			_ = os.RemoveAll(dir)
+ 		}
+ 	}()
+-	token, err := r.opts.Tokens.Token(ctx)
+-	if err != nil {
+-		return nil, errors.New("GitHub token unavailable; set GITHUB_TOKEN")
++	// git asks for a fresh repository-bound token on every remote operation,
++	// so a run longer than an installation token's lifetime still pushes.
++	repoRef := ref(run.Repo)
++	tokenFunc := func(ctx context.Context) (string, error) { return r.tokens.RepoToken(ctx, repoRef) }
++	if _, err := tokenFunc(ctx); err != nil {
++		return nil, githubCredentialError(err)
+ 	}
+ 	var repo *gitx.Repo
+ 	defer func() {
+@@ -67,7 +70,7 @@ func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha
+ 	}()
+ 	err = r.operation(ctx, run, "git", "clone", func() error {
+ 		var cloneErr error
+-		repo, cloneErr = r.opts.Clone(ctx, gitx.CloneOptions{Dir: filepath.Join(dir, "repo"), Host: "github.com", Owner: ref(run.Repo).Owner, Name: ref(run.Repo).Name, Branch: meta.DefaultBranch, DefaultBranch: meta.DefaultBranch, Token: token, TrustedPath: r.cfg.Limits.TrustedPath, ExcludedRoots: []string{r.cfg.DataDir()}})
++		repo, cloneErr = r.opts.Clone(ctx, gitx.CloneOptions{Dir: filepath.Join(dir, "repo"), Host: "github.com", Owner: ref(run.Repo).Owner, Name: ref(run.Repo).Name, Branch: meta.DefaultBranch, DefaultBranch: meta.DefaultBranch, TokenFunc: tokenFunc, TrustedPath: r.cfg.Limits.TrustedPath, ExcludedRoots: []string{r.cfg.DataDir()}})
+ 		return cloneErr
+ 	})
+ 	if err != nil {
+diff --git a/internal/runner/publish.go b/internal/runner/publish.go
+index da3d2f9..8ada9a4 100644
+--- a/internal/runner/publish.go
++++ b/internal/runner/publish.go
+@@ -9,7 +9,6 @@ import (
+ 
+ 	"github.com/aryanpappu/patchbot/internal/agent"
+ 	"github.com/aryanpappu/patchbot/internal/github"
+-	"github.com/aryanpappu/patchbot/internal/gitx"
+ 	"github.com/aryanpappu/patchbot/internal/store"
+ 	"github.com/aryanpappu/patchbot/internal/tools"
+ 	"github.com/aryanpappu/patchbot/internal/workspace"
+@@ -143,7 +142,7 @@ func (r *Runner) publish(ctx context.Context, run *store.Run, env *toolEnvironme
+ 	var head string
+ 	if err := r.operation(ctx, *run, "git", "commit", func() error {
+ 		var err error
+-		head, err = env.repo.CommitAll(ctx, fmt.Sprintf("fix: %s (#%d)", title, run.IssueNumber), gitx.Author{})
++		head, err = env.repo.CommitAll(ctx, fmt.Sprintf("fix: %s (#%d)", title, run.IssueNumber), r.opts.CommitAuthor)
+ 		if err == nil && review != nil {
+ 			// The commit must contain exactly the reviewed tree.
+ 			var tree string
+internal/runner/sync.go:85:		if !github.EligibleCommand(comment, r.cfg.Defaults.Approvers, func(login string) bool {
+internal/runner/sync.go:113:			if err := r.approve(ctx, run.ID, comment.Author, "github", &spec, true); err != nil {
+internal/runner/sync.go:121:			return r.revise(ctx, run.ID, command.Notes, comment.Author, "github", &spec)
+internal/gitx/gitx.go:56:	// Token is a fixed credential (PAT mode). Prefer TokenFunc.
+internal/gitx/gitx.go:57:	Token string
+internal/gitx/gitx.go:58:	// TokenFunc, when set, is called for every remote operation (clone, fetch,
+internal/gitx/gitx.go:60:	// It wins over Token. Its errors are never quoted.
+internal/gitx/gitx.go:61:	TokenFunc func(context.Context) (string, error)
+internal/gitx/gitx.go:76:// Author is operator-controlled identity, used for both author and committer.
+internal/gitx/gitx.go:78:type Author struct {
+internal/gitx/gitx.go:90:	author                                                Author
+internal/gitx/gitx.go:119:	if !validBranch(opts.DefaultBranch) || strings.ContainsRune(opts.Token, 0) {
+internal/gitx/gitx.go:125:	r := &Repo{dir: opts.Dir, host: opts.Host, token: opts.Token, tokenFunc: opts.TokenFunc, defaultBranch: opts.DefaultBranch,
+internal/gitx/gitx.go:127:		author: Author{"patchbot", "patchbot@users.noreply.github.com"}}
+internal/gitx/auth_remote_test.go:20:// request line or a non-Authorization header.
+internal/gitx/auth_remote_test.go:64:			if name != "Authorization" && strings.Contains(strings.Join(values, " "), token) {
+internal/gitx/auth_remote_test.go:68:		scheme, credential, _ := strings.Cut(req.Header.Get("Authorization"), " ")
+internal/gitx/auth_remote_test.go:87:		Branch: "main", Depth: depth, Token: token, testHTTPSRemote: a.url})
+internal/gitx/auth_remote_test.go:98:	remote := newAuthRemote(t, f, fakeToken)
+internal/gitx/auth_remote_test.go:99:	basic := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + fakeToken))
+internal/gitx/auth_remote_test.go:108:	r, err := remote.clone(t, fakeToken, 1)
+internal/gitx/auth_remote_test.go:123:	if _, err := r.CommitAll(ctx, "private change", Author{}); err != nil {
+internal/gitx/auth_remote_test.go:143:		if strings.Contains(args, fakeToken) || strings.Contains(args, basic) {
+internal/gitx/auth_remote_test.go:148:	if strings.Contains(config, fakeToken) || strings.Contains(config, basic) ||
+internal/gitx/auth_remote_test.go:155:	unauth, err := remote.clone(t, fakeToken, 1)
+internal/gitx/auth_remote_test.go:173:	if _, err := unauth.CommitAll(ctx, "other", Author{}); err != nil {
+internal/gitx/auth_remote_test.go:180:	if strings.Contains(err.Error(), fakeToken) || strings.Contains(err.Error(), basic) {
+internal/gitx/auth_remote_test.go:189:		t.Fatal("credential appeared in a URL or non-Authorization header")
+internal/gitx/auth_remote_test.go:191:	if _, err := Clone(ctx, CloneOptions{Dir: filepath.Join(t.TempDir(), "bad"), Branch: "main", Token: fakeToken,
+internal/gitx/auth_remote_test.go:192:		testHTTPSRemote: strings.Replace(remote.url, "https://", "https://user:"+fakeToken+"@", 1)}); err == nil ||
+internal/gitx/auth_remote_test.go:193:		strings.Contains(err.Error(), fakeToken) {
+internal/gitx/auth_remote_test.go:198:func TestPushLsRemoteFailureWithoutTokenStopsBeforePush(t *testing.T) {
+internal/gitx/auth_remote_test.go:202:	remote := newAuthRemote(t, f, fakeToken)
+internal/gitx/auth_remote_test.go:203:	r, err := remote.clone(t, fakeToken, 0)
+internal/gitx/auth_remote_test.go:211:	if _, err := r.CommitAll(ctx, "x", Author{}); err != nil {
+internal/gitx/auth_remote_test.go:227:// TestTokenFuncFreshTokenPerRemoteOperation: the clone-time token expires
+internal/gitx/auth_remote_test.go:228:// (the remote stops accepting it) before push; push must ask TokenFunc again
+internal/gitx/auth_remote_test.go:229:// and succeed with the new token. A fixed Token would fail here.
+internal/gitx/auth_remote_test.go:230:func TestTokenFuncFreshTokenPerRemoteOperation(t *testing.T) {
+internal/gitx/auth_remote_test.go:234:	first, second := "ghs_firstInstallationToken000000000000", "ghs_secondInstallationToken00000000000"
+internal/gitx/auth_remote_test.go:239:		testHTTPSRemote: remote.url, TokenFunc: func(context.Context) (string, error) {
+internal/gitx/auth_remote_test.go:258:	if _, err := r.CommitAll(ctx, "late change", Author{}); err != nil {
+internal/gitx/auth_remote_test.go:268:		t.Fatalf("TokenFunc calls = %d, want one per remote operation", calls)
+internal/gitx/auth_remote_test.go:276:func TestTokenFuncErrorFailsClosedWithoutQuoting(t *testing.T) {
+internal/gitx/auth_remote_test.go:279:	remote := newAuthRemote(t, f, fakeToken)
+internal/gitx/auth_remote_test.go:281:		testHTTPSRemote: remote.url, Token: fakeToken, TokenFunc: func(context.Context) (string, error) {
+internal/gitx/auth_remote_test.go:282:			return "", errors.New("mint failed: " + fakeToken)
+internal/gitx/auth_remote_test.go:284:	if err == nil || strings.Contains(err.Error(), fakeToken) {
+internal/gitx/auth_remote_test.go:285:		t.Fatalf("clone with failing TokenFunc = %v; want a closed failure with no fallback to Token", err)
+internal/gitx/tree_test.go:39:	if _, err := r.CommitAll(ctx, "add", Author{}); err != nil {
+internal/secret/fuzz_test.go:26:		if len(value) < secret.MinValueLen || strings.ContainsAny(value, "[]") || value == "redacted" {
+internal/secret/fuzz_test.go:65:	f.Add(pad+"Authorization: Bearer abcdefghijklmnopqrstuvwxyz"+pad, uint16(370), uint16(380))
+internal/secret/fuzz_test.go:71:	f.Add(pad+"Authorization: Basic dXNlcjpodW50ZXIyLWh1bnRlcjI= basic "+pad, uint16(365), uint16(390))
+internal/gitx/publish.go:12:func (r *Repo) CommitAll(ctx context.Context, msg string, author Author) (string, error) {
+internal/gitx/publish.go:21:	if author == (Author{}) {
+internal/gitx/publish.go:22:		author = Author{"patchbot", "patchbot@users.noreply.github.com"}
+internal/secret/writer.go:22:	swallowToken         // drop bytes until the current token ends
+internal/secret/writer.go:26:// Writer redacts a stream. It holds back the tail of what it has seen, so a
+internal/secret/writer.go:39:// NewWriter returns a Writer that sends redacted output to dst.
+internal/secret/writer.go:95:// process moves the safe prefix of w.buf, redacted, into out.
+internal/secret/writer.go:133:		w.mode = swallowToken
+internal/secret/writer.go:142:	case swallowToken:
+internal/secret/writer.go:144:		for n < len(w.buf) && isTokenChar(w.buf[n]) {
+internal/secret/writer.go:212:func isTokenChar(b byte) bool {
+internal/secret/secret.go:12:const Mask = "[redacted]"
+internal/runner/phases.go:61:	tokenFunc := func(ctx context.Context) (string, error) { return r.tokens.RepoToken(ctx, repoRef) }
+internal/runner/phases.go:73:		repo, cloneErr = r.opts.Clone(ctx, gitx.CloneOptions{Dir: filepath.Join(dir, "repo"), Host: "github.com", Owner: ref(run.Repo).Owner, Name: ref(run.Repo).Name, Branch: meta.DefaultBranch, DefaultBranch: meta.DefaultBranch, TokenFunc: tokenFunc, TrustedPath: r.cfg.Limits.TrustedPath, ExcludedRoots: []string{r.cfg.DataDir()}})
+internal/runner/phases.go:102:	return &toolEnvironment{repo: repo, dir: dir, env: &tools.Env{WS: ws, Exec: executor, Policy: policy, RunDir: dir, Redactor: r.redactor, Limits: tools.Limits{CmdTimeout: limits.CmdTimeout, CmdOutputBytes: limits.CmdOutputBytes, CmdStoreBytes: limits.CmdStoreBytes}}}, nil
+internal/runner/phases.go:138:	if totals.Active >= limits.Timeout || session.Tokens >= limits.Agent.MaxTotalTokens || session.Cost >= limits.Agent.MaxCostMicros {
+internal/runner/phases.go:145:	title := r.redactor.Redact(issue.Title)
+internal/runner/phases.go:521:	record := &agent.StoreRecorder{Store: r.db, RunID: run.ID, Phase: store.PhaseBaseline, Redactor: r.redactor}
+internal/secret/redactor.go:31:// redactor is often escaped, and in "\\nghp_..." or "%20ghp_..." the token
+internal/secret/redactor.go:46:		// Authorization headers. Only the credential is masked.
+internal/secret/redactor.go:50:		// Authorization header any length counts; elsewhere it must be long
+internal/secret/writer_test.go:43:		{"bearer header", pad + "Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345\n" + pad},
+internal/secret/writer_test.go:44:		{"basic header", pad + "Authorization: Basic " + basic("x-access-token:"+knownValue) + "\n" + pad},
+internal/secret/writer_test.go:79:		{"value ends with a header name", "abcdAuthorization", "abcdAuthorization: Basic " + strings.Repeat("Q", 300)},
+internal/secret/writer_test.go:151:		{"endless token", "start sk-", " tail\n", "start [redacted] tail\n"},
+internal/secret/writer_test.go:152:		{"endless token at the end", "start sk-", "", "start [redacted]"},
+internal/secret/writer_test.go:153:		{"private key with no end", "start -----BEGIN PRIVATE KEY-----\n", "", "start [redacted]"},
+internal/secret/writer_test.go:158:			"start [redacted]\ntail\n",
+internal/secret/redactor_test.go:32:		{"github classic", "token=" + fakeGitHub + " ok", "token=[redacted] ok"},
+internal/secret/redactor_test.go:33:		{"github oauth", "gho_" + strings.Repeat("a", 36), "[redacted]"},
+internal/secret/redactor_test.go:34:		{"github server", "ghs_" + strings.Repeat("B", 36), "[redacted]"},
+internal/secret/redactor_test.go:35:		{"github user", "ghu_" + strings.Repeat("c", 36), "[redacted]"},
+internal/secret/redactor_test.go:36:		{"github refresh", "ghr_" + strings.Repeat("9", 36), "[redacted]"},
+internal/secret/redactor_test.go:37:		{"github fine-grained", "x " + fakeGitHubPAT + ".", "x [redacted]."},
+internal/secret/redactor_test.go:38:		{"anthropic", "key " + fakeAnthropic, "key [redacted]"},
+internal/secret/redactor_test.go:39:		{"openai", "OPENAI=" + fakeOpenAI + "\n", "OPENAI=[redacted]\n"},
+internal/secret/redactor_test.go:40:		{"google", "?key=" + fakeGoogle + "&x=1", "?key=[redacted]&x=1"},
+internal/secret/redactor_test.go:41:		{"bearer keeps the scheme", "Authorization: Bearer abcdefghijklmnop.qrstuv", "Authorization: Bearer [redacted]"},
+internal/secret/redactor_test.go:42:		{"bearer lower case", "authorization: bearer abcdefghijklmnopqrstuv", "authorization: bearer [redacted]"},
+internal/secret/redactor_test.go:43:		{"bearer with a known token", "Bearer " + fakeGitHub, "Bearer [redacted]"},
+internal/secret/redactor_test.go:44:		{"basic header", "Authorization: Basic " + basic("user:pass"), "Authorization: Basic [redacted]"},
+internal/secret/redactor_test.go:45:		{"basic header, shortest credentials", "authorization: basic " + basic("a:b"), "authorization: basic [redacted]"},
+internal/secret/redactor_test.go:46:		{"basic in a json header map", `{"Authorization":"Basic ` + basic("ci:hunter2") + `"}`, `{"Authorization":"Basic [redacted]"}`},
+internal/secret/redactor_test.go:47:		{"basic in a git extraheader", "http.extraheader=AUTHORIZATION: basic " + basic("x-access-token:abc"), "http.extraheader=AUTHORIZATION: basic [redacted]"},
+internal/secret/redactor_test.go:48:		{"proxy basic header", "Proxy-Authorization: Basic " + basic("u:p") + "\r\n", "Proxy-Authorization: Basic [redacted]\r\n"},
+internal/secret/redactor_test.go:49:		{"basic without a header name", "curl sent Basic " + basic("deploy:a-long-password") + " ok", "curl sent Basic [redacted] ok"},
+internal/secret/redactor_test.go:51:		{"pem", "a\n" + fakePEM + "\nb", "a\n[redacted]\nb"},
+internal/secret/redactor_test.go:52:		{"pem without end", "a\n-----BEGIN PRIVATE KEY-----\nMIIabc\ndef", "a\n[redacted]"},
+internal/secret/redactor_test.go:53:		{"two pem blocks", fakePEM + "\nmid\n" + fakePEM, "[redacted]\nmid\n[redacted]"},
+internal/secret/redactor_test.go:54:		{"two tokens", fakeGitHub + " and " + fakeOpenAI, "[redacted] and [redacted]"},
+internal/secret/redactor_test.go:57:		{"token after an escaped newline", `{"out":"a\\n` + fakeGitHub + `\\nsk-` + strings.Repeat("Z", 48) + `"}`, `{"out":"a\\n[redacted]\\n[redacted]"}`},
+internal/secret/redactor_test.go:58:		{"token after a url escape", "q=%20" + fakeGoogle + "%20Bearer%20x", "q=%20[redacted]%20Bearer%20x"},
+internal/secret/redactor_test.go:59:		{"legacy openai", "sk-" + strings.Repeat("a1B2", 12), "[redacted]"},
+internal/secret/redactor_test.go:61:		{"mask is stable", "[redacted]", "[redacted]"},
+internal/secret/redactor_test.go:88:		{"one value", []string{"hunter2-hunter2"}, "pw=hunter2-hunter2;", "pw=[redacted];"},
+internal/secret/redactor_test.go:89:		{"repeated", []string{"hunter2-hunter2"}, "hunter2-hunter2 hunter2-hunter2", "[redacted] [redacted]"},
+internal/secret/redactor_test.go:92:		{"exactly eight chars", []string{"abcd1234"}, "xabcd1234x", "x[redacted]x"},
+internal/secret/redactor_test.go:93:		{"one value contains the other", []string{"abcdefgh", "abcdefghijkl"}, "<abcdefghijkl>", "<[redacted]>"},
+internal/secret/redactor_test.go:94:		{"overlapping values", []string{"abcdefgh12", "gh12345678"}, "<abcdefgh12345678>", "<[redacted]>"},
+internal/secret/redactor_test.go:95:		{"self-overlapping value", []string{"abababab"}, "<ababababab>", "<[redacted]>"},
+internal/secret/redactor_test.go:96:		{"adjacent values", []string{"aaaaaaaa1", "bbbbbbbb2"}, "aaaaaaaa1bbbbbbbb2", "[redacted]"},
+internal/secret/redactor_test.go:97:		{"value next to a token", []string{"hunter2-hunter2"}, "hunter2-hunter2" + fakeGitHub, "[redacted]"},
+internal/secret/redactor_test.go:98:		{"value with regexp characters", []string{"a.*b[c]{2}$^(d)"}, "x a.*b[c]{2}$^(d) y", "x [redacted] y"},
+internal/secret/redactor_test.go:99:		{"multi-line value", []string{"line1\nline2\nline3"}, "a line1\nline2\nline3 b", "a [redacted] b"},
+internal/secret/redactor_test.go:100:		{"unicode value", []string{"пароль-пароль"}, "é пароль-пароль é", "é [redacted] é"},
+internal/secret/redactor_test.go:105:			"Basic [redacted]",
+internal/secret/redactor_test.go:111:			"[redacted]",
+internal/secret/redactor_test.go:141:			"Authorization: Basic " + encoded,
+internal/secret/redactor_test.go:160:	if got := a.Redact("first-secret-value second-secret-value"); got != "[redacted] [redacted]" {
+internal/secret/redactor_test.go:172:	if got, want := r.Redact("a first-secret-value tiny"), "a [redacted] tiny"; got != want {
+internal/secret/redactor_test.go:188:				if got := r.Redact("x initial-secret-value y"); got != "x [redacted] y" {
+internal/gitx/gitx_test.go:18:const fakeToken = "ghp_m10_fake_credential_never_expose_123456789" // #nosec G101 -- deliberately fake regression-test credential.
+internal/gitx/gitx_test.go:70:		Branch: "main", Depth: depth, Token: fakeToken, TestOnlyLocalRemote: f.bare})
+internal/gitx/gitx_test.go:142:	sha, err = r.CommitAll(ctx, "fix: example (#10)", Author{"Controlled Bot", "controlled@example.invalid"})
+internal/gitx/gitx_test.go:169:	if strings.Contains(config, fakeToken) || strings.Contains(strings.ToLower(config), "extraheader") || strings.Contains(config, "AUTHORIZATION") {
+internal/gitx/gitx_test.go:225:	if _, err := r.CommitAll(ctx, "rename", Author{}); err != nil {
+internal/gitx/gitx_test.go:264:	if _, err := r.CommitAll(ctx, "local change", Author{}); err != nil {
+internal/gitx/gitx_test.go:318:			if _, err := r.CommitAll(context.Background(), "no", Author{}); !errors.Is(err, ErrTampered) {
+internal/gitx/gitx_test.go:354:	if _, err := clean.CommitAll(ctx, "unsafe", Author{}); !errors.Is(err, ErrSubmodules) {
+internal/gitx/gitx_test.go:391:	if _, err := r.CommitAll(ctx, "safe", Author{}); err != nil {
+internal/gitx/gitx_test.go:408:	if _, err := r.CommitAll(ctx, "refused", Author{}); !errors.Is(err, ErrTampered) {
+internal/gitx/gitx_test.go:420:	basic := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + fakeToken))
+internal/gitx/gitx_test.go:436:		if strings.Contains(argv, fakeToken) || strings.Contains(argv, basic) {
+internal/gitx/gitx_test.go:487:	write(t, script, "#!/bin/sh\nprintf '%s' '"+fakeToken+" "+basic+"' >&2\nexit 23\n")
+internal/gitx/gitx_test.go:493:	if err == nil || strings.Contains(err.Error(), fakeToken) || strings.Contains(err.Error(), basic) {
+internal/gitx/gitx_test.go:496:	_, err = r.command(context.Background(), false, r.token, fakeToken)
+internal/gitx/gitx_test.go:497:	if err == nil || strings.Contains(err.Error(), fakeToken) {
+
+codex
+The mint response checks accept missing permission and repository fields, so they do not fully enforce the documented scope guarantee. I’m checking the remaining identity, retry, and redaction paths for additional findings.
+exec
+/bin/zsh -lc "sed -n '355,440p' internal/cli/doctor.go; nl -ba internal/github/app.go | sed -n '188,210p;350,398p'; cat internal/github/identity.go; rg -n 'BotLogin|CurrentUser' internal/runner; cat internal/secret/redactor.go | head -150; sed -n '1,105p' internal/gitx/command.go; cat docs/planning/auth/codex-round1.md" in /Users/pappumishra/Documents/selfproject/patchbot-m27-app
+ succeeded in 0ms:
+// doctorAppKey checks the App key file placement and signs a JWT locally.
+// Errors are fixed strings; key material is never printed.
+func doctorAppKey(cfg *config.Config, opts runner.Options, r *secret.Redactor, add func(string, string, string)) *github.App {
+	excluded := []string{cfg.DataDir(), filepath.Join(cfg.DataDir(), "workspaces")}
+	key, err := github.LoadAppPrivateKey(cfg.GitHub.PrivateKeyFile, excluded...)
+	if err != nil {
+		add("FAIL", "GitHub App key", err.Error())
+		return nil
+	}
+	add("PASS", "GitHub App key", "regular file, mode 0600 or stricter, owned by this user, outside the data directory")
+	app, err := github.NewApp(github.AppOptions{AppID: cfg.GitHub.AppID, Key: key, InstallationID: cfg.GitHub.InstallationID,
+		BaseURL: opts.GitHubAPI, HTTPClient: opts.GitHubHTTP, OnMint: func(token string) { r.Add(token, github.GitHeaderForm(token)) }})
+	if err == nil {
+		_, err = app.SignJWT()
+	}
+	if err != nil {
+		add("FAIL", "GitHub App JWT", "cannot sign a JWT with the configured key")
+		return nil
+	}
+	add("PASS", "GitHub App JWT", "signed locally (RS256)")
+	return app
+}
+
+// doctorAppOnline checks the App identity and, for every allowlisted
+// repository, that the App is installed with the permissions runs need and
+// that a single-repository token can be minted.
+func doctorAppOnline(ctx context.Context, cfg *config.Config, app *github.App, add func(string, string, string)) {
+	if app == nil {
+		add("FAIL", "GitHub App", "skipped: the key check failed")
+		return
+	}
+	identity, err := app.Identity(ctx)
+	if err != nil {
+		add("FAIL", "GitHub App identity", err.Error())
+		return
+	}
+	add("PASS", "GitHub App identity", fmt.Sprintf("%s (commit author id %d)", identity.Login, identity.UserID))
+	if len(cfg.Repos) == 0 {
+		add("WARN", "GitHub App installation", "no repositories configured")
+	}
+	for _, name := range sortedNames(cfg.Repos) {
+		owner, repoName, _ := strings.Cut(name, "/")
+		repo := github.RepoRef{Owner: owner, Name: repoName}
+		check := "GitHub App " + name
+		info, err := app.Installation(ctx, repo)
+		if err != nil {
+			add("FAIL", check, "App is not installed on this repository or cannot reach it: "+err.Error())
+			continue
+		}
+		if cfg.GitHub.InstallationID > 0 && info.ID != cfg.GitHub.InstallationID {
+			add("FAIL", check, fmt.Sprintf("repository belongs to installation %d, not the configured installation_id", info.ID))
+			continue
+		}
+		var missing []string
+		for _, perm := range sortedNames(github.RunPermissions) {
+			want, got := github.RunPermissions[perm], info.Permissions[perm]
+			if got != want && (want != "read" || got != "write") {
+				missing = append(missing, perm+":"+want)
+			}
+		}
+		if len(missing) > 0 {
+			add("FAIL", check, "installation lacks permissions: "+strings.Join(missing, ", "))
+			continue
+		}
+		if _, err := app.RepoToken(ctx, repo); err != nil {
+			add("FAIL", check, "cannot mint a single-repository token: "+err.Error())
+			continue
+		}
+		add("PASS", check, fmt.Sprintf("installation %d; contents/issues/pull_requests write, metadata read; token minted", info.ID))
+	}
+}
+   188		key := tokenKey{installation, repoID, permissionKey(RunPermissions)}
+   189		if token, ok := a.cached(key); ok {
+   190			return token, nil
+   191		}
+   192		value, err := a.share(ctx, fmt.Sprintf("token/%d/%d/%s", key.installation, key.repo, key.permissions), func(ctx context.Context) (any, error) {
+   193			if token, ok := a.cached(key); ok {
+   194				return token, nil
+   195			}
+   196			minted, err := a.mint(ctx, installation, map[string]any{"repository_ids": []int64{repoID}, "permissions": RunPermissions}, RunPermissions)
+   197			if err != nil {
+   198				return nil, err
+   199			}
+   200			if len(minted.Repositories) > 0 && (len(minted.Repositories) != 1 || minted.Repositories[0].ID != repoID) {
+   201				return nil, &MintError{Kind: "denied", msg: "minted token is not limited to the requested repository"}
+   202			}
+   203			a.mu.Lock()
+   204			a.tokens[key] = cachedToken{token: minted.Token, expires: minted.ExpiresAt}
+   205			a.mu.Unlock()
+   206			return minted.Token, nil
+   207		})
+   208		if err != nil {
+   209			return "", err
+   210		}
+   350		return value.(int64), nil
+   351	}
+   352	
+   353	type mintedToken struct {
+   354		Token        string            `json:"token"`
+   355		ExpiresAt    time.Time         `json:"expires_at"`
+   356		Permissions  map[string]string `json:"permissions"`
+   357		Repositories []struct {
+   358			ID       int64  `json:"id"`
+   359			FullName string `json:"full_name"`
+   360		} `json:"repositories"`
+   361	}
+   362	
+   363	// mint calls POST /app/installations/{id}/access_tokens. The token is passed
+   364	// to OnMint before it is returned or cached.
+   365	func (a *App) mint(ctx context.Context, installation int64, body map[string]any, want map[string]string) (mintedToken, error) {
+   366		target := *a.jwtClient.baseURL
+   367		target.Path = strings.TrimRight(target.Path, "/") + "/app/installations/" + strconv.FormatInt(installation, 10) + "/access_tokens"
+   368		target.RawPath = ""
+   369		var out mintedToken
+   370		err := a.retry(ctx, func() error {
+   371			out = mintedToken{}
+   372			_, err := a.jwtClient.request(ctx, nil, http.MethodPost, &target, body, &out, http.StatusCreated)
+   373			return err
+   374		})
+   375		if err != nil {
+   376			return mintedToken{}, err
+   377		}
+   378		if out.Token == "" || strings.ContainsAny(out.Token, " \t\r\n\x00") || out.ExpiresAt.IsZero() {
+   379			return mintedToken{}, &MintError{Kind: "unavailable", msg: "invalid installation token response"}
+   380		}
+   381		if a.opts.OnMint != nil {
+   382			a.opts.OnMint(out.Token)
+   383		}
+   384		if !out.ExpiresAt.After(a.clock()) {
+   385			return mintedToken{}, &MintError{Kind: "unavailable", msg: "installation token already expired"}
+   386		}
+   387		if out.Permissions != nil {
+   388			for name, level := range want {
+   389				if out.Permissions[name] != level {
+   390					return mintedToken{}, &MintError{Kind: "denied", msg: "installation lacks permission " + name + ":" + level}
+   391				}
+   392			}
+   393			for name := range out.Permissions {
+   394				if _, ok := want[name]; !ok {
+   395					return mintedToken{}, &MintError{Kind: "denied", msg: "token carries unrequested permission " + name}
+   396				}
+   397			}
+   398		}
+package github
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"strings"
+)
+
+// CurrentUser obtains the authenticated bot login for fail-closed comment sync.
+func (c *HTTPClient) CurrentUser(ctx context.Context) (string, error) {
+	target := *c.baseURL
+	target.Path = strings.TrimRight(target.Path, "/") + "/user"
+	target.RawPath = ""
+	var user struct {
+		Login string `json:"login"`
+	}
+	_, err := c.request(ctx, nil, http.MethodGet, &target, nil, &user, http.StatusOK)
+	if err != nil {
+		return "", operationError("CurrentUser", err)
+	}
+	if user.Login == "" {
+		return "", errors.New("CurrentUser: missing login")
+	}
+	return user.Login, nil
+}
+internal/runner/README.md:21:GitHub client resolves the identity from `/user`; tests can supply `BotLogin`.
+internal/runner/runner_test.go:132:	f.opts = runner.Options{GitHub: client, Tokens: tokens, BotLogin: "patchbot", Clock: f.clock, HeartbeatInterval: 5 * time.Millisecond, Constructors: llm.Constructors{"anthropic": func(llm.ProviderConfig) (llm.Provider, error) { return f.p, nil }}, Clone: func(ctx context.Context, opts gitx.CloneOptions) (*gitx.Repo, error) {
+internal/runner/auth.go:28:		opts.BotLogin = identity.Login
+internal/runner/runner.go:64:	BotLogin          string
+internal/runner/app_auth_test.go:163:	opts.GitHub, opts.BotLogin = nil, ""
+internal/runner/shared_identity_test.go:42:	f.opts.BotLogin = bot
+internal/runner/shared_identity_test.go:142:				base.botAuthor, base.postPrefix, base.opts.BotLogin = tt.bot, tt.prefix, tt.bot
+internal/runner/sync.go:44:	bot := r.opts.BotLogin
+internal/runner/sync.go:47:			CurrentUser(context.Context) (string, error)
+internal/runner/sync.go:53:		bot, err = identity.CurrentUser(ctx)
+internal/runner/recovery_test.go:336:	f.opts.BotLogin = ""
+package secret
+
+import (
+	"encoding/base64"
+	"regexp"
+	"slices"
+	"strings"
+	"sync"
+)
+
+// MinValueLen is the shortest secret value a Redactor will register. Masking
+// shorter values would damage ordinary text and reveal little.
+const MinValueLen = 8
+
+const (
+	// maxPatternPrefix is longer than the text any pattern can match before it
+	// reaches its minimum length, so a pattern that started more than this
+	// many bytes before the end of a buffer has already matched.
+	maxPatternPrefix = 128
+)
+
+type pattern struct {
+	re *regexp.Regexp
+	// group is the submatch to mask; 0 masks the whole match.
+	group int
+	// pem marks the private-key pattern, which may run to the end of input.
+	pem bool
+}
+
+// The patterns carry no word-boundary anchors on purpose. Text that reaches a
+// redactor is often escaped, and in "\\nghp_..." or "%20ghp_..." the token
+// follows a letter or digit.
+var (
+	patterns = []pattern{
+		// GitHub personal, OAuth, user-to-server, server-to-server and refresh tokens.
+		{re: regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{20,}`)},
+		{re: regexp.MustCompile(`github_pat_[A-Za-z0-9_]{20,}`)},
+		// Anthropic keys.
+		{re: regexp.MustCompile(`sk-ant-[A-Za-z0-9_-]{16,}`)},
+		// OpenAI keys (sk-, sk-proj-, sk-svcacct-, ...). A run of 20 characters
+		// with no hyphen is required, which random keys have and hyphenated
+		// names such as "task-list-for-the-nightly-job" do not.
+		{re: regexp.MustCompile(`sk-[A-Za-z0-9_-]{0,40}?[A-Za-z0-9_]{20,}[A-Za-z0-9_-]*`)},
+		// Google API keys.
+		{re: regexp.MustCompile(`AIza[A-Za-z0-9_-]{30,}`)},
+		// Authorization headers. Only the credential is masked.
+		{re: regexp.MustCompile(`(?i)bearer[ \t]{1,8}([A-Za-z0-9._~+/=-]{16,})`), group: 1},
+		// Basic auth. The value is base64("user:password"), which no
+		// registered value can match, so it is masked by shape. After an
+		// Authorization header any length counts; elsewhere it must be long
+		// enough not to be an ordinary word after "basic".
+		{re: regexp.MustCompile(`(?i)authorization["']?[ \t]{0,4}[:=][ \t]{0,4}["']?basic[ \t]{1,8}([A-Za-z0-9+/=_-]+)`), group: 1},
+		{re: regexp.MustCompile(`(?i)basic[ \t]{1,8}([A-Za-z0-9+/_-]{16,}={0,2})`), group: 1},
+		// PEM private keys. A block with no END line is masked to the end.
+		{
+			re: regexp.MustCompile(`-----BEGIN [A-Z ]{0,24}PRIVATE KEY-----[\s\S]*?` +
+				`(?:-----END [A-Z ]{0,24}PRIVATE KEY-----|\z)`),
+			pem: true,
+		},
+	}
+	pemEnd = regexp.MustCompile(`-----END [A-Z ]{0,24}PRIVATE KEY-----`)
+)
+
+// Redactor masks registered secret values and token-shaped strings. The zero
+// value is not usable; call NewRedactor. A nil *Redactor still masks the
+// token-shaped patterns. A Redactor is safe for concurrent use.
+type Redactor struct {
+	mu     sync.RWMutex
+	values []string
+	maxLen int
+}
+
+// NewRedactor returns a Redactor that masks the given values.
+func NewRedactor(values ...string) *Redactor {
+	r := &Redactor{}
+	r.Add(values...)
+	return r
+}
+
+// Add registers secret values. Values shorter than MinValueLen are ignored.
+// The standard and URL-safe base64 forms of each value are registered too,
+// because that is how a secret appears inside a Basic auth header.
+func (r *Redactor) Add(values ...string) {
+	r.add(MinValueLen, values...)
+}
+
+// AddExact registers credentials using the same minimum as Add.
+// Kept for callers at authentication boundaries; short values are not masked.
+func (r *Redactor) AddExact(values ...string) {
+	r.Add(values...)
+}
+
+func (r *Redactor) add(minLength int, values ...string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, value := range values {
+		if len(value) < minLength {
+			continue
+		}
+		raw := []byte(value)
+		for _, form := range []string{
+			value,
+			base64.StdEncoding.EncodeToString(raw),
+			base64.RawStdEncoding.EncodeToString(raw),
+			base64.URLEncoding.EncodeToString(raw),
+			base64.RawURLEncoding.EncodeToString(raw),
+		} {
+			if slices.Contains(r.values, form) {
+				continue
+			}
+			r.values = append(r.values, form)
+			r.maxLen = max(r.maxLen, len(form))
+		}
+	}
+}
+
+// Extend adds everything other masks to r.
+func (r *Redactor) Extend(other *Redactor) {
+	if other == nil || other == r {
+		return
+	}
+	other.mu.RLock()
+	values := slices.Clone(other.values)
+	other.mu.RUnlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, value := range values {
+		if !slices.Contains(r.values, value) {
+			r.values = append(r.values, value)
+			r.maxLen = max(r.maxLen, len(value))
+		}
+	}
+}
+
+// AddSecrets registers the values of the given secrets.
+func (r *Redactor) AddSecrets(secrets ...Secret) {
+	for _, s := range secrets {
+		r.Add(s.Reveal())
+	}
+}
+
+// Redact returns s with every secret replaced by Mask.
+func (r *Redactor) Redact(s string) string {
+	spans := r.find(s)
+	if len(spans) == 0 {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	last := 0
+package gitx
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/execx"
+)
+
+const trustedPath = execx.TrustedPath
+
+// remoteCommands are the only git subcommands that talk to the remote. Each of
+// them must use the authenticated path (a private repository refuses anonymous
+// reads), and no other subcommand ever receives the credential.
+var remoteCommands = map[string]bool{"clone": true, "fetch": true, "ls-remote": true, "push": true}
+
+// command builds the entire environment explicitly. Credentials are deliberately
+// absent from argv, including -c arguments, and from all local calls. They reach
+// git only as an ephemeral, host-scoped http.extraheader via GIT_CONFIG_*.
+// credential returns the token for one remote operation: a fresh one from
+// tokenFunc when configured, else the fixed clone-time token.
+func (r *Repo) credential(ctx context.Context) (string, error) {
+	if r.tokenFunc == nil {
+		return r.token, nil
+	}
+	token, err := r.tokenFunc(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("git credential: %w", ctx.Err())
+		}
+		return "", errors.New("git credential unavailable")
+	}
+	if token == "" || strings.ContainsAny(token, "\x00\r\n") {
+		return "", errors.New("invalid git credential")
+	}
+	return token, nil
+}
+
+func (r *Repo) command(_ context.Context, authenticated bool, token string, args ...string) (*exec.Cmd, error) {
+	remote := len(args) > 0 && remoteCommands[args[0]]
+	if authenticated && !remote {
+		return nil, errors.New("credentials are restricted to remote operations")
+	}
+	if remote && !authenticated {
+		return nil, errors.New("remote operations must use the authenticated path")
+	}
+	for _, arg := range args {
+		if strings.ContainsRune(arg, 0) || (token != "" && strings.Contains(arg, token)) {
+			return nil, errors.New("invalid git argument")
+		}
+	}
+	protocol := "never"
+	if r.localRemote != "" {
+		protocol = "always"
+	}
+	argv := []string{
+		"--literal-pathspecs",
+		"-c", "core.hooksPath=" + r.hooks,
+		"-c", "core.fsmonitor=false",
+		"-c", "protocol.allow=never",
+		"-c", "protocol.https.allow=always",
+		"-c", "protocol.file.allow=" + protocol,
+		"-c", "submodule.recurse=false",
+		"-c", "fetch.recurseSubmodules=false",
+		"-c", "credential.helper=",
+		"-c", "credential.interactive=false",
+		"-c", "http.followRedirects=false",
+		"-c", "core.attributesFile=/dev/null",
+		"-c", "core.quotePath=false",
+		"-c", "core.pager=cat",
+		"-c", "core.bigFileThreshold=1m",
+		"-c", "commit.gpgSign=false",
+		"-c", "tag.gpgSign=false",
+	}
+	argv = append(argv, args...)
+	cmd := exec.Command(r.git, argv...) // #nosec G204 -- executable is resolved from the configured trusted PATH; literal git subcommands, no shell.
+	cmd.Dir = r.dir
+	cmd.Env = []string{
+		"PATH=" + r.path, "HOME=" + r.home, "TMPDIR=" + r.temp,
+		"LANG=C", "LC_ALL=C", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_TERMINAL_PROMPT=0", "GIT_ATTR_NOSYSTEM=1", "GIT_NO_REPLACE_OBJECTS=1",
+		"GIT_AUTHOR_NAME=" + r.author.Name, "GIT_AUTHOR_EMAIL=" + r.author.Email,
+		"GIT_COMMITTER_NAME=" + r.author.Name, "GIT_COMMITTER_EMAIL=" + r.author.Email,
+	}
+	if r.testInsecureTLS {
+		// Test-only: the fake HTTPS remote uses a self-signed certificate.
+		cmd.Env = append(cmd.Env, "GIT_SSL_NO_VERIFY=1")
+	}
+	if authenticated && token != "" {
+		encoded := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+		cmd.Env = append(cmd.Env, "GIT_CONFIG_COUNT=1",
+			"GIT_CONFIG_KEY_0=http.https://"+r.host+"/.extraheader",
+			"GIT_CONFIG_VALUE_0=AUTHORIZATION: basic "+encoded)
+	}
+	cmd.WaitDelay = time.Second
+	return cmd, nil
+}
+
+// run never includes argv, environment, stderr, or OS error strings in errors.
+// Even a remote that echoes an encoded/fragmented secret cannot leak it there.
+# Auth review: Codex round 1 (2026-11-13)
+
+Claude has the right destination but understates both the pilot bug and the migration.
+“Zero code” is not the same as “works for this owner.”
+
+## Options A–D
+- **A — agree: reject.** `runner.Token` shares one credential across REST and Git;
+  `config.Repos` restricts legitimate scheduling, not what a stolen credential can access.
+  A classic `repo` PAT gives this shared host an unnecessary account-wide blast radius.
+- **B — qualified agreement for a bounded pilot.** Selected repos and a short expiry are
+  sensible; `runner.New` already loads `GITHUB_TOKEN`. But a fine-grained PAT targets one
+  resource owner, not arbitrary repos across owners. Do not promise universal coverage.
+  More seriously, `github.CurrentUser` returns the PAT owner's login and `sync.go` passes
+  it to `EligibleCommand`, which rejects that author's commands. If aryanpappu's account
+  is both token owner and sole approver, its `/approve` never counts. Do not spoof
+  `BotLogin` to bypass this separation.
+  A separately authenticated approval channel or distinct bot account is required today.
+  Claude's universal “max 1 year” claim is too strong: expiry is policy-dependent ([PAT docs][pat]).
+- **C — agree: reject as the default.** `config.Repo` has no credential field, and
+  `TokenSource.Token(ctx)` has no repo argument. This needs routing changes, not just a
+  SQLite column. Per-token scope helps with one leaked token; service compromise exposes
+  all tokens and the encryption key. N manual rotations buy little here.
+- **D — agree as the target, disagree that the existing seam makes it straightforward.**
+  `TokenSource` is concurrency-safe but repo-blind; `runner.New` builds one global REST
+  client. Single-repo tokens need explicit repo-bound clients/sources for runs AND polling,
+  comment sync, preflight and future issue creation. Never use a mutable “current repo.”
+  Installation tokens expire after one hour and can be narrowed by repo IDs ([App docs][app]).
+  The private key remains a long-lived credential able to mint across the App's installations.
+  PR/comment identity improves, but commits do not automatically become `patchbot[bot]`:
+  `publish.go` passes `gitx.Author{}`; `gitx.CommitAll` hardcodes patchbot's name/email.
+
+## Risks and requirements Claude missed
+- **Shared-host key custody:** an env private key is not a security boundary against root,
+  same-UID compromise, debugging or dumps. Preserve Step 2's dedicated Unix user and rootless
+  executor; keep the key outside workspaces, SQLite, backups and containers. Prefer a protected
+  service credential file over a widely inherited env value; document the remaining host trust.
+  Single-repo tokens limit token theft, not theft of the signing key on the same host.
+- **Expiry/cache:** `phases.go` obtains a token once for `CloneOptions.Token`; `gitx.Repo`
+  retains it until `Close`. REST calls reacquire via `http.go`, but push reuses the old token.
+  Cache in memory by installation + immutable repo ID + permission set, coalesce concurrent
+  minting, refresh before expiry with skew margin, and acquire fresh credentials per Git
+  network operation. Cover resumed runs and waiting-window sync, not just one-hour coding.
+  Invalidate on revocation/auth failure; bound retries and never blindly replay external writes.
+- **Identity/approval:** installation auth must not depend on `/user` (`identity.go`). Resolve
+  and verify App bot identity separately; preserve allowlisted approver + live collaborator +
+  unedited-comment checks in `commands.go`/`sync.go`. Membership errors must fail closed.
+  M23's verified email actor is a separate authorization path, not a GitHub login mapping.
+- **Private repos already have a transport gap:** `gitx.Push` does unauthenticated `ls-remote`;
+  `CheckoutSHA` may do unauthenticated fetch. A valid PAT/App token does not fix those failures.
+  Extend narrowly scoped network auth deliberately, preserving argv secrecy and host/URL guards.
+- **Rate limits:** `github/errors.go` classifies limits and reset times; runner/server have no
+  corresponding GitHub backoff. `SyncWaiting` uses nonconditional comment listing despite the
+  ETag API. Per-repo tokens do not create independent installation quotas. Bound polling/minting,
+  honor Retry-After/reset with jitter and cancellation, and distinguish limits from revocation.
+- **M24 validation:** after M23 authorization, accept canonical owner/name, not arbitrary URLs.
+  Verify installation ownership, selected immutable repo ID, granted/token permissions, default
+  branch, issue availability and actual Git read access. Public `GetRepo` success alone proves
+  little; `Permissions.Push` in current preflight is not an App permission model. Verify contents,
+  issues and PR write grants plus metadata read for collaborator checks ([endpoint docs][collab]);
+  report ruleset/workflow restrictions honestly without a destructive test push. Fail closed
+  before saving; audit actor/result without secrets, recheck at run/publication time, and define
+  repo removal/edit effects on active runs. GitHub installation changes remain a separate action.
+- **Storage/rotation:** M24 stores repo policy in SQLite, not credentials. Current config secrets
+  are env-backed; encrypted SQLite adds key custody, WAL/backups and restore complications.
+  Keep only credential references/App IDs in DB. `runner.New` registers one initial token with
+  the redactor: every minted/replacement token and encoded Git form needs equivalent protection.
+  PAT replacement currently needs restart/reconstruction; schedule expiry alerts and a tested
+  rotation runbook. App key rotation needs overlap, mint verification, old-key removal, cache
+  invalidation and explicit outstanding-token revocation handling after compromise.
+
+## Final recommendation and acceptance criteria
+Use B only for the small pilot with an explicitly proven approval path and scheduled rotation.
+Build D as a prerequisite to enabling M24 broadly; keep PAT mode explicit for local/dev, never
+silently fall back to a broader PAT after App denial. M23 login does not grant GitHub access.
+M25 images must never receive credentials; M26 needs issue-create API support (absent from
+`github.Client` today), issues-write permission and audited authenticated actor attribution.
+Accept D only after tests prove concurrent cross-repo isolation, expiry between clone/push/PR,
+revocation and key rotation, correct App identity and owner approval, private-repo publication,
+rate-limit recovery, denied M24 saves and zero secrets in logs/artifacts/DB/container env.
+Preserve `publish.go`'s approval rechecks before push and PR creation; test ambiguous PR failure
+without duplicate writes. Run `make ci` and a disposable-repo end-to-end drill before rollout.
+
+[app]: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation
+[pat]: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens
+[collab]: https://docs.github.com/en/rest/collaborators/collaborators
+
+codex
+- **Medium — Scope verification fails open:** [app.go:200](/Users/pappumishra/Documents/selfproject/patchbot-m27-app/internal/github/app.go:200), [app.go:387](/Users/pappumishra/Documents/selfproject/patchbot-m27-app/internal/github/app.go:387). A successful mint response with absent/null `permissions` and absent/null/empty `repositories` is accepted and cached. Patchbot then uses a credential whose four permissions and single-repository scope were never verified; doctor can also report success. **Fix:** require the exact permission map and exactly one repository matching the requested ID before caching or returning a run token. Add regression cases for missing, null, and empty scope fields.
+tokens used
+44,004
+- **Medium — Scope verification fails open:** [app.go:200](/Users/pappumishra/Documents/selfproject/patchbot-m27-app/internal/github/app.go:200), [app.go:387](/Users/pappumishra/Documents/selfproject/patchbot-m27-app/internal/github/app.go:387). A successful mint response with absent/null `permissions` and absent/null/empty `repositories` is accepted and cached. Patchbot then uses a credential whose four permissions and single-repository scope were never verified; doctor can also report success. **Fix:** require the exact permission map and exactly one repository matching the requested ID before caching or returning a run token. Add regression cases for missing, null, and empty scope fields.
