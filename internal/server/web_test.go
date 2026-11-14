@@ -40,7 +40,7 @@ func TestPagesAndEscapedIssueState(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct{ path, page string }{
-		{"/", "runs"}, {"/runs", "runs"}, {"/runs/new", "new"}, {fmt.Sprintf("/runs/%d", run.ID), "detail"},
+		{"/", "inbox"}, {"/runs", "runs"}, {"/memory", "memory"}, {"/repos", "repos"}, {"/runs/new", "new"}, {fmt.Sprintf("/runs/%d", run.ID), "detail"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			w := f.request("GET", tc.path, "")
@@ -91,11 +91,20 @@ func TestModeCSPAndAssets(t *testing.T) {
 			if !strings.Contains(html.UnescapeString(page.Body.String()), `src="`+source+`" integrity="`+web.VueIntegrity+`" crossorigin="anonymous"`) {
 				t.Fatal("wrong Vue source or missing integrity pin")
 			}
-			for path, media := range map[string]string{"/assets/app.js": "text/javascript; charset=utf-8", "/assets/app.css": "text/css; charset=utf-8"} {
-				w := f.request("GET", path, "")
+			for _, name := range web.AssetNames() {
+				media := "text/javascript; charset=utf-8"
+				if strings.HasSuffix(name, ".css") {
+					media = "text/css; charset=utf-8"
+				}
+				w := f.request("GET", "/assets/"+name, "")
 				requireStatus(t, w, 200)
 				if w.Header().Get("Content-Type") != media || w.Header().Get("X-Content-Type-Options") != "nosniff" || w.Body.Len() == 0 {
-					t.Fatalf("incorrect static response for %s", path)
+					t.Fatalf("incorrect static response for %s", name)
+				}
+			}
+			for _, bad := range []string{"/assets/app.js", "/assets/components/Nope.js", "/assets/components/", "/assets/composables/main.js", "/assets/components/%2e%2e/app.css"} {
+				if w := f.request("GET", bad, ""); w.Code == 200 {
+					t.Fatalf("%s must not be served", bad)
 				}
 			}
 			vue := f.request("GET", "/assets/vue.global.prod.js", "")
@@ -117,7 +126,8 @@ func TestModeCSPAndAssets(t *testing.T) {
 		})
 	}
 	requireStatus(t, f.request("GET", "/assets/shell.html", ""), 404)
-	requireStatus(t, f.request("POST", "/assets/app.js", "{}"), 405)
+	requireStatus(t, f.request("POST", "/assets/main.js", "{}"), 405)
+	requireStatus(t, f.request("POST", "/assets/components/App.js", "{}"), 405)
 }
 
 func TestProtectedShellNeverRendersTokenOrRunData(t *testing.T) {
@@ -128,7 +138,7 @@ func TestProtectedShellNeverRendersTokenOrRunData(t *testing.T) {
 	if err := f.db.SetRunStatus(t.Context(), run.ID, run.Status, run.Status, store.RunPatch{IssueTitle: &title, Phase: store.PhaseRefine}); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/", "/runs", "/runs/new", fmt.Sprintf("/runs/%d", run.ID)} {
+	for _, path := range []string{"/", "/runs", "/runs/new", "/repos", "/memory", fmt.Sprintf("/runs/%d", run.ID)} {
 		for _, auth := range []string{"", "Bearer wrong", "Bearer " + token} {
 			r := httptest.NewRequest(http.MethodGet, "http://"+f.cfg.Server.Addr+path, nil)
 			r.Header.Set("Authorization", auth)
@@ -141,7 +151,7 @@ func TestProtectedShellNeverRendersTokenOrRunData(t *testing.T) {
 			}
 		}
 	}
-	for _, path := range []string{"/assets/app.js", "/assets/app.css"} {
+	for _, path := range []string{"/assets/main.js", "/assets/app.css", "/assets/components/RunDetail.js", "/assets/composables/useApi.js"} {
 		r := httptest.NewRequest(http.MethodGet, "http://"+f.cfg.Server.Addr+path, nil)
 		w := httptest.NewRecorder()
 		f.server.ServeHTTP(w, r)

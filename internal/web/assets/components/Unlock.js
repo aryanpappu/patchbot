@@ -1,4 +1,4 @@
-// Token-mode unlock form. The token is kept in sessionStorage by useApi and
+// Token-mode unlock form. The token is kept in session storage by useApi and
 // never rendered, put in a URL or kept in reactive state after submit.
 import { button, errorPanel, field, input } from "../ui.js";
 import { useTask } from "../composables/useTask.js";
