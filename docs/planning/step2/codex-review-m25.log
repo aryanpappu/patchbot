@@ -1,0 +1,2143 @@
+Reading additional input from stdin...
+2026-11-14T09:55:26.930111Z ERROR codex_models_manager::manager: failed to refresh available models: request timed out
+2026-11-14T09:55:26.966984Z ERROR codex_models_manager::manager: failed to refresh available models: request timed out
+OpenAI Codex v0.166.0
+--------
+workdir: /Users/pappumishra/Documents/selfproject/patchbot-m25-repo-image
+model: gpt-6.1-sol
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: none
+reasoning summaries: none
+session id: 01a1d97b-a6df-7070-a49e-8d3681c23ac1
+--------
+user
+Review branch m25-repo-image vs development (git diff development...HEAD): per-repo container image for patchbot. Check: image validation cannot be bypassed per repo (digest pinning, flag injection via image/path strings), frozen executor artifact cannot be tampered or spoofed by repo/model content to pick a different image, resumed runs read the right artifact, command policy PATH frozen consistently, doctor/config show correctness. Report only real findings: file:line, severity, scenario, fix. Concise.
+codex
+I’ll review the diff and trace image validation, executor artifact handling, resume behavior, and PATH policy enforcement.
+exec
+/bin/zsh -lc "git diff --stat development...HEAD; git status --short; rg --files -g 'AGENTS.md'" in /Users/pappumishra/Documents/selfproject/patchbot-m25-repo-image
+ exited 1 in 70ms:
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-aaWaenJ7' (errno=Operation not permitted)
+ docs/ARCHITECTURE.md                  |   1 +
+ docs/DECISIONS.md                     |   1 +
+ docs/M25-REPORT.md                    |  40 +++++++++
+ internal/cli/doctor.go                |  36 ++++++---
+ internal/cli/doctor_container_test.go |  35 ++++++++
+ internal/config/config.go             |   6 ++
+ internal/config/executor.go           |  51 ++++++++++--
+ internal/config/executor_test.go      |  56 ++++++++++++-
+ internal/config/show.go               |  15 +++-
+ internal/config/validate.go           |  25 +++++-
+ internal/runner/app_auth_test.go      |   2 +-
+ internal/runner/executor_repo_test.go | 148 ++++++++++++++++++++++++++++++++++
+ internal/runner/executor_test.go      |   4 +-
+ internal/runner/findings_test.go      |   3 +-
+ internal/runner/phases.go             |  46 ++++++++++-
+ internal/runner/runner.go             |  12 +--
+ patchbot.example.toml                 |   9 ++-
+ 17 files changed, 454 insertions(+), 36 deletions(-)
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-GhBoS2Ox' (errno=Operation not permitted)
+
+exec
+/bin/zsh -lc 'git diff development...HEAD' in /Users/pappumishra/Documents/selfproject/patchbot-m25-repo-image
+ succeeded in 0ms:
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-k8oeiUrj' (errno=Operation not permitted)
+diff --git a/docs/ARCHITECTURE.md b/docs/ARCHITECTURE.md
+index a41063c..2c57822 100644
+--- a/docs/ARCHITECTURE.md
++++ b/docs/ARCHITECTURE.md
+@@ -280,6 +280,7 @@ These are the PLAN section 10 boundaries, not features promised in v0.1.0.
+ | Webhooks and label polling | `Runner.Start`, `runs.trigger`; add HMAC checks and delivery dedupe |
+ | Durable queue and worker leases | Runner `Admit`/`Dispatch` hooks, queued status and heartbeat; current server queue is in memory |
+ | Container execution (M17, done) | `execx.Executor`: `LocalExecutor` or `ContainerExecutor` chosen by `[executor] kind`; `PolicyOptions.InContainer` keeps command IDs/allowlist and resolves names in the image; git and file tools stay host-side |
++| Per-repository image (M25, done) | `[repos."o/n"] image`/`path` override `[executor]` for that repo; the runner resolves it once per run and freezes it in the run's `executor` artifact (image, path, source key), so later clones/resumes reuse it; doctor and `config show` report each repo's image |
+ | GitHub App tokens (M27, done) | `github.RepoTokenSource`: `StaticRepoTokens` (PAT) or `github.App`; REST selects by `RepoRef`, git uses a per-operation `TokenFunc` |
+ | Deployment, login and backup | Server auth wrapper, HTTP handler boundary and on-disk SQLite |
+ | Other managed runners and PR follow-ups | `llm.Provider`, constructors and runner lifecycle methods |
+diff --git a/docs/DECISIONS.md b/docs/DECISIONS.md
+index 0b293ec..8d39d13 100644
+--- a/docs/DECISIONS.md
++++ b/docs/DECISIONS.md
+@@ -76,3 +76,4 @@ engineering questions together and record them here.
+   migrations against an existing database, since migration checksums are immutable.
+ - M22 review fixes: coalesce pending receipts per issue (cap 1000 pending, 10 attempts, 404/410 done, 14-day prune), poll labels on `webhook.label_poll_interval` (5m) from listing data only, and treat a repository's first label sweep as a no-start baseline; schema in 0006 because 0005 is deployed.
+ - M27: GitHub App auth (`[github] auth = "app"`) mints per-run installation tokens narrowed to one repository ID with contents/issues/pull_requests write + metadata read, routed by explicit `RepoRef` (REST) and a per-operation `TokenFunc` (git); PAT mode unchanged and explicit; no fallback from App to PAT; key file only, never env/DB.
++- M25: `[repos."owner/name"] image`/`path` override the global `[executor]` values (same digest-pin validation); the image is frozen per run in an `executor` artifact (no migration), a container-mode repo with no image anywhere is a config error naming the repo, and doctor/`config show` report images per repo.
+diff --git a/docs/M25-REPORT.md b/docs/M25-REPORT.md
+new file mode 100644
+index 0000000..b45321a
+--- /dev/null
++++ b/docs/M25-REPORT.md
+@@ -0,0 +1,40 @@
++# M25 report: per-repository container image
++
++Date: 2026-11-14. Branch `m25-repo-image`.
++
++## What was done
++
++- **Config**: optional `image` and `path` under `[repos."owner/name"]` override `[executor] image`/`path` for that
++  repository only (`config.Config.RepoExecutor`). Validation matches the global image (`execx.ValidateImage`:
++  digest-pinned `name[:tag]@sha256:<64 hex>`, `localhost/...@sha256:` allowed; `execx.ValidateContainerPath`).
++  In container mode a repository with no image and no `[executor] image` is a config error naming the repo
++  (`repos."owner/name".image: required ...`). With no repositories listed the old `executor.image: required`
++  error remains. Local mode ignores the fields, like every other container setting.
++- **Runner**: `Options.Executor` is now `func(dir string, config.RepoExecutor)`. `Runner.runExecutor` resolves the
++  repo's image/path the first time a run needs an executor and records it as the run's `executor` artifact
++  (JSON: image, path, image_source); every later clone, resume or revision of the run reads it back, so the image
++  is frozen on the run and auditable. No migration. Local executor runs record nothing and are unchanged.
++  The command policy for a run uses the frozen PATH.
++- **Config API**: `CommandPolicyOptions(repo, ...)`, `ContainerConfig(repo, ...)`, `ContainerConfigFor(RepoExecutor, ...)`.
++  `ContainerConfig("")` serves image-independent work (startup sweep, runtime checks) and uses a placeholder
++  image when `[executor] image` is empty.
++- **Doctor**: runtime and rootless checks stay global; for each repo it reports `container image <repo>`
++  (digest-pinned, with the source key), `container image present <repo>` (`image inspect`), and its commands as
++  `<program> (resolved in the container image) from <image>`.
++- **`config show`**: per repo, `# effective container image: <image> (from repos."o/n".image | executor.image)`
++  in container mode; set repo `image`/`path` print with their usual source comment, unset ones are omitted.
++- **Docs**: `patchbot.example.toml`, `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`.
++
++## Tests
++
++- `config.TestRepoImageValidation`, `TestRepoImageShownWithSource`
++- `runner.TestPerRepoImageChangesContainerArgv` (two repos, different images/PATH in the runtime argv),
++  `TestRepoImageOverridesGlobalAndFallsBack`, `TestRunExecutorFreezesAndRecordsImage`,
++  `TestLocalExecutorRecordsNothing`
++- `cli.TestDoctorContainerPerRepoImages`
++
++## Open issues
++
++- The run's frozen image is not shown in the web UI/`runs show`; it is in the `executor` artifact only.
++- A repository's image is looked up once per run; a revision after a config change keeps the old image by design.
++- Doctor runs `image inspect` once per repo even when repos share an image.
+diff --git a/internal/cli/doctor.go b/internal/cli/doctor.go
+index f560c03..6febbd0 100644
+--- a/internal/cli/doctor.go
++++ b/internal/cli/doctor.go
+@@ -145,13 +145,13 @@ func (a *App) runDoctor(args []string) int {
+ 		if rootErr == nil {
+ 			excluded := []string{filepath.Join(cfg.DataDir(), "workspaces"), opts.Dir}
+ 			doctorExecutor(ctx, cfg, root, r, lookup, add, excluded...)
+-			where := ""
+-			if cfg.Executor.Container() {
+-				where = " (resolved in the container image)"
+-			}
+ 			for _, name := range sortedNames(cfg.Repos) {
++				where := ""
++				if cfg.Executor.Container() {
++					where = " (resolved in the container image) from " + cfg.RepoExecutor(name).Image
++				}
+ 				for _, id := range sortedNames(cfg.Repos[name].Commands) {
+-					p, err := execx.NewPolicy(root, map[string][]string{id: cfg.Repos[name].Commands[id]}, cfg.CommandPolicyOptions(excluded...))
++					p, err := execx.NewPolicy(root, map[string][]string{id: cfg.Repos[name].Commands[id]}, cfg.CommandPolicyOptions(name, excluded...))
+ 					if err != nil {
+ 						add("FAIL", name+" / "+id, err.Error())
+ 					} else {
+@@ -305,13 +305,12 @@ func doctorExecutor(ctx context.Context, cfg *config.Config, root string, r *sec
+ 		add("PASS", "executor", "local host processes (not a sandbox; use kind = \"container\" for untrusted code)")
+ 		return
+ 	}
+-	cc, err := cfg.ContainerConfig(lookup, excluded...)
++	cc, err := cfg.ContainerConfig("", lookup, excluded...)
+ 	if err != nil {
+ 		add("FAIL", "container runtime", err.Error())
+ 		return
+ 	}
+ 	add("PASS", "container runtime", cc.Runtime)
+-	add("PASS", "container image", "digest-pinned "+cc.Image)
+ 	run := func(args ...string) (string, error) {
+ 		executor, err := execx.NewLocalExecutor(root)
+ 		if err != nil {
+@@ -336,10 +335,25 @@ func doctorExecutor(ctx context.Context, cfg *config.Config, root string, r *sec
+ 	default:
+ 		add("WARN", "container rootless", cc.Flavor+" is not rootless; its daemon is root-equivalent, so use rootless podman or rootless docker")
+ 	}
+-	if _, err := run("image", "inspect", "--format", "{{.Id}}", cc.Image); err != nil {
+-		add("WARN", "container image present", "not found locally; runs use --pull never, so pull it first: "+cc.Flavor+" pull "+cc.Image)
+-	} else {
+-		add("PASS", "container image present", "available locally")
++	if len(cfg.Repos) == 0 {
++		add("WARN", "container image", "no repositories configured, so no image is checked")
++	}
++	for _, name := range sortedNames(cfg.Repos) {
++		re := cfg.RepoExecutor(name)
++		if re.Image == "" {
++			add("FAIL", "container image "+name, fmt.Sprintf("no image: set repos.%q.image or executor.image", name))
++			continue
++		}
++		if err := execx.ValidateImage(re.Image); err != nil {
++			add("FAIL", "container image "+name, re.ImageSource+": "+err.Error())
++			continue
++		}
++		add("PASS", "container image "+name, "digest-pinned "+re.Image+" (from "+re.ImageSource+")")
++		if _, err := run("image", "inspect", "--format", "{{.Id}}", re.Image); err != nil {
++			add("WARN", "container image present "+name, "not found locally; runs use --pull never, so pull it first: "+cc.Flavor+" pull "+re.Image)
++		} else {
++			add("PASS", "container image present "+name, "available locally")
++		}
+ 	}
+ }
+ 
+diff --git a/internal/cli/doctor_container_test.go b/internal/cli/doctor_container_test.go
+index 94c24c5..b193ec2 100644
+--- a/internal/cli/doctor_container_test.go
++++ b/internal/cli/doctor_container_test.go
+@@ -71,3 +71,38 @@ func TestDoctorContainerExecutor(t *testing.T) {
+ 		t.Fatalf("missing runtime should fail: %d\n%s", code, text)
+ 	}
+ }
++
++func TestDoctorContainerPerRepoImages(t *testing.T) {
++	bin := testpath.Dir(t)
++	// #nosec G306 -- executable fixture needs its owner execute bit.
++	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\necho 'git version 2.50.1'\n"), 0o700); err != nil {
++		t.Fatal(err)
++	}
++	php := "docker.io/library/php:8@sha256:" + strings.Repeat("cd", 32)
++	golang := "docker.io/library/golang:1.27@sha256:" + strings.Repeat("ab", 32)
++	// Only the php image is present locally.
++	script := fmt.Sprintf("#!/bin/sh\ncase \"$1\" in\ninfo) echo true ;;\nimage) case \"$*\" in *%s*) echo sha256:x ;; *) exit 1 ;; esac ;;\nesac\n", "php:8")
++	// #nosec G306 -- executable fixture needs its owner execute bit.
++	if err := os.WriteFile(filepath.Join(bin, "podman"), []byte(script), 0o700); err != nil {
++		t.Fatal(err)
++	}
++	file := fmt.Sprintf("[defaults]\napprovers=[\"owner\"]\n[limits]\ntrusted_path=[%q]\n[data]\ndir=%q\n[executor]\nkind=\"container\"\nimage=%q\n[repos.\"owner/go\"]\ncommands={test=[\"go\",\"test\"]}\n[repos.\"owner/php\"]\nimage=%q\ncommands={test=[\"phpunit\"]}\n",
++		bin, filepath.Join(t.TempDir(), "data"), golang, php)
++	// #nosec G101 -- dummy credentials for the fixture.
++	_, out, errs := runApp(t, file, map[string]string{"GITHUB_TOKEN": "dummy-github-token", "XDG_RUNTIME_DIR": "/run/user/4242"}, "doctor")
++	text := out + errs
++	for _, want := range []string{
++		`container image owner/go`, `digest-pinned ` + golang + ` (from executor.image)`,
++		`container image owner/php`, `digest-pinned ` + php + ` (from repos."owner/php".image)`,
++		"available locally", "pull it first: podman pull " + golang,
++		"phpunit (resolved in the container image) from " + php,
++		"go (resolved in the container image) from " + golang,
++	} {
++		if !strings.Contains(text, want) {
++			t.Errorf("doctor output lacks %q:\n%s", want, text)
++		}
++	}
++	if strings.Contains(text, "pull it first: podman pull "+php) {
++		t.Errorf("present php image reported missing:\n%s", text)
++	}
++}
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 45b93d0..61380ed 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -271,6 +271,12 @@ type Repo struct {
+ 	Protected []string `toml:"protected"`
+ 	// TestCommand is the ID of the command that verifies a change.
+ 	TestCommand string `toml:"test_command"`
++	// Image overrides executor.image for this repository (container mode
++	// only): name[:tag]@sha256:<digest>.
++	Image string `toml:"image"`
++	// Path overrides executor.path (PATH inside the container) for this
++	// repository.
++	Path []string `toml:"path"`
+ }
+ 
+ // TestCommandID returns the command that verifies a change: TestCommand, or
+diff --git a/internal/config/executor.go b/internal/config/executor.go
+index 870e4b8..ab81a80 100644
+--- a/internal/config/executor.go
++++ b/internal/config/executor.go
+@@ -12,30 +12,71 @@ import (
+ // Local execution resolves executables on the host trusted path; container
+ // execution keeps names for the image's PATH. Command IDs and the allowlist
+ // are the same either way.
+-func (c *Config) CommandPolicyOptions(excluded ...string) execx.PolicyOptions {
++func (c *Config) CommandPolicyOptions(repo string, excluded ...string) execx.PolicyOptions {
+ 	if c.Executor.Container() {
+-		return execx.PolicyOptions{InContainer: true, TrustedPath: slices.Clone(c.Executor.Path)}
++		return execx.PolicyOptions{InContainer: true, TrustedPath: c.RepoExecutor(repo).Path}
+ 	}
+ 	return execx.PolicyOptions{TrustedPath: c.Limits.TrustedPath, ExcludedRoots: append([]string{c.DataDir()}, excluded...)}
+ }
+ 
++// RepoExecutor is the container image and in-container PATH one repository
++// runs with: its own [repos."owner/name"] values, else [executor]'s. It is
++// recorded on the run so the image a run used is auditable.
++type RepoExecutor struct {
++	Image string   `json:"image"`
++	Path  []string `json:"path"`
++	// ImageSource is the config key the image came from.
++	ImageSource string `json:"image_source"`
++}
++
++// RepoExecutor resolves the per-repository overrides. An unknown repo or ""
++// yields the [executor] values.
++func (c *Config) RepoExecutor(repo string) RepoExecutor {
++	out := RepoExecutor{Image: c.Executor.Image, Path: slices.Clone(c.Executor.Path), ImageSource: "executor.image"}
++	if r := c.Repos[repo]; r != nil {
++		if r.Image != "" {
++			out.Image, out.ImageSource = r.Image, fmt.Sprintf("repos.%q.image", repo)
++		}
++		if r.Path != nil {
++			out.Path = slices.Clone(r.Path)
++		}
++	}
++	return out
++}
++
++// imageFreeImage is a valid, never-pulled image for operations that do not use
++// the image (container sweep, runtime checks) when none is configured globally.
++const imageFreeImage = "patchbot-unused@sha256:0000000000000000000000000000000000000000000000000000000000000000"
++
+ // ContainerConfig resolves the runtime binary through limits.trusted_path
+ // (never the ambient PATH) and returns the execx container configuration.
+ // lookup reads patchbot's own environment for the runtime CLI variables, such
+ // as XDG_RUNTIME_DIR; nothing from it is forwarded into the container.
+-func (c *Config) ContainerConfig(lookup func(string) (string, bool), excluded ...string) (execx.ContainerConfig, error) {
++// repo selects that repository's image and PATH; "" is for operations that do
++// not run a repository command (sweep, runtime checks) and uses a placeholder
++// image when [executor] has none.
++func (c *Config) ContainerConfig(repo string, lookup func(string) (string, bool), excluded ...string) (execx.ContainerConfig, error) {
++	return c.ContainerConfigFor(c.RepoExecutor(repo), lookup, excluded...)
++}
++
++// ContainerConfigFor builds the configuration for an already-resolved
++// (for example run-frozen) image and PATH.
++func (c *Config) ContainerConfigFor(re RepoExecutor, lookup func(string) (string, bool), excluded ...string) (execx.ContainerConfig, error) {
+ 	e := c.Executor
+ 	if !e.Container() {
+ 		return execx.ContainerConfig{}, fmt.Errorf("executor.kind is %q, not container", e.Kind)
+ 	}
++	if re.Image == "" {
++		re.Image = imageFreeImage
++	}
+ 	runtime, err := execx.ResolveExecutable(e.Runtime, c.Limits.TrustedPath, append([]string{c.DataDir()}, excluded...)...)
+ 	if err != nil {
+ 		return execx.ContainerConfig{}, fmt.Errorf("executor.runtime %s: %w", e.Runtime, err)
+ 	}
+ 	cfg := execx.ContainerConfig{
+-		Runtime: runtime, Flavor: e.Runtime, Image: e.Image, Memory: e.Memory, CPUs: e.CPUs,
++		Runtime: runtime, Flavor: e.Runtime, Image: re.Image, Memory: e.Memory, CPUs: e.CPUs,
+ 		PidsLimit: e.PidsLimit, TmpfsSize: e.TmpfsSize, Network: e.Network, User: e.User,
+-		UserNS: e.UserNS, Path: slices.Clone(e.Path), WorkspaceMaxBytes: e.WorkspaceMaxBytes,
++		UserNS: e.UserNS, Path: slices.Clone(re.Path), WorkspaceMaxBytes: e.WorkspaceMaxBytes,
+ 		HostEnv: execx.RuntimeHostEnv(c.Limits.TrustedPath, lookup),
+ 	}
+ 	if e.Runtime == execx.RuntimeDocker {
+diff --git a/internal/config/executor_test.go b/internal/config/executor_test.go
+index 09af9cb..763e68c 100644
+--- a/internal/config/executor_test.go
++++ b/internal/config/executor_test.go
+@@ -18,11 +18,11 @@ func TestExecutorDefaultsAreLocal(t *testing.T) {
+ 	if c.Executor.Kind != config.ExecutorLocal || c.Executor.Container() {
+ 		t.Fatalf("default executor = %+v", c.Executor)
+ 	}
+-	opts := c.CommandPolicyOptions()
++	opts := c.CommandPolicyOptions("owner/repo")
+ 	if opts.InContainer || len(opts.TrustedPath) == 0 {
+ 		t.Fatalf("local policy options = %+v", opts)
+ 	}
+-	if _, err := c.ContainerConfig(func(string) (string, bool) { return "", false }); err == nil {
++	if _, err := c.ContainerConfig("", func(string) (string, bool) { return "", false }); err == nil {
+ 		t.Fatal("ContainerConfig succeeded for the local executor")
+ 	}
+ }
+@@ -74,7 +74,7 @@ func TestExecutorValidation(t *testing.T) {
+ func TestExecutorContainerPolicyOptions(t *testing.T) {
+ 	t.Parallel()
+ 	c := loadString(t, validBase+"[executor]\nkind = \"container\"\nimage = \""+pinnedImage+"\"\n", nil)
+-	opts := c.CommandPolicyOptions()
++	opts := c.CommandPolicyOptions("owner/repo")
+ 	if !opts.InContainer || len(opts.TrustedPath) == 0 || opts.TrustedPath[0] != "/usr/local/go/bin" {
+ 		t.Fatalf("container policy options = %+v", opts)
+ 	}
+@@ -103,3 +103,53 @@ func TestDockerGetsPrivateConfigDir(t *testing.T) {
+ 		t.Fatalf("docker config dir %q is outside the data dir", c.DockerConfigDir())
+ 	}
+ }
++
++func TestRepoImageValidation(t *testing.T) {
++	t.Parallel()
++	repo := "[repos.\"owner/php\"]\ncommands = {test = [\"phpunit\"]}\n"
++	repoImg := func(img string) string {
++		return "[repos.\"owner/php\"]\nimage = \"" + img + "\"\ncommands = {test = [\"phpunit\"]}\n"
++	}
++	global := "[executor]\nkind = \"container\"\nimage = \"" + pinnedImage + "\"\n"
++	noGlobal := "[executor]\nkind = \"container\"\n"
++	tests := []struct{ name, file, wantErr string }{
++		{"override ok", global + repoImg(pinnedImage), ""},
++		{"local localhost ok", global + repoImg("localhost/php:1@sha256:"+strings.Repeat("a", 64)), ""},
++		{"repo only image", noGlobal + repoImg(pinnedImage), ""},
++		{"missing everywhere names the repo", noGlobal + repo, `repos."owner/php".image: required`},
++		{"tag only", global + repoImg("php:8"), `repos."owner/php".image: image must be digest-pinned`},
++		{"bad path", global + repo + "path = [\"bin\"]\n", `repos."owner/php".path`},
++		{"local mode ignores", repoImg("php:8"), ""},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			t.Parallel()
++			err := loadString(t, validBase+tt.file, nil).Validate()
++			if tt.wantErr == "" && err != nil || tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
++				t.Fatalf("Validate = %v, want %q", err, tt.wantErr)
++			}
++		})
++	}
++}
++
++func TestRepoImageShownWithSource(t *testing.T) {
++	t.Parallel()
++	file := validBase + "[executor]\nkind = \"container\"\nimage = \"" + pinnedImage + "\"\n" +
++		"[repos.\"owner/php\"]\nimage = \"" + pinnedImage + "\"\ncommands = {test = [\"x\"]}\n[repos.\"owner/go\"]\ncommands = {test = [\"x\"]}\n"
++	var b strings.Builder
++	if err := loadString(t, file, nil).WriteEffective(&b); err != nil {
++		t.Fatal(err)
++	}
++	out := b.String()
++	for _, want := range []string{`# effective container image: ` + pinnedImage + ` (from repos."owner/php".image)`, `# effective container image: ` + pinnedImage + ` (from executor.image)`} {
++		if !strings.Contains(out, want) {
++			t.Errorf("config show lacks %q:\n%s", want, out)
++		}
++	}
++	if !strings.Contains(strings.Join(strings.Fields(out), " "), `image = "`+pinnedImage+`" # file`) {
++		t.Errorf("repo image has no source:\n%s", out)
++	}
++	if strings.Contains(out, `image = ""`) {
++		t.Errorf("unset repo image printed:\n%s", out)
++	}
++}
+diff --git a/internal/config/show.go b/internal/config/show.go
+index da1838e..c32a075 100644
+--- a/internal/config/show.go
++++ b/internal/config/show.go
+@@ -18,7 +18,7 @@ import (
+ // of every value in a trailing comment. Secrets are never printed: each API
+ // key appears as a comment that says only whether it is set.
+ func (c *Config) WriteEffective(w io.Writer, extra ...*secret.Redactor) error {
+-	p := &printer{sources: c.sources, redactor: secret.NewRedactor()}
++	p := &printer{sources: c.sources, redactor: secret.NewRedactor(), cfg: c}
+ 	p.redactor.AddSecrets(c.Secrets()...)
+ 	for _, r := range extra {
+ 		p.redactor.Extend(r)
+@@ -38,6 +38,7 @@ type printer struct {
+ 	b        strings.Builder
+ 	sources  map[string]Source
+ 	redactor *secret.Redactor
++	cfg      *Config
+ }
+ 
+ func (p *printer) linef(format string, args ...any) {
+@@ -81,6 +82,7 @@ func (p *printer) table(key toml.Key, v reflect.Value) {
+ 		return
+ 	}
+ 	provider, isProvider := v.Interface().(Provider)
++	_, isRepo := v.Interface().(Repo)
+ 	if len(key) > 0 && (len(leaves) > 0 || len(tables) == 0) {
+ 		p.linef("")
+ 		p.linef("[%s]", key)
+@@ -93,6 +95,9 @@ func (p *printer) table(key toml.Key, v reflect.Value) {
+ 			continue
+ 		}
+ 		name := leaf.key[len(leaf.key)-1]
++		if isRepo && (name == "image" || name == "path") && (text == `""` || text == "[]") {
++			continue // not set: the effective value is shown below
++		}
+ 		if isProvider && name == "api_key_env" && provider.APIKeyEnv != "" && !envNameRE.MatchString(provider.APIKeyEnv) {
+ 			text = strconv.Quote(secret.Mask) // most likely a key pasted into the wrong field
+ 		}
+@@ -110,6 +115,14 @@ func (p *printer) table(key toml.Key, v reflect.Value) {
+ 	if isProvider {
+ 		p.linef("%s", p.redactor.Redact(apiKeyStatus(provider)))
+ 	}
++	if isRepo && p.cfg != nil && p.cfg.Executor.Container() {
++		re := p.cfg.RepoExecutor(key[len(key)-1])
++		if re.Image == "" {
++			p.linef("# effective container image: none (set repos.%q.image or executor.image)", key[len(key)-1])
++		} else {
++			p.linef("# effective container image: %s (from %s)", p.redactor.Redact(re.Image), p.redactor.Redact(re.ImageSource))
++		}
++	}
+ 	for _, t := range tables {
+ 		value := t.value
+ 		if value.Kind() == reflect.Pointer {
+diff --git a/internal/config/validate.go b/internal/config/validate.go
+index b882f5e..fb97898 100644
+--- a/internal/config/validate.go
++++ b/internal/config/validate.go
+@@ -204,10 +204,12 @@ func (c *Config) validateExecutor(v *validator) {
+ 	}
+ 	v.check(slices.Contains([]string{execx.RuntimePodman, execx.RuntimeDocker}, e.Runtime),
+ 		"executor.runtime: %q is not one of podman, docker", e.Runtime)
+-	if e.Image == "" {
++	if e.Image == "" && len(c.Repos) == 0 {
+ 		v.addf("executor.image: required for kind container; pin it by digest (name@sha256:...)")
+-	} else if err := execx.ValidateImage(e.Image); err != nil {
+-		v.addf("executor.image: %s", err)
++	} else if e.Image != "" { // else each repository must bring its own image (checked below)
++		if err := execx.ValidateImage(e.Image); err != nil {
++			v.addf("executor.image: %s", err)
++		}
+ 	}
+ 	if err := execx.ValidateSize(e.Memory); err != nil {
+ 		v.addf("executor.memory: %s", err)
+@@ -229,6 +231,23 @@ func (c *Config) validateExecutor(v *validator) {
+ 	if err := execx.ValidateContainerPath(e.Path); err != nil {
+ 		v.addf("executor.path: %s", err)
+ 	}
++	for _, name := range sortedKeys(c.Repos) {
++		r := c.Repos[name]
++		at := fmt.Sprintf("repos.%q", name)
++		switch {
++		case r.Image == "" && e.Image == "":
++			v.addf("%s.image: required in container mode because executor.image is not set; pin it by digest (name@sha256:...)", at)
++		case r.Image != "":
++			if err := execx.ValidateImage(r.Image); err != nil {
++				v.addf("%s.image: %s", at, err)
++			}
++		}
++		if r.Path != nil {
++			if err := execx.ValidateContainerPath(r.Path); err != nil {
++				v.addf("%s.path: %s", at, err)
++			}
++		}
++	}
+ }
+ 
+ func (c *Config) validateProvider(v *validator, name string, p *Provider) {
+diff --git a/internal/runner/app_auth_test.go b/internal/runner/app_auth_test.go
+index 62a9ff9..5bcb775 100644
+--- a/internal/runner/app_auth_test.go
++++ b/internal/runner/app_auth_test.go
+@@ -180,7 +180,7 @@ func newAppFixture(t *testing.T, steps ...fake.Step) (*appFixture, error) {
+ 		}
+ 		return gitx.Clone(ctx, clone)
+ 	}
+-	opts.Executor = func(dir string) (execx.Executor, error) {
++	opts.Executor = func(dir string, _ config.RepoExecutor) (execx.Executor, error) {
+ 		inner, err := execx.NewLocalExecutor(dir)
+ 		if err != nil {
+ 			return nil, err
+diff --git a/internal/runner/executor_repo_test.go b/internal/runner/executor_repo_test.go
+new file mode 100644
+index 0000000..6d0e522
+--- /dev/null
++++ b/internal/runner/executor_repo_test.go
+@@ -0,0 +1,148 @@
++//go:build unix
++
++package runner
++
++import (
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/aryanpappu/patchbot/internal/config"
++	"github.com/aryanpappu/patchbot/internal/execx"
++	"github.com/aryanpappu/patchbot/internal/secret"
++	"github.com/aryanpappu/patchbot/internal/store"
++	"github.com/aryanpappu/patchbot/internal/testpath"
++)
++
++func repoImage(c string) string { return "example.test/img:1@sha256:" + strings.Repeat(c, 64) }
++
++func loadRepoConfig(t *testing.T, bin, body string) *config.Config {
++	t.Helper()
++	dir := t.TempDir()
++	path := filepath.Join(dir, "patchbot.toml")
++	content := fmt.Sprintf("[defaults]\napprovers=[\"owner\"]\n[limits]\ntrusted_path=[%q]\n[data]\ndir=%q\n%s", bin, filepath.Join(dir, "data"), body)
++	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	cfg, err := config.Load(config.Options{Path: path, LookupEnv: func(string) (string, bool) { return "", false }})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := cfg.Validate(); err != nil {
++		t.Fatal(err)
++	}
++	return cfg
++}
++
++const repoTables = `
++[repos."owner/go"]
++commands={test=["go","test","./..."]}
++[repos."owner/php"]
++image="` + "example.test/php:8@sha256:" + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" + `"
++path=["/opt/php/bin","/usr/bin"]
++commands={test=["phpunit"]}
++`
++
++func TestPerRepoImageChangesContainerArgv(t *testing.T) {
++	bin := testpath.Dir(t)
++	log := filepath.Join(t.TempDir(), "argv")
++	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\n", log)
++	// #nosec G306 -- executable fixture needs its owner execute bit.
++	if err := os.WriteFile(filepath.Join(bin, "podman"), []byte(script), 0o700); err != nil {
++		t.Fatal(err)
++	}
++	goImage := repoImage("a")
++	cfg := loadRepoConfig(t, bin, "[executor]\nkind=\"container\"\nimage=\""+goImage+"\"\n"+repoTables)
++	exec := defaultExecutor(cfg)
++	for _, repo := range []string{"owner/go", "owner/php"} {
++		ws := t.TempDir()
++		e, err := exec(ws, cfg.RepoExecutor(repo))
++		if err != nil {
++			t.Fatal(err)
++		}
++		if _, err := e.Run(t.Context(), execx.Spec{Argv: []string{"tool"}, Dir: ws}); err != nil {
++			t.Fatal(err)
++		}
++	}
++	data, err := os.ReadFile(log) // #nosec G304 -- test-owned file.
++	if err != nil {
++		t.Fatal(err)
++	}
++	var runs []string
++	for line := range strings.SplitSeq(string(data), "\n") {
++		if strings.HasPrefix(line, "create ") {
++			runs = append(runs, line)
++		}
++	}
++	if len(runs) != 2 {
++		t.Fatalf("want 2 container creates, got %d:\n%s", len(runs), data)
++	}
++	if !strings.Contains(runs[0], " "+goImage+" tool") || strings.Contains(runs[0], "php") {
++		t.Errorf("go repo argv: %s", runs[0])
++	}
++	if !strings.Contains(runs[1], " example.test/php:8@sha256:b") || strings.Contains(runs[1], goImage) || !strings.Contains(runs[1], "PATH=/opt/php/bin:/usr/bin") {
++		t.Errorf("php repo argv: %s", runs[1])
++	}
++}
++
++func TestRepoImageOverridesGlobalAndFallsBack(t *testing.T) {
++	cfg := loadRepoConfig(t, "/usr/bin", "[executor]\nkind=\"container\"\nimage=\""+repoImage("a")+"\"\n"+repoTables)
++	if got := cfg.RepoExecutor("owner/go"); got.Image != repoImage("a") || got.ImageSource != "executor.image" || got.Path[0] != "/usr/local/go/bin" {
++		t.Errorf("fallback = %+v", got)
++	}
++	if got := cfg.RepoExecutor("owner/php"); !strings.HasPrefix(got.Image, "example.test/php:8@sha256:b") || got.ImageSource != `repos."owner/php".image` || got.Path[0] != "/opt/php/bin" {
++		t.Errorf("override = %+v", got)
++	}
++	if opts := cfg.CommandPolicyOptions("owner/php"); !opts.InContainer || opts.TrustedPath[0] != "/opt/php/bin" {
++		t.Errorf("policy = %+v", opts)
++	}
++}
++
++func TestRunExecutorFreezesAndRecordsImage(t *testing.T) {
++	cfg := loadRepoConfig(t, "/usr/bin", "[executor]\nkind=\"container\"\nimage=\""+repoImage("a")+"\"\n"+repoTables)
++	if err := os.MkdirAll(cfg.DataDir(), 0o700); err != nil {
++		t.Fatal(err)
++	}
++	db, err := store.Open(t.Context(), cfg.DatabasePath())
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = db.Close() })
++	run, err := db.CreateRun(t.Context(), store.Run{Repo: "owner/php", IssueNumber: 1, Mode: "fix", Provider: "anthropic", Status: store.StatusRunning})
++	if err != nil {
++		t.Fatal(err)
++	}
++	r := &Runner{cfg: cfg, db: db, redactor: secret.NewRedactor()}
++	first, err := r.runExecutor(t.Context(), run)
++	if err != nil {
++		t.Fatal(err)
++	}
++	art, err := db.GetArtifact(t.Context(), run.ID, "executor", 0)
++	if err != nil || !strings.Contains(art.Content, first.Image) || !strings.Contains(art.Content, "owner/php") {
++		t.Fatalf("recorded evidence = %q, %v", art.Content, err)
++	}
++	// A later config with another image does not change the run.
++	r.cfg = loadRepoConfig(t, "/usr/bin", "[executor]\nkind=\"container\"\nimage=\""+repoImage("c")+"\"\n[repos.\"owner/php\"]\nimage=\""+repoImage("d")+"\"\ncommands={test=[\"x\"]}\n")
++	again, err := r.runExecutor(t.Context(), run)
++	if err != nil || again.Image != first.Image {
++		t.Fatalf("image not frozen: %+v %v", again, err)
++	}
++}
++
++func TestLocalExecutorRecordsNothing(t *testing.T) {
++	cfg := loadRepoConfig(t, "/usr/bin", repoTables)
++	r := &Runner{cfg: cfg, redactor: secret.NewRedactor()}
++	got, err := r.runExecutor(t.Context(), store.Run{ID: 1, Repo: "owner/php"})
++	if err != nil || got.Image != "" {
++		t.Fatalf("local = %+v %v", got, err)
++	}
++	e, err := defaultExecutor(cfg)(t.TempDir(), got)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, ok := e.(*execx.LocalExecutor); !ok {
++		t.Fatalf("executor is %T", e)
++	}
++}
+diff --git a/internal/runner/executor_test.go b/internal/runner/executor_test.go
+index f0e6537..d4e74b7 100644
+--- a/internal/runner/executor_test.go
++++ b/internal/runner/executor_test.go
+@@ -34,7 +34,7 @@ func TestDefaultExecutorFollowsConfig(t *testing.T) {
+ 		return cfg
+ 	}
+ 	workspace := t.TempDir()
+-	executor, err := defaultExecutor(load(""))(workspace)
++	executor, err := defaultExecutor(load(""))(workspace, config.RepoExecutor{})
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+@@ -42,7 +42,7 @@ func TestDefaultExecutorFollowsConfig(t *testing.T) {
+ 		t.Fatalf("default executor is %T, want local", executor)
+ 	}
+ 	image := "golang@sha256:" + strings.Repeat("0", 64)
+-	_, err = defaultExecutor(load("[executor]\nkind=\"container\"\nruntime=\"podman\"\nimage=\"" + image + "\"\n"))(workspace)
++	_, err = defaultExecutor(load("[executor]\nkind=\"container\"\nruntime=\"podman\"\nimage=\""+image+"\"\n"))(workspace, config.RepoExecutor{Image: image})
+ 	if _, statErr := os.Stat("/usr/bin/podman"); statErr == nil {
+ 		if err != nil {
+ 			t.Fatalf("container executor with installed podman: %v", err)
+diff --git a/internal/runner/findings_test.go b/internal/runner/findings_test.go
+index 55eb01c..65fe9a8 100644
+--- a/internal/runner/findings_test.go
++++ b/internal/runner/findings_test.go
+@@ -8,6 +8,7 @@ import (
+ 	"time"
+ 
+ 	"github.com/aryanpappu/patchbot/internal/agent"
++	"github.com/aryanpappu/patchbot/internal/config"
+ 	"github.com/aryanpappu/patchbot/internal/execx"
+ 	"github.com/aryanpappu/patchbot/internal/github"
+ 	"github.com/aryanpappu/patchbot/internal/gitx"
+@@ -279,7 +280,7 @@ func TestPreAgentWorkUsesRemainingRunDeadline(t *testing.T) {
+ 			}
+ 			opts := f.opts
+ 			if phase == "baseline" {
+-				opts.Executor = func(string) (execx.Executor, error) {
++				opts.Executor = func(string, config.RepoExecutor) (execx.Executor, error) {
+ 					return executorFunc(func(ctx context.Context, _ execx.Spec) (execx.Result, error) {
+ 						check(ctx)
+ 						return execx.Result{}, context.DeadlineExceeded
+diff --git a/internal/runner/phases.go b/internal/runner/phases.go
+index eac56d7..0fed2f2 100644
+--- a/internal/runner/phases.go
++++ b/internal/runner/phases.go
+@@ -2,10 +2,12 @@ package runner
+ 
+ import (
+ 	"context"
++	"encoding/json"
+ 	"errors"
+ 	"fmt"
+ 	"os"
+ 	"path/filepath"
++	"slices"
+ 	"strconv"
+ 	"strings"
+ 	"time"
+@@ -90,11 +92,19 @@ func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha
+ 			_ = ws.Close(false)
+ 		}
+ 	}()
+-	policy, err := execx.NewPolicy(ws.Dir(), r.cfg.Repos[run.Repo].Commands, r.cfg.CommandPolicyOptions())
++	frozen, err := r.runExecutor(ctx, run)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	executor, err := r.opts.Executor(ws.Dir())
++	policyOpts := r.cfg.CommandPolicyOptions(run.Repo)
++	if r.cfg.Executor.Container() {
++		policyOpts.TrustedPath = slices.Clone(frozen.Path)
++	}
++	policy, err := execx.NewPolicy(ws.Dir(), r.cfg.Repos[run.Repo].Commands, policyOpts)
++	if err != nil {
++		return nil, err
++	}
++	executor, err := r.opts.Executor(ws.Dir(), frozen)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -102,6 +112,38 @@ func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha
+ 	return &toolEnvironment{repo: repo, dir: dir, env: &tools.Env{WS: ws, Exec: executor, Policy: policy, RunDir: dir, Redactor: r.redactor, Limits: tools.Limits{CmdTimeout: limits.CmdTimeout, CmdOutputBytes: limits.CmdOutputBytes, CmdStoreBytes: limits.CmdStoreBytes}}}, nil
+ }
+ 
++// executorArtifact is the artifact kind that records the container image a
++// run uses. It is written the first time the run needs an executor and read
++// back afterwards, so the image is frozen on the run: a config change or
++// restart mid-run cannot switch it.
++const executorArtifact = "executor"
++
++func (r *Runner) runExecutor(ctx context.Context, run store.Run) (config.RepoExecutor, error) {
++	if !r.cfg.Executor.Container() {
++		return config.RepoExecutor{}, nil
++	}
++	saved, err := r.db.GetArtifact(ctx, run.ID, executorArtifact, 0)
++	switch {
++	case err == nil:
++		var re config.RepoExecutor
++		if err := json.Unmarshal([]byte(saved.Content), &re); err != nil || re.Image == "" {
++			return config.RepoExecutor{}, errors.New("recorded executor evidence is unreadable")
++		}
++		return re, nil
++	case !errors.Is(err, store.ErrNotFound):
++		return config.RepoExecutor{}, err
++	}
++	re := r.cfg.RepoExecutor(run.Repo)
++	if re.Image == "" {
++		return config.RepoExecutor{}, fmt.Errorf("no container image for %s: set repos.%q.image or executor.image", run.Repo, run.Repo)
++	}
++	content, err := json.Marshal(re)
++	if err != nil {
++		return config.RepoExecutor{}, err
++	}
++	return re, r.artifact(ctx, run.ID, executorArtifact, string(content))
++}
++
+ func (r *Runner) preflight(ctx context.Context, run store.Run) (github.Repo, github.Issue, error) {
+ 	if r.cfg.Repos[run.Repo] == nil {
+ 		return github.Repo{}, github.Issue{}, errors.New("repository is not in configuration allowlist")
+diff --git a/internal/runner/runner.go b/internal/runner/runner.go
+index 75bae94..10da0bc 100644
+--- a/internal/runner/runner.go
++++ b/internal/runner/runner.go
+@@ -56,7 +56,7 @@ type Options struct {
+ 	GitHubHTTP   *http.Client
+ 	Constructors llm.Constructors
+ 	Clone        func(context.Context, gitx.CloneOptions) (*gitx.Repo, error)
+-	Executor     func(string) (execx.Executor, error)
++	Executor     func(dir string, repo config.RepoExecutor) (execx.Executor, error)
+ 	// ContainerSweep removes containers left by a previous process. Nil uses
+ 	// execx.SweepContainers when [executor] kind is container.
+ 	ContainerSweep    func(context.Context) (int, error)
+@@ -420,12 +420,12 @@ func (r *Runner) artifact(ctx context.Context, id int64, kind, content string) e
+ 
+ // defaultExecutor selects host or container execution from [executor]. The
+ // runtime binary is resolved per run so the workspace is excluded as well.
+-func defaultExecutor(cfg *config.Config) func(string) (execx.Executor, error) {
++func defaultExecutor(cfg *config.Config) func(string, config.RepoExecutor) (execx.Executor, error) {
+ 	if !cfg.Executor.Container() {
+-		return func(dir string) (execx.Executor, error) { return execx.NewLocalExecutor(dir) }
++		return func(dir string, _ config.RepoExecutor) (execx.Executor, error) { return execx.NewLocalExecutor(dir) }
+ 	}
+-	return func(dir string) (execx.Executor, error) {
+-		containerCfg, err := cfg.ContainerConfig(os.LookupEnv, dir)
++	return func(dir string, re config.RepoExecutor) (execx.Executor, error) {
++		containerCfg, err := cfg.ContainerConfigFor(re, os.LookupEnv, dir)
+ 		if err != nil {
+ 			return nil, err
+ 		}
+@@ -441,7 +441,7 @@ func (r *Runner) sweepContainers(ctx context.Context) {
+ 	sweep := r.opts.ContainerSweep
+ 	if sweep == nil && r.cfg.Executor.Container() {
+ 		sweep = func(ctx context.Context) (int, error) {
+-			containerCfg, err := r.cfg.ContainerConfig(os.LookupEnv)
++			containerCfg, err := r.cfg.ContainerConfig("", os.LookupEnv)
+ 			if err != nil {
+ 				return 0, err
+ 			}
+diff --git a/patchbot.example.toml b/patchbot.example.toml
+index 37c587b..c491178 100644
+--- a/patchbot.example.toml
++++ b/patchbot.example.toml
+@@ -80,7 +80,7 @@ runtime = "podman"                  # podman or docker; resolved through limits.
+ # Required for kind = "container": pin by digest, never a bare tag. The image
+ # must already be pulled (runs use --pull never). Example:
+ # image = "docker.io/library/golang:1.27@sha256:<64 hex digits>"
+-image = ""
++image = ""                          # default for repositories without their own image
+ memory = "2g"                       # --memory
+ cpus = "2"                          # --cpus (string; "1.5" allowed)
+ pids_limit = 512                     # --pids-limit; caps fork bombs
+@@ -155,6 +155,13 @@ price_free = true                    # explicit zero cost; no prices table
+ commands = { test = ["go", "test", "./..."], lint = ["go", "vet", "./..."] }
+ protected = ["migrations/"]          # extra paths denied for reads and writes
+ test_command = "test"              # harness command ID; inferred if named test
++# Container mode only: this repository's own image (and PATH inside it)
++# override [executor] image/path for this repository. Same rules: digest-pinned,
++# already pulled. Needed when repositories use different toolchains, such as
++# one Go and one PHP repository. Without [executor] image, every repository
++# must set one.
++# image = "docker.io/library/php:8.4-cli@sha256:<64 hex digits>"
++# path = ["/usr/local/bin", "/usr/bin", "/bin"]
+ 
+ [webhook]
+ enabled = false
+
+exec
+/bin/zsh -lc "rg -n 'Artifact|artifact\\(|RunDir|executor|ValidateImage|ValidateContainerPath' internal/tools internal/store internal/execx internal/runner/runner.go internal/runner/phases.go" in /Users/pappumishra/Documents/selfproject/patchbot-m25-repo-image
+ succeeded in 0ms:
+internal/runner/runner.go:61:	// execx.SweepContainers when [executor] kind is container.
+internal/runner/runner.go:417:func (r *Runner) artifact(ctx context.Context, id int64, kind, content string) error {
+internal/runner/runner.go:418:	return r.db.SaveArtifact(ctx, store.Artifact{RunID: id, Kind: kind, Content: tools.CapOutput(r.redactor.Redact(content), 256<<10)})
+internal/runner/runner.go:421:// defaultExecutor selects host or container execution from [executor]. The
+internal/store/records_test.go:113:func TestQuestionsActionsArtifacts(t *testing.T) {
+internal/store/records_test.go:147:	artifact := Artifact{RunID: r.ID, Kind: "test_output", Attempt: 1, Content: "first", CreatedAt: timestamp(time.Now())}
+internal/store/records_test.go:148:	if err := s.SaveArtifact(t.Context(), artifact); err != nil {
+internal/store/records_test.go:152:	if err := s.SaveArtifact(t.Context(), artifact); err != nil {
+internal/store/records_test.go:155:	got, err := s.GetArtifact(t.Context(), r.ID, artifact.Kind, artifact.Attempt)
+internal/store/records_test.go:170:	_, artifactErr := s.GetArtifact(t.Context(), 999, "none", 0)
+internal/store/records_test.go:199:	if err := s.SaveArtifact(t.Context(), Artifact{RunID: r.ID, Kind: "test", Attempt: -1}); err == nil {
+internal/runner/phases.go:107:	executor, err := r.opts.Executor(ws.Dir(), frozen)
+internal/runner/phases.go:112:	return &toolEnvironment{repo: repo, dir: dir, env: &tools.Env{WS: ws, Exec: executor, Policy: policy, RunDir: dir, Redactor: r.redactor, Limits: tools.Limits{CmdTimeout: limits.CmdTimeout, CmdOutputBytes: limits.CmdOutputBytes, CmdStoreBytes: limits.CmdStoreBytes}}}, nil
+internal/runner/phases.go:115:// executorArtifact is the artifact kind that records the container image a
+internal/runner/phases.go:116:// run uses. It is written the first time the run needs an executor and read
+internal/runner/phases.go:119:const executorArtifact = "executor"
+internal/runner/phases.go:125:	saved, err := r.db.GetArtifact(ctx, run.ID, executorArtifact, 0)
+internal/runner/phases.go:130:			return config.RepoExecutor{}, errors.New("recorded executor evidence is unreadable")
+internal/runner/phases.go:138:		return config.RepoExecutor{}, fmt.Errorf("no container image for %s: set repos.%q.image or executor.image", run.Repo, run.Repo)
+internal/runner/phases.go:144:	return re, r.artifact(ctx, run.ID, executorArtifact, string(content))
+internal/runner/phases.go:231:		if err := r.artifact(ctx, run.ID, "report", report.ReportMD); err != nil {
+internal/runner/phases.go:269:	if err := r.artifact(ctx, run.ID, "spec", spec.BodyMD); err != nil {
+internal/runner/phases.go:567:	return test, errors.Join(err, recordErr, r.artifact(recordCtx, run.ID, "baseline", fmt.Sprintf("exit_code: %d; timed_out: %t\n%s", test.ExitCode, test.TimedOut, test.Output)))
+internal/tools/tool.go:54:	// RunDir holds private command HOME/TMP directories outside the checkout.
+internal/tools/tool.go:55:	RunDir string
+internal/execx/execx.go:54:	// secret. Nil preserves the raw executor API for non-agent callers.
+internal/execx/README.md:50:On timeout/cancel the executor sends TERM, waits the full grace period, then
+internal/execx/README.md:73:isolated OS/container executor for hostile code. Non-Unix Run returns
+internal/execx/policy.go:79:		if err := ValidateContainerPath(dirs); err != nil {
+internal/execx/local_unix_test.go:140:	// the executor escalates to SIGKILL rather than only sending SIGTERM.
+internal/execx/container.go:43:	// DefaultWorkspaceMaxBytes is the default executor.workspace_max_bytes.
+internal/execx/container.go:53:// executor.workspace_max_bytes, or left it unmeasurable.
+internal/execx/container.go:54:var ErrWorkspaceLimit = errors.New("workspace exceeds executor.workspace_max_bytes")
+internal/execx/container.go:120:// ValidateImage requires a digest-pinned image reference.
+internal/execx/container.go:121:func ValidateImage(image string) error {
+internal/execx/container.go:160:// ValidateContainerPath checks the in-container PATH entries.
+internal/execx/container.go:161:func ValidateContainerPath(dirs []string) error {
+internal/execx/container.go:182:	if err := ValidateImage(c.Image); err != nil {
+internal/execx/container.go:212:		if err := ValidateContainerPath(c.Path); err != nil {
+internal/execx/container.go:363:// through; timeout and cancellation report ExitCode -1 as the local executor
+internal/store/views.go:8:// ArtifactMetadata describes an artifact without loading its content.
+internal/store/views.go:9:type ArtifactMetadata struct {
+internal/store/views.go:52:// ListArtifacts returns metadata in kind/attempt order, without internal content.
+internal/store/views.go:53:func (s *SQLite) ListArtifacts(ctx context.Context, id int64) ([]ArtifactMetadata, error) {
+internal/store/views.go:59:	out := []ArtifactMetadata{}
+internal/store/views.go:61:		var value ArtifactMetadata
+internal/tools/run_cmd.go:53:// gets private HOME/TMP directories under RunDir, never ambient credentials.
+internal/tools/run_cmd.go:65:	if !filepath.IsAbs(env.RunDir) {
+internal/tools/run_cmd.go:68:	runDir, err := filepath.EvalSymlinks(env.RunDir)
+internal/tools/run_cmd.go:113:			return result, fmt.Errorf("command executor: %w", fatal)
+internal/tools/run_cmd.go:117:		return result, errors.New("command executor could not run the command")
+internal/store/store.go:262:// Artifact stores a redacted artifact for one kind and test attempt.
+internal/store/store.go:264:type Artifact struct {
+internal/store/store.go:316:	ListArtifacts(context.Context, int64) ([]ArtifactMetadata, error)
+internal/store/store.go:341:	SaveArtifact(context.Context, Artifact) error
+internal/store/store.go:342:	GetArtifact(ctx context.Context, runID int64, kind string, attempt int64) (Artifact, error)
+internal/store/records.go:203:// SaveArtifact inserts or replaces an artifact with the same run/kind/attempt.
+internal/store/records.go:204:func (s *SQLite) SaveArtifact(ctx context.Context, a Artifact) error {
+internal/store/records.go:211:// GetArtifact retrieves a particular run artifact.
+internal/store/records.go:212:func (s *SQLite) GetArtifact(ctx context.Context, runID int64, kind string, attempt int64) (Artifact, error) {
+internal/store/records.go:213:	var a Artifact
+internal/store/README.md:45:  and cap artifacts at their source. Artifact saves replace the same
+internal/tools/terminal_test.go:54:	return &tools.Env{WS: ws, Policy: p, RunDir: runDir, Redactor: secret.NewRedactor("private-command-secret")}
+internal/tools/terminal_test.go:82:			rel, err := filepath.Rel(env.RunDir, dir)
+internal/tools/terminal_test.go:128:		t.Fatal("denied command reached executor")
+
+exec
+/bin/zsh -lc "sed -n '115,225p' internal/execx/container.go; sed -n '1,125p' internal/execx/policy.go; sed -n '1,115p' internal/runner/phases.go; rg -n 'SaveArtifact|executorArtifact|GetArtifact|artifact' internal/runner internal/agent internal/server | head -100; cat internal/secret/redactor.go" in /Users/pappumishra/Documents/selfproject/patchbot-m25-repo-image
+ succeeded in 0ms:
+	// HostEnv is the environment of the runtime CLI process. Build it with
+	// RuntimeHostEnv. It is never forwarded into the container.
+	HostEnv []string
+}
+
+// ValidateImage requires a digest-pinned image reference.
+func ValidateImage(image string) error {
+	if !imageRE.MatchString(image) {
+		return errors.New("image must be digest-pinned, such as golang:1.27@sha256:<64 hex digits>")
+	}
+	return nil
+}
+
+// ValidateSize checks a memory or tmpfs size such as "512m".
+func ValidateSize(size string) error {
+	if !sizeRE.MatchString(size) {
+		return errors.New(`want a size such as "512m" or "2g"`)
+	}
+	return nil
+}
+
+// ValidateCPUs checks a positive CPU count such as "2" or "1.5".
+func ValidateCPUs(cpus string) error {
+	value, err := strconv.ParseFloat(cpus, 64)
+	if !cpusRE.MatchString(cpus) || err != nil || value <= 0 {
+		return errors.New(`want a positive CPU count such as "2" or "1.5"`)
+	}
+	return nil
+}
+
+// ValidateUser requires a numeric, non-root uid:gid.
+func ValidateUser(user string) error {
+	m := userRE.FindStringSubmatch(user)
+	if m == nil {
+		return errors.New(`want a numeric "uid:gid" such as "65532:65532"`)
+	}
+	for _, id := range m[1:] {
+		n, err := strconv.ParseUint(id, 10, 32)
+		if err != nil || n == 0 {
+			return errors.New("uid and gid must be non-root (not 0)")
+		}
+	}
+	return nil
+}
+
+// ValidateContainerPath checks the in-container PATH entries.
+func ValidateContainerPath(dirs []string) error {
+	if len(dirs) == 0 {
+		return errors.New("at least one directory is required")
+	}
+	for _, dir := range dirs {
+		if !path.IsAbs(dir) || path.Clean(dir) != dir || strings.ContainsAny(dir, ":\x00") {
+			return errors.New("entries must be clean absolute paths without ':'")
+		}
+	}
+	return nil
+}
+
+// Validate checks every field. It does not contact the runtime.
+func (c *ContainerConfig) Validate() error {
+	var errs []error
+	if !filepath.IsAbs(c.Runtime) || strings.ContainsRune(c.Runtime, 0) {
+		errs = append(errs, errors.New("runtime must be an absolute binary path"))
+	}
+	if c.Flavor != RuntimePodman && c.Flavor != RuntimeDocker {
+		errs = append(errs, errors.New("runtime flavor must be podman or docker"))
+	}
+	if err := ValidateImage(c.Image); err != nil {
+		errs = append(errs, err)
+	}
+	for _, size := range []string{c.Memory, c.TmpfsSize} {
+		if err := ValidateSize(size); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := ValidateCPUs(c.CPUs); err != nil {
+		errs = append(errs, err)
+	}
+	if c.WorkspaceMaxBytes <= 0 {
+		errs = append(errs, errors.New("workspace max bytes must be greater than 0"))
+	}
+	if c.PidsLimit <= 0 {
+		errs = append(errs, errors.New("pids limit must be greater than 0"))
+	}
+	if c.Network != "none" {
+		errs = append(errs, errors.New(`network must be "none"`))
+	}
+	if err := ValidateUser(c.User); err != nil {
+		errs = append(errs, err)
+	}
+	switch {
+	case c.UserNS == "":
+	case c.UserNS == "keep-id" && c.Flavor == RuntimePodman:
+	default:
+		errs = append(errs, errors.New(`userns must be empty or "keep-id" (podman only)`))
+	}
+	if c.Path != nil {
+		if err := ValidateContainerPath(c.Path); err != nil {
+			errs = append(errs, fmt.Errorf("container path: %w", err))
+		}
+	}
+	dockerConfig := ""
+	for _, entry := range c.HostEnv {
+		name, value, ok := strings.Cut(entry, "=")
+		if !ok || name == "" || strings.ContainsRune(entry, 0) {
+			errs = append(errs, errInvalidEnv)
+			break
+		}
+		if name == "DOCKER_CONFIG" {
+			dockerConfig = value
+		}
+package execx
+
+import (
+	"errors"
+	"fmt"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"strings"
+)
+
+const (
+	defaultMaxExtraArgs  = 64
+	defaultMaxArgLength  = 8 << 10
+	defaultMaxExtraBytes = 8 << 10
+)
+
+// PolicyOptions are operator-owned exceptions and limits, never model input.
+// AllowArgs and AllowLeadingDash are indexed by command ID. AllowShells is
+// indexed by executable basename, e.g. "bash", and must name an explicit opt-in.
+// Zero limits select defaults. Options are copied by NewPolicy.
+type PolicyOptions struct {
+	AllowArgs        map[string]bool
+	AllowLeadingDash map[string]bool
+	AllowShells      map[string]bool
+	MaxExtraArgs     int
+	MaxArgLength     int
+	MaxExtraBytes    int
+	// TrustedPath defaults to TrustedPath when nil; an empty list is invalid.
+	TrustedPath []string
+	// ExcludedRoots adds data/workspace roots to the checkout exclusion.
+	ExcludedRoots []string
+	// InContainer keeps executables unresolved on the host: commands run in a
+	// container image, whose PATH (TrustedPath here, container paths) resolves
+	// bare names. Shell/launcher and relative-path rules still apply.
+	InContainer bool
+}
+
+type command struct {
+	argv      []string
+	allowArgs bool
+	allowDash bool
+}
+
+// Policy holds immutable, resolved command IDs. Construct it from trusted
+// per-repo commands = { name = [argv...] } configuration outside the checkout.
+type Policy struct {
+	commands map[string]command
+	maxArgs  int
+	maxLen   int
+	maxBytes int
+	path     []string
+}
+
+// NewPolicy resolves executables once using only the configured trusted path. An absolute
+// operator-supplied executable is also accepted, but must be outside root.
+// At most one options value may be supplied.
+func NewPolicy(root string, commands map[string][]string, options ...PolicyOptions) (*Policy, error) {
+	root, err := canonicalRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	if len(options) > 1 {
+		return nil, errors.New("at most one policy options value is allowed")
+	}
+	var opts PolicyOptions
+	if len(options) == 1 {
+		opts = options[0]
+	}
+	if opts.MaxExtraArgs < 0 || opts.MaxArgLength < 0 || opts.MaxExtraBytes < 0 {
+		return nil, errors.New("argument limits must not be negative")
+	}
+	dirs := opts.TrustedPath
+	if dirs == nil {
+		dirs = filepath.SplitList(TrustedPath)
+	}
+	roots := append([]string{root}, opts.ExcludedRoots...)
+	if opts.InContainer {
+		if err := ValidateContainerPath(dirs); err != nil {
+			return nil, err
+		}
+	} else if err := ValidateTrustedPath(dirs, roots...); err != nil {
+		return nil, err
+	}
+	p := &Policy{path: append([]string(nil), dirs...), commands: make(map[string]command), maxArgs: opts.MaxExtraArgs,
+		maxLen: opts.MaxArgLength, maxBytes: opts.MaxExtraBytes}
+	if p.maxArgs == 0 {
+		p.maxArgs = defaultMaxExtraArgs
+	}
+	if p.maxLen == 0 {
+		p.maxLen = defaultMaxArgLength
+	}
+	if p.maxBytes == 0 {
+		p.maxBytes = defaultMaxExtraBytes
+	}
+	for name, argv := range commands {
+		if name == "" || strings.ContainsRune(name, 0) || len(argv) == 0 || argv[0] == "" {
+			return nil, errors.New("command ID and executable must not be empty or contain NUL")
+		}
+		for _, arg := range argv {
+			if strings.ContainsRune(arg, 0) {
+				return nil, fmt.Errorf("command %q contains NUL", name)
+			}
+		}
+		resolve := resolveExecutable
+		if opts.InContainer {
+			resolve = containerExecutable
+		}
+		binary, resolveErr := resolve(roots, argv[0], opts.AllowShells, dirs)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("command %q: %w", name, resolveErr)
+		}
+		copyArgv := append([]string(nil), argv...)
+		copyArgv[0] = binary
+		p.commands[name] = command{copyArgv, opts.AllowArgs[name], opts.AllowLeadingDash[name]}
+	}
+	return p, nil
+}
+
+// MinimalEnv uses the same immutable PATH that resolved this policy.
+func (p *Policy) MinimalEnv(home, tmp string, extra map[string]string) []string {
+	return minimalEnv(home, tmp, extra, strings.Join(p.path, string(filepath.ListSeparator)))
+}
+
+// Resolve returns a fresh argv slice. Additional arguments require explicit
+package runner
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/agent"
+	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/execx"
+	"github.com/aryanpappu/patchbot/internal/github"
+	"github.com/aryanpappu/patchbot/internal/gitx"
+	"github.com/aryanpappu/patchbot/internal/store"
+	"github.com/aryanpappu/patchbot/internal/tools"
+	"github.com/aryanpappu/patchbot/internal/workspace"
+)
+
+type toolEnvironment struct {
+	repo *gitx.Repo
+	env  *tools.Env
+	dir  string
+}
+
+func (e *toolEnvironment) close() error {
+	if e == nil || e.dir == "" {
+		return nil
+	}
+	dir := e.dir
+	e.dir = ""
+	err := errors.Join(e.env.WS.Close(false), e.repo.Close())
+	root, openErr := os.OpenRoot(filepath.Dir(dir))
+	if openErr != nil {
+		return errors.Join(err, openErr)
+	}
+	defer func() { _ = root.Close() }()
+	return errors.Join(err, root.RemoveAll(filepath.Base(dir)))
+}
+
+func (r *Runner) clone(ctx context.Context, run store.Run, meta github.Repo, sha string) (_ *toolEnvironment, err error) {
+	base := filepath.Join(r.cfg.DataDir(), "workspaces")
+	if err := os.MkdirAll(base, 0700); err != nil {
+		return nil, errors.New("create workspace directory failed")
+	}
+	dir, err := os.MkdirTemp(base, "run-"+strconv.FormatInt(run.ID, 10)+"-")
+	if err != nil {
+		return nil, errors.New("create run workspace failed")
+	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	// git asks for a fresh repository-bound token on every remote operation,
+	// so a run longer than an installation token's lifetime still pushes.
+	repoRef := ref(run.Repo)
+	tokenFunc := func(ctx context.Context) (string, error) { return r.tokens.RepoToken(ctx, repoRef) }
+	if _, err := tokenFunc(ctx); err != nil {
+		return nil, githubCredentialError(err)
+	}
+	var repo *gitx.Repo
+	defer func() {
+		if err != nil && repo != nil {
+			_ = repo.Close()
+		}
+	}()
+	err = r.operation(ctx, run, "git", "clone", func() error {
+		var cloneErr error
+		repo, cloneErr = r.opts.Clone(ctx, gitx.CloneOptions{Dir: filepath.Join(dir, "repo"), Host: "github.com", Owner: ref(run.Repo).Owner, Name: ref(run.Repo).Name, Branch: meta.DefaultBranch, DefaultBranch: meta.DefaultBranch, TokenFunc: tokenFunc, TrustedPath: r.cfg.Limits.TrustedPath, ExcludedRoots: []string{r.cfg.DataDir()}})
+		return cloneErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	if sha != "" {
+		if err := r.operation(ctx, run, "git", "checkout_sha", func() error { return repo.CheckoutSHA(ctx, sha) }); err != nil {
+			return nil, err
+		}
+	}
+	ws, err := workspace.Open(repo.Dir(), workspace.Options{Protected: r.cfg.Repos[run.Repo].Protected})
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_ = ws.Close(false)
+		}
+	}()
+	frozen, err := r.runExecutor(ctx, run)
+	if err != nil {
+		return nil, err
+	}
+	policyOpts := r.cfg.CommandPolicyOptions(run.Repo)
+	if r.cfg.Executor.Container() {
+		policyOpts.TrustedPath = slices.Clone(frozen.Path)
+	}
+	policy, err := execx.NewPolicy(ws.Dir(), r.cfg.Repos[run.Repo].Commands, policyOpts)
+	if err != nil {
+		return nil, err
+	}
+	executor, err := r.opts.Executor(ws.Dir(), frozen)
+	if err != nil {
+		return nil, err
+	}
+	limits := r.cfg.Limits
+	return &toolEnvironment{repo: repo, dir: dir, env: &tools.Env{WS: ws, Exec: executor, Policy: policy, RunDir: dir, Redactor: r.redactor, Limits: tools.Limits{CmdTimeout: limits.CmdTimeout, CmdOutputBytes: limits.CmdOutputBytes, CmdStoreBytes: limits.CmdStoreBytes}}}, nil
+}
+
+// executorArtifact is the artifact kind that records the container image a
+internal/server/api_test.go:57:		w := f.request("GET", path+"/artifacts/"+name, "")
+internal/server/api_test.go:60:			t.Fatal("unsafe artifact headers")
+internal/server/api_test.go:209:		{"GET", path + "/artifacts/diff", "", 404}, {"GET", path + "/artifacts/accounting", "", 404}, {"GET", path + "/artifacts/diff?attempt=-1", "", 400},
+internal/server/api_test.go:210:		{"POST", path + "/artifacts/diff", "{}", 405},
+internal/runner/review_test.go:142:	accounting, err := f.db.GetArtifact(t.Context(), run.ID, "accounting", 0)
+internal/runner/review_test.go:148:		t.Fatalf("accounting artifact %s: %v", accounting.Content, err)
+internal/runner/publish.go:109:	if err := r.artifact(ctx, run.ID, "diff", diff); err != nil {
+internal/runner/publish.go:125:	if err := r.artifact(ctx, run.ID, "pr_title", title); err != nil {
+internal/runner/publish.go:128:	if err := r.artifact(ctx, run.ID, "pr_body", body); err != nil {
+internal/runner/publish.go:210:		if err := r.artifact(ctx, run.ID, "publish_comment_warning", "PR opened, but the issue comment could not be posted."); err != nil {
+internal/server/findings_m13_test.go:22:	for _, path := range []string{"/", "/api/runs", fmt.Sprintf("/api/runs/%d", run.ID), fmt.Sprintf("/api/runs/%d/artifacts/diff", run.ID), fmt.Sprintf("/api/runs/%d/events", run.ID)} {
+internal/server/review_test.go:35:		Artifacts []store.ArtifactMetadata `json:"artifacts"`
+internal/server/review_test.go:53:		t.Fatalf("review steps %d artifact %t", reviewSteps, reviewArtifact)
+internal/server/review_test.go:55:	w = f.request("GET", path+"/artifacts/review?attempt=1", "")
+internal/server/review_test.go:58:		t.Fatalf("review artifact: %s", w.Body.String())
+internal/server/api.go:36:	mux.HandleFunc("/api/runs/{id}/artifacts/{name}", s.artifact)
+internal/server/api.go:261:	artifacts, err := s.db.ListArtifacts(ctx, id)
+internal/server/api.go:270:	for _, a := range artifacts {
+internal/server/api.go:287:	return map[string]any{"run": publicRun(run), "capabilities": s.runner.ActionCapabilities(run, latest), "latest_spec": latest, "spec_versions": specs, "approvals": approvals, "steps": steps, "artifacts": publicArtifacts, "reviews": reviews}, nil
+internal/server/api.go:395:func (s *Server) artifact(w http.ResponseWriter, r *http.Request) {
+internal/server/api.go:405:		s.writeError(w, 404, "not_found", "artifact not found")
+internal/server/api.go:413:			s.writeError(w, 400, "invalid_request", "invalid artifact attempt")
+internal/server/api.go:417:	artifact, err := s.db.GetArtifact(r.Context(), id, name, attempt)
+internal/server/api.go:426:				artifact, err = a, nil
+internal/server/api.go:435:	_, _ = w.Write([]byte(s.safeText(artifact.Content)))
+internal/server/README.md:11:including SSE and artifact downloads. Exact page shells (`/`, `/runs`,
+internal/server/README.md:53:  `artifacts` (`kind`, `attempt`, `bytes`, `created_at`). Also returns
+internal/server/README.md:71:- `GET /api/runs/{id}/artifacts/{name}`: `diff`, `baseline`, `test_output`,
+internal/server/README.md:74:  to zero for stored artifacts. Harness verification output is read from
+internal/server/sse.go:156:// recorded harness attempts as downloadable artifacts without copying them.
+internal/server/sse.go:158:	artifacts := []store.Artifact{}
+internal/server/sse.go:163:		artifacts = append(artifacts, store.Artifact{RunID: step.RunID, Kind: "test_output", Attempt: int64(len(artifacts) + 1), Content: step.OutputText, CreatedAt: step.StartedAt})
+internal/server/sse.go:165:	return artifacts
+internal/runner/executor_repo_test.go:122:	art, err := db.GetArtifact(t.Context(), run.ID, "executor", 0)
+internal/runner/runner.go:417:func (r *Runner) artifact(ctx context.Context, id int64, kind, content string) error {
+internal/runner/runner.go:418:	return r.db.SaveArtifact(ctx, store.Artifact{RunID: id, Kind: kind, Content: tools.CapOutput(r.redactor.Redact(content), 256<<10)})
+internal/runner/accounting.go:35:	saved, err := r.db.GetArtifact(ctx, run.ID, "accounting", 0)
+internal/runner/accounting.go:84:	return r.db.SaveArtifact(recordCtx, store.Artifact{RunID: run.ID, Kind: "accounting", Content: string(raw)})
+internal/runner/sync.go:131:	if _, err := r.db.GetArtifact(ctx, run.ID, kind, 0); !errors.Is(err, store.ErrNotFound) {
+internal/runner/sync.go:138:	return r.artifact(ctx, run.ID, kind, message)
+internal/runner/runner_test.go:517:		a, err := f.db.GetArtifact(t.Context(), run.ID, kind, 0)
+internal/runner/review.go:184:	if err := r.db.SaveArtifact(recordCtx, store.Artifact{RunID: run.ID, Kind: "review", Attempt: saved.Round, Content: tools.CapOutput(r.redactor.Redact(renderReview(saved, st.verdict)), 64<<10)}); err != nil {
+internal/runner/smoke_test.go:76:		t.Fatal("missing dry-run publication artifacts")
+internal/runner/memory.go:20:// public artifact allowlist does not include it, but the matching
+internal/runner/memory.go:43:	artifacts, err := r.db.ListArtifacts(ctx, run.ID)
+internal/runner/memory.go:48:	for _, a := range artifacts {
+internal/runner/memory.go:55:	if err := r.db.SaveArtifact(recordCtx, store.Artifact{RunID: run.ID, Kind: memoryArtifact, Attempt: attempt, Content: sel.Evidence()}); err != nil {
+internal/server/security_test.go:39:	for _, path := range []string{"/api/providers", "/api/runs", fmt.Sprintf("/api/runs/%d/events", run.ID), fmt.Sprintf("/api/runs/%d/artifacts/diff", run.ID), "/missing"} {
+internal/server/security_test.go:99:	if err := f.db.SaveArtifact(t.Context(), store.Artifact{RunID: run.ID, Kind: "diff", Content: text}); err != nil {
+internal/server/security_test.go:106:	for _, path := range []string{"/api/providers", "/api/providers/anthropic/models", "/api/runs", fmt.Sprintf("/api/runs/%d", run.ID), fmt.Sprintf("/api/runs/%d/artifacts/diff", run.ID), fmt.Sprintf("/api/runs/%d/events", run.ID)} {
+internal/runner/app_auth_test.go:257:	// database, logs, posted comments, errors, artifacts or the command env.
+internal/runner/memory_test.go:37:		a, err := f.db.GetArtifact(f.t.Context(), id, "memory_selection", attempt)
+internal/runner/cli_redaction_m15_test.go:66:		artifact, err := f.db.GetArtifact(t.Context(), 1, kind, 0)
+internal/runner/cli_redaction_m15_test.go:67:		if err == nil && strings.Contains(artifact.Content, token) {
+internal/runner/lifecycle.go:403:			err = r.artifact(cleanup, run.ID, "failure_comment_warning", "Could not post failure comment.")
+internal/runner/README.md:41:usage. An accounting artifact also retains active elapsed time across new CLI
+internal/runner/README.md:49:artifacts, and perform no push or GitHub write. The CLI prints those artifacts.
+internal/runner/phases.go:115:// executorArtifact is the artifact kind that records the container image a
+internal/runner/phases.go:119:const executorArtifact = "executor"
+internal/runner/phases.go:125:	saved, err := r.db.GetArtifact(ctx, run.ID, executorArtifact, 0)
+internal/runner/phases.go:144:	return re, r.artifact(ctx, run.ID, executorArtifact, string(content))
+internal/runner/phases.go:231:		if err := r.artifact(ctx, run.ID, "report", report.ReportMD); err != nil {
+internal/runner/phases.go:269:	if err := r.artifact(ctx, run.ID, "spec", spec.BodyMD); err != nil {
+internal/runner/phases.go:441:		r.observe(ctx, *run, command, test, run.BaseSHA, fmt.Sprintf("run %d artifact baseline", run.ID))
+internal/runner/phases.go:567:	return test, errors.Join(err, recordErr, r.artifact(recordCtx, run.ID, "baseline", fmt.Sprintf("exit_code: %d; timed_out: %t\n%s", test.ExitCode, test.TimedOut, test.Output)))
+internal/runner/recovery_test.go:73:		artifact, err := f.db.GetArtifact(t.Context(), run.ID, "accounting", 0)
+internal/runner/recovery_test.go:81:		if err := json.Unmarshal([]byte(artifact.Content), &totals); err != nil {
+internal/runner/recovery_test.go:85:			t.Fatalf("lost unknown usage: %s", artifact.Content)
+internal/runner/findings_test.go:264:				if err := f.db.SaveArtifact(t.Context(), store.Artifact{RunID: run.ID, Kind: "accounting", Content: `{"Active":3540000000000}`}); err != nil {
+package secret
+
+import (
+	"encoding/base64"
+	"regexp"
+	"slices"
+	"strings"
+	"sync"
+)
+
+// MinValueLen is the shortest secret value a Redactor will register. Masking
+// shorter values would damage ordinary text and reveal little.
+const MinValueLen = 8
+
+const (
+	// maxPatternPrefix is longer than the text any pattern can match before it
+	// reaches its minimum length, so a pattern that started more than this
+	// many bytes before the end of a buffer has already matched.
+	maxPatternPrefix = 128
+)
+
+type pattern struct {
+	re *regexp.Regexp
+	// group is the submatch to mask; 0 masks the whole match.
+	group int
+	// pem marks the private-key pattern, which may run to the end of input.
+	pem bool
+}
+
+// The patterns carry no word-boundary anchors on purpose. Text that reaches a
+// redactor is often escaped, and in "\\nghp_..." or "%20ghp_..." the token
+// follows a letter or digit.
+var (
+	patterns = []pattern{
+		// GitHub personal, OAuth, user-to-server, server-to-server and refresh tokens.
+		{re: regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{20,}`)},
+		{re: regexp.MustCompile(`github_pat_[A-Za-z0-9_]{20,}`)},
+		// Anthropic keys.
+		{re: regexp.MustCompile(`sk-ant-[A-Za-z0-9_-]{16,}`)},
+		// OpenAI keys (sk-, sk-proj-, sk-svcacct-, ...). A run of 20 characters
+		// with no hyphen is required, which random keys have and hyphenated
+		// names such as "task-list-for-the-nightly-job" do not.
+		{re: regexp.MustCompile(`sk-[A-Za-z0-9_-]{0,40}?[A-Za-z0-9_]{20,}[A-Za-z0-9_-]*`)},
+		// Google API keys.
+		{re: regexp.MustCompile(`AIza[A-Za-z0-9_-]{30,}`)},
+		// Authorization headers. Only the credential is masked.
+		{re: regexp.MustCompile(`(?i)bearer[ \t]{1,8}([A-Za-z0-9._~+/=-]{16,})`), group: 1},
+		// Basic auth. The value is base64("user:password"), which no
+		// registered value can match, so it is masked by shape. After an
+		// Authorization header any length counts; elsewhere it must be long
+		// enough not to be an ordinary word after "basic".
+		{re: regexp.MustCompile(`(?i)authorization["']?[ \t]{0,4}[:=][ \t]{0,4}["']?basic[ \t]{1,8}([A-Za-z0-9+/=_-]+)`), group: 1},
+		{re: regexp.MustCompile(`(?i)basic[ \t]{1,8}([A-Za-z0-9+/_-]{16,}={0,2})`), group: 1},
+		// PEM private keys. A block with no END line is masked to the end.
+		{
+			re: regexp.MustCompile(`-----BEGIN [A-Z ]{0,24}PRIVATE KEY-----[\s\S]*?` +
+				`(?:-----END [A-Z ]{0,24}PRIVATE KEY-----|\z)`),
+			pem: true,
+		},
+	}
+	pemEnd = regexp.MustCompile(`-----END [A-Z ]{0,24}PRIVATE KEY-----`)
+)
+
+// Redactor masks registered secret values and token-shaped strings. The zero
+// value is not usable; call NewRedactor. A nil *Redactor still masks the
+// token-shaped patterns. A Redactor is safe for concurrent use.
+type Redactor struct {
+	mu     sync.RWMutex
+	values []string
+	maxLen int
+}
+
+// NewRedactor returns a Redactor that masks the given values.
+func NewRedactor(values ...string) *Redactor {
+	r := &Redactor{}
+	r.Add(values...)
+	return r
+}
+
+// Add registers secret values. Values shorter than MinValueLen are ignored.
+// The standard and URL-safe base64 forms of each value are registered too,
+// because that is how a secret appears inside a Basic auth header.
+func (r *Redactor) Add(values ...string) {
+	r.add(MinValueLen, values...)
+}
+
+// AddExact registers credentials using the same minimum as Add.
+// Kept for callers at authentication boundaries; short values are not masked.
+func (r *Redactor) AddExact(values ...string) {
+	r.Add(values...)
+}
+
+func (r *Redactor) add(minLength int, values ...string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, value := range values {
+		if len(value) < minLength {
+			continue
+		}
+		raw := []byte(value)
+		for _, form := range []string{
+			value,
+			base64.StdEncoding.EncodeToString(raw),
+			base64.RawStdEncoding.EncodeToString(raw),
+			base64.URLEncoding.EncodeToString(raw),
+			base64.RawURLEncoding.EncodeToString(raw),
+		} {
+			if slices.Contains(r.values, form) {
+				continue
+			}
+			r.values = append(r.values, form)
+			r.maxLen = max(r.maxLen, len(form))
+		}
+	}
+}
+
+// Extend adds everything other masks to r.
+func (r *Redactor) Extend(other *Redactor) {
+	if other == nil || other == r {
+		return
+	}
+	other.mu.RLock()
+	values := slices.Clone(other.values)
+	other.mu.RUnlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, value := range values {
+		if !slices.Contains(r.values, value) {
+			r.values = append(r.values, value)
+			r.maxLen = max(r.maxLen, len(value))
+		}
+	}
+}
+
+// AddSecrets registers the values of the given secrets.
+func (r *Redactor) AddSecrets(secrets ...Secret) {
+	for _, s := range secrets {
+		r.Add(s.Reveal())
+	}
+}
+
+// Redact returns s with every secret replaced by Mask.
+func (r *Redactor) Redact(s string) string {
+	spans := r.find(s)
+	if len(spans) == 0 {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	last := 0
+	for _, sp := range spans {
+		b.WriteString(s[last:sp.start])
+		b.WriteString(Mask)
+		last = sp.end
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
+// RedactBytes is Redact for a byte slice. It returns a new slice.
+func (r *Redactor) RedactBytes(p []byte) []byte {
+	return []byte(r.Redact(string(p)))
+}
+
+// span is a half-open byte range of s that must be masked.
+type span struct {
+	start, end int
+	// from is where the match that produced the span begins. It is before
+	// start when only part of a match is masked, as with "Bearer <token>".
+	from int
+	// open is set when a private-key block reached the end of the input with
+	// no END line.
+	open bool
+	// token is set when a token pattern reaches the end of the input and
+	// could continue in the next write. Fixed registered values do not grow.
+	token bool
+}
+
+// find returns the ranges to mask, sorted and merged so that overlapping
+// secrets become one range and no part of either leaks.
+func (r *Redactor) find(s string) []span {
+	var spans []span
+	if r != nil {
+		r.mu.RLock()
+		for _, value := range r.values {
+			for from := 0; ; {
+				i := strings.Index(s[from:], value)
+				if i < 0 {
+					break
+				}
+				start := from + i
+				spans = append(spans, span{start: start, end: start + len(value), from: start})
+				// Step one byte, not one match, so self-overlapping
+				// occurrences are all found.
+				from = start + 1
+			}
+		}
+		r.mu.RUnlock()
+	}
+	for _, p := range patterns {
+		for _, m := range p.re.FindAllStringSubmatchIndex(s, -1) {
+			start, end := m[2*p.group], m[2*p.group+1]
+			if start < 0 || start == end {
+				continue
+			}
+			open := p.pem && end == len(s) && !pemEnd.MatchString(s[start:end])
+			spans = append(spans, span{
+				start: start, end: end, from: m[0], open: open,
+				token: !p.pem && end == len(s),
+			})
+		}
+	}
+	if len(spans) < 2 {
+		return spans
+	}
+	slices.SortFunc(spans, func(a, b span) int {
+		if a.start != b.start {
+			return a.start - b.start
+		}
+		return b.end - a.end
+	})
+	merged := spans[:1]
+	for _, sp := range spans[1:] {
+		last := &merged[len(merged)-1]
+		if sp.start > last.end {
+			merged = append(merged, sp)
+			continue
+		}
+		last.from = min(last.from, sp.from)
+		if sp.end > last.end {
+			last.end = sp.end
+			last.open = sp.open
+			last.token = sp.token
+		} else if sp.end == last.end {
+			last.open = last.open || sp.open
+			last.token = last.token || sp.token
+		}
+	}
+	return merged
+}
+
+// overlap is how many trailing bytes a stream must hold back so that a secret
+// split across two writes is still seen whole.
+func (r *Redactor) overlap() int {
+	n := maxPatternPrefix
+	if r != nil {
+		r.mu.RLock()
+		n = max(n, r.maxLen)
+		r.mu.RUnlock()
+	}
+	return n
+}
+
+codex
+Per-repo images use the existing digest validation, and executor artifacts are stored in the database with no repo or model write path exposed. I’m checking resume handling and whether artifact serialization preserves the exact image and PATH.
+exec
+/bin/zsh -lc "rg -n 'imageRE|--env|c.Path|cfg.Path|spec.Env|Image' internal/execx/container.go; cat internal/runner/resume.go; sed -n '195,230p' internal/store/records.go; rg -n 'CommandPolicyOptions|ContainerConfig\\(|\\.clone\\(|redactor.Add|redactor.Extend' internal/runner internal/config internal/cli; sed -n '1,120p' internal/config/executor.go; sed -n '50,120p' internal/config/show.go" in /Users/pappumishra/Documents/selfproject/patchbot-m25-repo-image
+ succeeded in 0ms:
+72:	imageRE = regexp.MustCompile(`^(?:[A-Za-z0-9][A-Za-z0-9.-]*(?::[0-9]{1,5})?/)?` +
+97:	// Image must be digest-pinned: name[:tag]@sha256:<64 hex>.
+98:	Image string
+120:// ValidateImage requires a digest-pinned image reference.
+121:func ValidateImage(image string) error {
+122:	if !imageRE.MatchString(image) {
+182:	if err := ValidateImage(c.Image); err != nil {
+211:	if c.Path != nil {
+212:		if err := ValidateContainerPath(c.Path); err != nil {
+295:	if cfg.Path == nil {
+296:		cfg.Path = DefaultContainerPath
+321:	cfg.Path = slices.Clone(cfg.Path)
+389:	env, err := scrubEnv(spec.Env)
+401:	argv := containerArgv(e.cfg, name, e.root, gitDir, workdir, containerEnv(env, e.cfg.Path), spec.Argv)
+678:	out = append(out, cfg.Image)
+cat: internal/runner/resume.go: No such file or directory
+		if err != nil {
+			return nil, err
+		}
+		actions = append(actions, a)
+	}
+	return actions, rows.Err()
+}
+
+// SaveArtifact inserts or replaces an artifact with the same run/kind/attempt.
+func (s *SQLite) SaveArtifact(ctx context.Context, a Artifact) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO run_artifacts(run_id,kind,attempt,content,created_at)
+		VALUES(?,?,?,?,?) ON CONFLICT(run_id,kind,attempt) DO UPDATE SET content=excluded.content,created_at=excluded.created_at`,
+		a.RunID, a.Kind, a.Attempt, a.Content, timestamp(a.CreatedAt).UnixMilli())
+	return mapError(err)
+}
+
+// GetArtifact retrieves a particular run artifact.
+func (s *SQLite) GetArtifact(ctx context.Context, runID int64, kind string, attempt int64) (Artifact, error) {
+	var a Artifact
+	var created int64
+	err := s.db.QueryRowContext(ctx, `SELECT run_id,kind,attempt,content,created_at FROM run_artifacts WHERE run_id=? AND kind=? AND attempt=?`,
+		runID, kind, attempt).Scan(&a.RunID, &a.Kind, &a.Attempt, &a.Content, &created)
+	a.CreatedAt = time.UnixMilli(created).UTC()
+	return a, mapError(err)
+}
+
+const stepColumns = `run_id,seq,phase,kind,tool,status,turn,input_json,output_text,stop_reason,input_tokens,output_tokens,
+cache_read_tokens,cache_write_tokens,cost_micros,exit_code,duration_ms,started_at,finished_at`
+
+func scanStep(row scanner) (Step, error) {
+	var step Step
+	var started int64
+	var finished sql.NullInt64
+	err := row.Scan(&step.RunID, &step.Seq, &step.Phase, &step.Kind, &step.Tool, &step.Status, &step.Turn,
+		&step.InputJSON, &step.OutputText, &step.StopReason, &step.InputTokens, &step.OutputTokens,
+		&step.CacheReadTokens, &step.CacheWriteTokens, &step.CostMicros, &step.ExitCode, &step.DurationMS, &started, &finished)
+internal/runner/executor_repo_test.go:98:	if opts := cfg.CommandPolicyOptions("owner/php"); !opts.InContainer || opts.TrustedPath[0] != "/opt/php/bin" {
+internal/runner/phases.go:99:	policyOpts := r.cfg.CommandPolicyOptions(run.Repo)
+internal/runner/phases.go:197:	env, err := r.clone(ctx, *run, meta, "")
+internal/runner/phases.go:420:	env, err := r.clone(ctx, *run, meta, run.BaseSHA)
+internal/runner/phases.go:457:			env, err = r.clone(ctx, *run, meta, run.BaseSHA)
+internal/cli/runs.go:175:		redactor.AddSecrets(secret.New(token))
+internal/config/load.go:160:				redactor.AddExact(strings.TrimSpace(value))
+internal/cli/doctor.go:154:					p, err := execx.NewPolicy(root, map[string][]string{id: cfg.Repos[name].Commands[id]}, cfg.CommandPolicyOptions(name, excluded...))
+internal/cli/doctor.go:308:	cc, err := cfg.ContainerConfig("", lookup, excluded...)
+internal/runner/auth.go:36:			r.redactor.AddSecrets(secret.New(token))
+internal/runner/auth.go:37:			r.redactor.Add(github.GitHeaderForm(token))
+internal/runner/auth.go:63:			redactor.Add(token, github.GitHeaderForm(token))
+internal/config/executor.go:11:// CommandPolicyOptions returns the policy options for repository commands.
+internal/config/executor.go:15:func (c *Config) CommandPolicyOptions(repo string, excluded ...string) execx.PolicyOptions {
+internal/config/executor.go:58:func (c *Config) ContainerConfig(repo string, lookup func(string) (string, bool), excluded ...string) (execx.ContainerConfig, error) {
+internal/runner/runner.go:142:	r.redactor.Extend(opts.Redactor)
+internal/runner/runner.go:444:			containerCfg, err := r.cfg.ContainerConfig("", os.LookupEnv)
+internal/cli/serve.go:57:	redactor.AddExact(uiToken)
+internal/cli/serve.go:63:	redactor.Extend(cfg.Redactor())
+internal/config/show.go:22:	p.redactor.AddSecrets(c.Secrets()...)
+internal/config/show.go:24:		p.redactor.Extend(r)
+internal/cli/memory.go:150:	redactor.Extend(cfg.Redactor())
+internal/cli/memory.go:151:	redactor.Extend(a.outputRedactor)
+internal/config/executor_test.go:21:	opts := c.CommandPolicyOptions("owner/repo")
+internal/config/executor_test.go:25:	if _, err := c.ContainerConfig("", func(string) (string, bool) { return "", false }); err == nil {
+internal/config/executor_test.go:77:	opts := c.CommandPolicyOptions("owner/repo")
+package config
+
+import (
+	"fmt"
+	"path/filepath"
+	"slices"
+
+	"github.com/aryanpappu/patchbot/internal/execx"
+)
+
+// CommandPolicyOptions returns the policy options for repository commands.
+// Local execution resolves executables on the host trusted path; container
+// execution keeps names for the image's PATH. Command IDs and the allowlist
+// are the same either way.
+func (c *Config) CommandPolicyOptions(repo string, excluded ...string) execx.PolicyOptions {
+	if c.Executor.Container() {
+		return execx.PolicyOptions{InContainer: true, TrustedPath: c.RepoExecutor(repo).Path}
+	}
+	return execx.PolicyOptions{TrustedPath: c.Limits.TrustedPath, ExcludedRoots: append([]string{c.DataDir()}, excluded...)}
+}
+
+// RepoExecutor is the container image and in-container PATH one repository
+// runs with: its own [repos."owner/name"] values, else [executor]'s. It is
+// recorded on the run so the image a run used is auditable.
+type RepoExecutor struct {
+	Image string   `json:"image"`
+	Path  []string `json:"path"`
+	// ImageSource is the config key the image came from.
+	ImageSource string `json:"image_source"`
+}
+
+// RepoExecutor resolves the per-repository overrides. An unknown repo or ""
+// yields the [executor] values.
+func (c *Config) RepoExecutor(repo string) RepoExecutor {
+	out := RepoExecutor{Image: c.Executor.Image, Path: slices.Clone(c.Executor.Path), ImageSource: "executor.image"}
+	if r := c.Repos[repo]; r != nil {
+		if r.Image != "" {
+			out.Image, out.ImageSource = r.Image, fmt.Sprintf("repos.%q.image", repo)
+		}
+		if r.Path != nil {
+			out.Path = slices.Clone(r.Path)
+		}
+	}
+	return out
+}
+
+// imageFreeImage is a valid, never-pulled image for operations that do not use
+// the image (container sweep, runtime checks) when none is configured globally.
+const imageFreeImage = "patchbot-unused@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+// ContainerConfig resolves the runtime binary through limits.trusted_path
+// (never the ambient PATH) and returns the execx container configuration.
+// lookup reads patchbot's own environment for the runtime CLI variables, such
+// as XDG_RUNTIME_DIR; nothing from it is forwarded into the container.
+// repo selects that repository's image and PATH; "" is for operations that do
+// not run a repository command (sweep, runtime checks) and uses a placeholder
+// image when [executor] has none.
+func (c *Config) ContainerConfig(repo string, lookup func(string) (string, bool), excluded ...string) (execx.ContainerConfig, error) {
+	return c.ContainerConfigFor(c.RepoExecutor(repo), lookup, excluded...)
+}
+
+// ContainerConfigFor builds the configuration for an already-resolved
+// (for example run-frozen) image and PATH.
+func (c *Config) ContainerConfigFor(re RepoExecutor, lookup func(string) (string, bool), excluded ...string) (execx.ContainerConfig, error) {
+	e := c.Executor
+	if !e.Container() {
+		return execx.ContainerConfig{}, fmt.Errorf("executor.kind is %q, not container", e.Kind)
+	}
+	if re.Image == "" {
+		re.Image = imageFreeImage
+	}
+	runtime, err := execx.ResolveExecutable(e.Runtime, c.Limits.TrustedPath, append([]string{c.DataDir()}, excluded...)...)
+	if err != nil {
+		return execx.ContainerConfig{}, fmt.Errorf("executor.runtime %s: %w", e.Runtime, err)
+	}
+	cfg := execx.ContainerConfig{
+		Runtime: runtime, Flavor: e.Runtime, Image: re.Image, Memory: e.Memory, CPUs: e.CPUs,
+		PidsLimit: e.PidsLimit, TmpfsSize: e.TmpfsSize, Network: e.Network, User: e.User,
+		UserNS: e.UserNS, Path: slices.Clone(re.Path), WorkspaceMaxBytes: e.WorkspaceMaxBytes,
+		HostEnv: execx.RuntimeHostEnv(c.Limits.TrustedPath, lookup),
+	}
+	if e.Runtime == execx.RuntimeDocker {
+		// A private, empty config: the user's ~/.docker/config.json can inject
+		// proxy variables into containers.
+		cfg.HostEnv = append(cfg.HostEnv, "DOCKER_CONFIG="+c.DockerConfigDir())
+	}
+	return cfg, cfg.Validate()
+}
+
+// DockerConfigDir is docker's private DOCKER_CONFIG directory in the data dir.
+func (c *Config) DockerConfigDir() string {
+	return filepath.Join(c.DataDir(), "runtime", "docker-config")
+}
+	key   toml.Key
+	value reflect.Value
+}
+
+// table prints one table: its own values first, then its sub-tables.
+func (p *printer) table(key toml.Key, v reflect.Value) {
+	var leaves, tables []entry
+	add := func(name string, value reflect.Value) {
+		e := entry{key: append(key[:len(key):len(key)], name), value: value}
+		if isTable(value) {
+			tables = append(tables, e)
+		} else {
+			leaves = append(leaves, e)
+		}
+	}
+	switch v.Kind() {
+	case reflect.Struct:
+		t := v.Type()
+		for i := range t.NumField() {
+			name, _, _ := strings.Cut(t.Field(i).Tag.Get("toml"), ",")
+			if name == "" || name == "-" {
+				continue
+			}
+			add(name, v.Field(i))
+		}
+	case reflect.Map:
+		for _, name := range sortedKeys(mapOfValues(v)) {
+			add(p.redactor.Redact(name), v.MapIndex(reflect.ValueOf(name)))
+		}
+	}
+
+	if v.Kind() == reflect.Map && v.Len() == 0 {
+		return
+	}
+	provider, isProvider := v.Interface().(Provider)
+	_, isRepo := v.Interface().(Repo)
+	if len(key) > 0 && (len(leaves) > 0 || len(tables) == 0) {
+		p.linef("")
+		p.linef("[%s]", key)
+	}
+	width := 0
+	rendered := make([]string, len(leaves))
+	for i, leaf := range leaves {
+		text, ok := formatValue(leaf.value, p.redactor)
+		if !ok {
+			continue
+		}
+		name := leaf.key[len(leaf.key)-1]
+		if isRepo && (name == "image" || name == "path") && (text == `""` || text == "[]") {
+			continue // not set: the effective value is shown below
+		}
+		if isProvider && name == "api_key_env" && provider.APIKeyEnv != "" && !envNameRE.MatchString(provider.APIKeyEnv) {
+			text = strconv.Quote(secret.Mask) // most likely a key pasted into the wrong field
+		}
+		if isProvider && name == "base_url" {
+			text = strconv.Quote(p.redactor.Redact(displayURL(provider.BaseURL)))
+		}
+		rendered[i] = fmt.Sprintf("%s = %s", toml.Key{name}, text)
+		width = max(width, len(rendered[i]))
+	}
+	for i, leaf := range leaves {
+		if rendered[i] != "" {
+			p.linef("%-*s  # %s", width, rendered[i], p.redactor.Redact(p.sources[leaf.key.String()].String()))
+		}
+	}
+	if isProvider {
+		p.linef("%s", p.redactor.Redact(apiKeyStatus(provider)))
+	}
+	if isRepo && p.cfg != nil && p.cfg.Executor.Container() {
+		re := p.cfg.RepoExecutor(key[len(key)-1])
+		if re.Image == "" {
+
+exec
+/bin/zsh -lc "sed -n '65,82p' internal/execx/container.go; sed -n '620,705p' internal/execx/container.go; sed -n '385,470p' internal/runner/phases.go; sed -n '175,205p' internal/runner/phases.go; sed -n '120,170p' internal/config/load.go; nl -ba internal/runner/phases.go | sed -n '120,148p'; rg -n 'func containerEnv|DefaultContainerPath|Executor.Path' internal/execx/container.go internal/config" in /Users/pappumishra/Documents/selfproject/patchbot-m25-repo-image
+ succeeded in 0ms:
+
+// DefaultContainerPath is the PATH inside the container. It covers common
+// official toolchain images (Go installs to /usr/local/go/bin).
+var DefaultContainerPath = []string{"/usr/local/go/bin", "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"}
+
+var (
+	// An image must be pinned by content digest; a tag alone is mutable.
+	imageRE = regexp.MustCompile(`^(?:[A-Za-z0-9][A-Za-z0-9.-]*(?::[0-9]{1,5})?/)?` +
+		`[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*` +
+		`(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@sha256:[a-f0-9]{64}$`)
+	sizeRE = regexp.MustCompile(`^[1-9][0-9]{0,8}[kKmMgG]$`)
+	cpusRE = regexp.MustCompile(`^(?:[0-9]{1,3})(?:\.[0-9]{1,3})?$`)
+	userRE = regexp.MustCompile(`^([0-9]{1,10}):([0-9]{1,10})$`)
+)
+
+// runtimeEnvNames are passed from patchbot's own environment to the runtime
+// CLI process only (never into the container). XDG_RUNTIME_DIR is required by
+// rootless podman; DOCKER_HOST selects a rootless docker daemon. DOCKER_CONFIG
+			if value == prefix {
+				return containerTmp
+			}
+			if rest, ok := strings.CutPrefix(value, prefix+"/"); ok {
+				return containerTmp + "/" + rest
+			}
+		}
+		return value
+	}
+	out := make([]string, 0, len(env)+1+len(proxyNames))
+	out = append(out, "PATH="+strings.Join(containerPath, ":"))
+	for _, entry := range env {
+		name, value, _ := strings.Cut(entry, "=")
+		if name == "PATH" || slices.Contains(proxyNames, name) {
+			continue
+		}
+		out = append(out, name+"="+remap(value))
+	}
+	// Explicit empty values override runtime-injected proxy settings.
+	for _, name := range proxyNames {
+		out = append(out, name+"=")
+	}
+	return out
+}
+
+// containerArgv builds the complete create invocation. Arguments after the
+// image are passed to the container literally, never through a shell. gitDir,
+// when set, is mounted read-only over /work/.git.
+func containerArgv(cfg ContainerConfig, name, hostRoot, gitDir, workdir string, env, argv []string) []string {
+	out := []string{
+		cfg.Runtime, "create",
+		"--name", name,
+		"--label", containerLabel,
+		"--pull", "never",
+		"--network", cfg.Network,
+		"--read-only",
+		"--tmpfs", containerTmp + ":rw,nosuid,nodev,size=" + cfg.TmpfsSize,
+		"--cap-drop", "ALL",
+		"--security-opt", "no-new-privileges",
+		"--pids-limit", strconv.Itoa(cfg.PidsLimit),
+		"--memory", cfg.Memory,
+		"--cpus", cfg.CPUs,
+		"--user", cfg.User,
+	}
+	if cfg.UserNS == "keep-id" {
+		uid, gid, _ := strings.Cut(cfg.User, ":")
+		out = append(out, "--userns", "keep-id:uid="+uid+",gid="+gid)
+	}
+	if cfg.Flavor == RuntimePodman {
+		out = append(out, "--http-proxy=false")
+	}
+	out = append(out, "--workdir", workdir, "-v", hostRoot+":"+ContainerWorkdir+":rw")
+	if gitDir != "" {
+		out = append(out, "-v", gitDir+":"+ContainerWorkdir+"/.git:ro")
+	}
+	for _, entry := range env {
+		out = append(out, "-e", entry)
+	}
+	out = append(out, cfg.Image)
+	return append(out, argv...)
+}
+		return r.fail(ctx, run, err)
+	}
+	return nil
+}
+
+func (r *Runner) code(ctx context.Context, run *store.Run) (err error) {
+	session, limits, totals, err := r.session(ctx, *run)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, max(limits.Agent.Deadline.Sub(r.now()), 0))
+	defer cancel()
+	started := time.Now()
+	defer func() { err = errors.Join(err, r.saveAccounting(ctx, *run, session, totals, started)) }()
+	spec, err := r.checkedSpec(ctx, *run)
+	if err != nil {
+		return err
+	}
+	if _, err := agent.Check(ctx, r.db, run.ID, spec.IssueHash, r.gateOptions()); err != nil {
+		return err
+	}
+	sel, err := frozenReview(*run)
+	if err != nil {
+		return err
+	}
+	meta, issue, err := r.preflight(ctx, *run)
+	if err != nil {
+		return err
+	}
+	if err := r.publicationAvailable(ctx, *run); err != nil {
+		return err
+	}
+	if err := r.transition(ctx, run, store.StatusApproved, store.PhaseClone, store.RunPatch{}); err != nil {
+		return err
+	}
+	env, err := r.clone(ctx, *run, meta, run.BaseSHA)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, env.close()) }()
+	branch := fmt.Sprintf("patchbot/issue-%d", run.IssueNumber)
+	if err := r.operation(ctx, *run, "git", "create_branch", func() error { return env.repo.CreateBranch(ctx, branch) }); err != nil {
+		return err
+	}
+	if err := r.transition(ctx, run, store.StatusApproved, store.PhaseBaseline, store.RunPatch{Branch: &branch}); err != nil {
+		return err
+	}
+	baseline := "not_run"
+	baselineInfo := baseline
+	command, _ := r.cfg.Repos[run.Repo].TestCommandID()
+	if command != "" && r.cfg.Limits.BaselineTests {
+		test, err := r.baseline(ctx, *run, env, command, limits.Agent.TestTimeout)
+		if err != nil {
+			return err
+		}
+		// Only the typed result is remembered; baseline output never is.
+		r.observe(ctx, *run, command, test, run.BaseSHA, fmt.Sprintf("run %d artifact baseline", run.ID))
+		baseline = "failed"
+		baselineInfo = fmt.Sprintf("exit_code: %d; timed_out: %t\n%s", test.ExitCode, test.TimedOut, tools.CapOutput(test.Output, 8<<10))
+		if test.ExitCode == 0 && !test.TimedOut {
+			baseline = "passed"
+		}
+		changed, err := env.repo.HasChanges(ctx)
+		if err != nil {
+			return err
+		}
+		if changed {
+			// Discard only this disposable baseline checkout. Re-clone the pinned
+			// commit so generated baseline files cannot become agent changes.
+			if err := env.close(); err != nil {
+				return err
+			}
+			env, err = r.clone(ctx, *run, meta, run.BaseSHA)
+			if err != nil {
+				return err
+			}
+			if err := r.operation(ctx, *run, "git", "create_branch", func() error { return env.repo.CreateBranch(ctx, branch) }); err != nil {
+				return err
+			}
+		}
+	}
+	// Fetch again after clone/baseline: waiting or repository execution must not
+	// turn an earlier issue snapshot into permission to write.
+	issue, err = r.gh.GetIssue(ctx, ref(run.Repo), int(run.IssueNumber))
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, max(limits.Agent.Deadline.Sub(r.now()), 0))
+	defer cancel()
+	started := time.Now()
+	defer func() { err = errors.Join(err, r.saveAccounting(ctx, *run, session, totals, started)) }()
+	if totals.Active >= limits.Timeout || session.Tokens >= limits.Agent.MaxTotalTokens || session.Cost >= limits.Agent.MaxCostMicros {
+		return budgetError(agent.EndBudget)
+	}
+	meta, issue, err := r.preflight(ctx, *run)
+	if err != nil {
+		return err
+	}
+	title := r.redactor.Redact(issue.Title)
+	if err := r.transition(ctx, run, store.StatusRunning, store.PhasePreflight, store.RunPatch{IssueTitle: &title}); err != nil {
+		return err
+	}
+	if reuse != nil {
+		return r.reuseSpec(ctx, run, *reuse)
+	}
+	if err := r.transition(ctx, run, store.StatusRunning, store.PhaseClone, store.RunPatch{}); err != nil {
+		return err
+	}
+	env, err := r.clone(ctx, *run, meta, "")
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, env.close()) }()
+	sha, err := env.repo.HeadSHA(ctx)
+	if err != nil {
+		return err
+	}
+	if err != nil {
+		// The file is compiled in, so this is a bug that the tests catch.
+		panic("config: embedded defaults.toml is invalid: " + err.Error())
+	}
+	return c
+}
+
+// Load builds the effective configuration: defaults, then the config file,
+// then environment variables, then flags. It reports syntax errors, unknown
+// keys and keys that look like secrets. It does not judge the values; call
+// Validate for that.
+//
+// An error from Load never quotes a value it could not parse, since nothing
+// says the value is not a secret in the wrong place, and it is redacted with
+// every API key the loader could find.
+func Load(opts Options) (*Config, error) {
+	lookupEnv := opts.LookupEnv
+	if lookupEnv == nil {
+		lookupEnv = os.LookupEnv
+	}
+	c, err := load(opts, lookupEnv)
+	// The keys are read even when loading failed, to redact the error.
+	for _, p := range c.Providers {
+		if !envNameRE.MatchString(p.APIKeyEnv) {
+			continue // Validate reports a bad name; never look it up.
+		}
+		if value, ok := lookupEnv(p.APIKeyEnv); ok {
+			p.APIKey = secret.New(strings.TrimSpace(value))
+		}
+	}
+	if envNameRE.MatchString(c.Webhook.SecretEnv) {
+		value, _ := lookupEnv(c.Webhook.SecretEnv)
+		c.Webhook.Secret = secret.New(strings.TrimSpace(value))
+	}
+	if err != nil {
+		// A file that was rejected never became part of c, but the variable
+		// names it gave still say where its keys are.
+		redactor := c.Redactor()
+		for _, name := range c.rejectedKeyEnvs {
+			if value, ok := lookupEnv(name); ok && envNameRE.MatchString(name) {
+				redactor.AddExact(strings.TrimSpace(value))
+			}
+		}
+		return nil, &redactedError{msg: redactor.Redact(err.Error()), err: err}
+	}
+	return c, nil
+}
+
+// redactedError carries a redacted message and keeps the original error
+// reachable for errors.Is and errors.As.
+type redactedError struct {
+   120	
+   121	func (r *Runner) runExecutor(ctx context.Context, run store.Run) (config.RepoExecutor, error) {
+   122		if !r.cfg.Executor.Container() {
+   123			return config.RepoExecutor{}, nil
+   124		}
+   125		saved, err := r.db.GetArtifact(ctx, run.ID, executorArtifact, 0)
+   126		switch {
+   127		case err == nil:
+   128			var re config.RepoExecutor
+   129			if err := json.Unmarshal([]byte(saved.Content), &re); err != nil || re.Image == "" {
+   130				return config.RepoExecutor{}, errors.New("recorded executor evidence is unreadable")
+   131			}
+   132			return re, nil
+   133		case !errors.Is(err, store.ErrNotFound):
+   134			return config.RepoExecutor{}, err
+   135		}
+   136		re := r.cfg.RepoExecutor(run.Repo)
+   137		if re.Image == "" {
+   138			return config.RepoExecutor{}, fmt.Errorf("no container image for %s: set repos.%q.image or executor.image", run.Repo, run.Repo)
+   139		}
+   140		content, err := json.Marshal(re)
+   141		if err != nil {
+   142			return config.RepoExecutor{}, err
+   143		}
+   144		return re, r.artifact(ctx, run.ID, executorArtifact, string(content))
+   145	}
+   146	
+   147	func (r *Runner) preflight(ctx context.Context, run store.Run) (github.Repo, github.Issue, error) {
+   148		if r.cfg.Repos[run.Repo] == nil {
+internal/execx/container.go:66:// DefaultContainerPath is the PATH inside the container. It covers common
+internal/execx/container.go:68:var DefaultContainerPath = []string{"/usr/local/go/bin", "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"}
+internal/execx/container.go:111:	// Path is the PATH inside the container; nil selects DefaultContainerPath.
+internal/execx/container.go:296:		cfg.Path = DefaultContainerPath
+internal/execx/container.go:604:func containerEnv(env, containerPath []string) []string {
+internal/config/executor.go:35:	out := RepoExecutor{Image: c.Executor.Image, Path: slices.Clone(c.Executor.Path), ImageSource: "executor.image"}
+
+codex
+- **P2 — [internal/runner/phases.go:144](/Users/pappumishra/Documents/selfproject/patchbot-m25-repo-image/internal/runner/phases.go:144): Redaction corrupts frozen executor settings.** `r.artifact` redacts JSON before saving, but the first executor uses the original values. A valid image such as `example.test/sk-abcdefghijklmnopqrst@sha256:<64 hex>` gets masked in storage; the next clone or resume reads that altered image and fails validation. Token-shaped PATH components are similarly changed, breaking command resolution. **Fix:** persist executor settings losslessly as private structured state; apply redaction only when displaying them.
+tokens used
+34,428
+- **P2 — [internal/runner/phases.go:144](/Users/pappumishra/Documents/selfproject/patchbot-m25-repo-image/internal/runner/phases.go:144): Redaction corrupts frozen executor settings.** `r.artifact` redacts JSON before saving, but the first executor uses the original values. A valid image such as `example.test/sk-abcdefghijklmnopqrst@sha256:<64 hex>` gets masked in storage; the next clone or resume reads that altered image and fails validation. Token-shaped PATH components are similarly changed, breaking command resolution. **Fix:** persist executor settings losslessly as private structured state; apply redaction only when displaying them.

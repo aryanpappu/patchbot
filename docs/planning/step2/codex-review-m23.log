@@ -1,0 +1,3592 @@
+Reading additional input from stdin...
+OpenAI Codex v0.166.0
+--------
+workdir: /Users/pappumishra/Documents/selfproject/patchbot-m23-login
+model: gpt-6.1-sol
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: none
+reasoning summaries: none
+session id: 01a1d97e-2482-7761-afb8-1c050e47965c
+--------
+user
+Review branch m23-login vs development (git diff development...HEAD): Cloudflare Access JWT login for patchbot dashboard. Focus on auth bypass: JWT verification (alg confusion, kid handling, aud/iss/exp, JWKS fetch SSRF/caching/DoS), which paths skip auth (static assets, webhook), header spoofing when not behind tunnel, actor attribution, config validation, mode downgrade. Report only real findings: file:line, severity, scenario, fix. Concise.
+2026-11-14T09:58:10.174177Z ERROR codex_models_manager::manager: failed to refresh available models: request timed out
+codex
+I’ll review the diff and trace the auth flow, focusing on exploitable bypasses and attribution issues.
+exec
+/bin/zsh -lc 'git diff development...HEAD --stat; git status --short; rg --files -g AGENTS.md' in /Users/pappumishra/Documents/selfproject/patchbot-m23-login
+ exited 1 in 72ms:
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-0bHtQQvI' (errno=Operation not permitted)
+ CHANGELOG.md                       |   6 +
+ SECURITY.md                        |  15 +-
+ docs/ARCHITECTURE.md               |   7 +
+ docs/DECISIONS.md                  |   1 +
+ docs/M23-REPORT.md                 |  65 +++++++++
+ docs/PROGRESS.md                   |   1 +
+ internal/cfaccess/cfaccess.go      | 279 +++++++++++++++++++++++++++++++++++++
+ internal/cfaccess/cfaccess_test.go | 272 ++++++++++++++++++++++++++++++++++++
+ internal/cli/cli.go                |   4 +-
+ internal/cli/doctor.go             |  28 ++++
+ internal/cli/doctor_test.go        |  44 ++++++
+ internal/cli/serve.go              |   6 +-
+ internal/config/access_test.go     |  53 +++++++
+ internal/config/config.go          |  26 +++-
+ internal/config/defaults.toml      |   3 +
+ internal/config/validate.go        |  30 +++-
+ internal/runner/actor.go           |  25 ++++
+ internal/runner/lifecycle.go       |  10 +-
+ internal/runner/runner.go          |   2 +-
+ internal/server/README.md          |  17 +++
+ internal/server/access.go          |  74 ++++++++++
+ internal/server/access_test.go     | 220 +++++++++++++++++++++++++++++
+ internal/server/api.go             |   3 +-
+ internal/server/fixture_test.go    |   8 ++
+ internal/server/memory.go          |   6 +-
+ internal/server/server.go          |  39 +++++-
+ internal/server/web.go             |   4 +-
+ internal/web/assets/app.css        |   1 +
+ internal/web/shell.html            |   2 +-
+ internal/web/web.go                |   2 +
+ patchbot.example.toml              |  10 ++
+ 31 files changed, 1239 insertions(+), 24 deletions(-)
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-EMflP1X9' (errno=Operation not permitted)
+
+exec
+/bin/zsh -lc 'git diff development...HEAD' in /Users/pappumishra/Documents/selfproject/patchbot-m23-login
+ succeeded in 0ms:
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-aBNchWZ8' (errno=Operation not permitted)
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 5a79e48..626ccbd 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,12 @@
+ 
+ ## Unreleased
+ 
++- Add Cloudflare Access login (`[server.auth] mode = "cloudflare_access"`, M23):
++  verifies the `Cf-Access-Jwt-Assertion` JWT (RS256, team JWKS, issuer, audience,
++  allowed emails), records the verified email as the actor of UI/API decisions,
++  adds `GET /api/session` and a "Signed in as" header, and extends `doctor`.
++  Token mode is unchanged and remains the default.
++
+ - Add GitHub App authentication (`[github] auth = "app"`, M27): per-run
+   installation tokens narrowed to one repository ID and four permissions,
+   refreshed per git network operation, bot identity `<slug>[bot]` for comments
+diff --git a/SECURITY.md b/SECURITY.md
+index 49e2f6e..34c8481 100644
+--- a/SECURITY.md
++++ b/SECURITY.md
+@@ -41,7 +41,20 @@ lifecycle. Escaped descendants remain outside this guarantee.
+ The web server defaults to loopback. Other binds require `PATCHBOT_UI_TOKEN`.
+ Bearer auth protects data routes when enabled. Host validation, Go cross-origin
+ mutation checks, CSP, SRI and plain-text rendering protect the browser. Local
+-CLI/UI decisions use a configured actor name; there is no user login.
++CLI decisions use a configured actor name.
++
++With `[server.auth] mode = "cloudflare_access"` (M23) the UI/API no longer use
++the bearer token. Every request except the three fixed static asset paths must
++carry `Cf-Access-Jwt-Assertion`; patchbot verifies the RS256 signature against
++the team JWKS (`https://<team_domain>/cdn-cgi/access/certs`, keys cached by
++`kid`, one refresh per minute on an unknown `kid`), `iss`, `aud`, `exp`/`nbf`/
++`iat` (60 s skew) and that the `email` claim is in `allowed_emails`. Only RS256
++is accepted (`none` and HMAC tokens are rejected). Failures return a generic
++401/403 and the token is never logged or echoed. The verified email is the
++recorded actor on the ui channel. The Access JWT is the sole credential in this
++mode: keep the listener on loopback behind the tunnel, and rely on the Access
++policy to limit who can sign in (`allowed_emails` is a second check). The webhook path keeps its own
++HMAC check and needs a Cloudflare Access bypass policy so GitHub can reach it.
+ 
+ GitHub approval identity: comments by the token owner (`/user`) are patchbot's
+ own and normally never count. With a single-user PAT the owner may also be an
+diff --git a/docs/ARCHITECTURE.md b/docs/ARCHITECTURE.md
+index a41063c..66881e3 100644
+--- a/docs/ARCHITECTURE.md
++++ b/docs/ARCHITECTURE.md
+@@ -252,6 +252,13 @@ or model-directed access. They cannot contain a malicious test executable.
+   `GIT_CONFIG_*` auth headers, never URLs, argv or `.git/config`. Hooks are off,
+   submodules are refused, config is hash-checked, diffs are bounded and pushes
+   allow only `patchbot/*`, without force or the default branch.
++- Login (M23): `internal/cfaccess` verifies Cloudflare Access JWTs (stdlib RS256,
++  team JWKS cache). `server.ServeHTTP` runs it before routing in
++  `cloudflare_access` mode and puts the email on the request context;
++  `runner.WithActor` carries it to the runner so approve, revise, reject,
++  cancel, retry, spec edit, run start and memory decisions record it on the ui
++  channel instead of `approval.local_actor`. CLI paths keep `local_actor`.
++  No schema change: `actor` columns already hold free text.
+ - Redaction runs before logs, SQLite, model tool results, SSE, API/CLI output and
+   PR bodies. All CLI/server runners receive the full redactor, including the
+   UI token when set. Registered credentials require at least eight characters;
+diff --git a/docs/DECISIONS.md b/docs/DECISIONS.md
+index 0b293ec..3c1299a 100644
+--- a/docs/DECISIONS.md
++++ b/docs/DECISIONS.md
+@@ -75,4 +75,5 @@ engineering questions together and record them here.
+   webhook state belongs to 0005. Reconcile those placeholders before using M20/M21
+   migrations against an existing database, since migration checksums are immutable.
+ - M22 review fixes: coalesce pending receipts per issue (cap 1000 pending, 10 attempts, 404/410 done, 14-day prune), poll labels on `webhook.label_poll_interval` (5m) from listing data only, and treat a repository's first label sweep as a no-start baseline; schema in 0006 because 0005 is deployed.
++- M23: Cloudflare Access login (`[server.auth] mode = "cloudflare_access"`) verifies `Cf-Access-Jwt-Assertion` with stdlib RS256 against the team JWKS and records the verified email as the ui actor; token mode stays the default; no local user/password login and no schema change.
+ - M27: GitHub App auth (`[github] auth = "app"`) mints per-run installation tokens narrowed to one repository ID with contents/issues/pull_requests write + metadata read, routed by explicit `RepoRef` (REST) and a per-operation `TokenFunc` (git); PAT mode unchanged and explicit; no fallback from App to PAT; key file only, never env/DB.
+diff --git a/docs/M23-REPORT.md b/docs/M23-REPORT.md
+new file mode 100644
+index 0000000..baf6279
+--- /dev/null
++++ b/docs/M23-REPORT.md
+@@ -0,0 +1,65 @@
++# M23: Login-based dashboard (Cloudflare Access)
++
++No new Go dependencies and no migration (0008 unused): `actor` columns already
++store free text.
++
++## What changed
++
++- **Config.** `[server.auth] mode = "token" | "cloudflare_access"` (default
++  `token`, unchanged behaviour including no-token loopback). Access mode needs
++  `team_domain` (`<team>.cloudflareaccess.com`, no scheme or path), `audience`
++  (the application AUD tag) and a non-empty `allowed_emails` list of plain
++  addresses (no wildcards). Access fields in token mode are an error. A
++  non-loopback bind no longer needs `PATCHBOT_UI_TOKEN` in Access mode.
++- **Verifier** (`internal/cfaccess`). RS256 only, against
++  `https://<team_domain>/cdn-cgi/access/certs`. Keys are cached by `kid`; an
++  unknown `kid` refreshes at most once per minute (also after a failed fetch),
++  and a refresh replaces the whole set so retired keys stop working. Fetches
++  have a 5 s client and 10 s context timeout, no redirects, a 1 MiB body cap,
++  and accept only RSA keys of at least 2048 bits. Claims: `iss` equals
++  `https://<team_domain>`, `aud` contains the AUD tag, `exp` and `iat`
++  required, `nbf` checked when present, all with 60 s skew, `email` in
++  `allowed_emails` (case-insensitive). `alg` none or HS256 is rejected.
++- **Server.** All requests except the exact static asset paths need a valid JWT
++  (pages included). 401 for missing/invalid, 403 for a disallowed email, with a
++  generic message; pages get a plain-text 401. The JWT is never logged or echoed.
++  Host check, cross-origin protection and body limits are unchanged.
++- **Actor.** `runner.WithActor` carries the verified email; approve, revise,
++  reject, cancel, retry, spec edit, run start and memory add/decide record it on
++  the ui channel. CLI keeps `approval.local_actor`.
++- **UI.** `GET /api/session` returns `{email, mode}`; the header shows "Signed
++  in as <email>"; no token form in this mode.
++- **Doctor.** Reports the mode and counts; with `--online` fetches the JWKS and
++  fails unless it holds RSA keys. Warns if `PATCHBOT_UI_TOKEN` is set but ignored.
++
++## Finding the AUD tag and team domain
++
++1. Cloudflare dashboard, Zero Trust, Access, Applications.
++2. Open the self-hosted application that protects the patchbot hostname
++   (Edit).
++3. On the Overview tab copy **Application Audience (AUD) Tag**: a 64-character
++   hex string. That is `audience`.
++4. The team domain is under Zero Trust, Settings, Custom Pages ("Team domain"),
++   shown as `<team>.cloudflareaccess.com`. That is `team_domain`.
++5. The Access policy must allow only the owner's email; list the same address
++   in `allowed_emails` (defence in depth).
++
++## Deployment notes
++
++- Keep `addr` on loopback behind the tunnel. Remove `PATCHBOT_UI_TOKEN`.
++- If the tunnel rewrites the Host header, set `httpHostHeader` to the bound
++  address so the host check passes (unchanged requirement).
++- GitHub webhooks cannot log in: add an Access bypass policy for the webhook
++  path only; that path stays HMAC-protected.
++- Service tokens carry no email claim and are refused.
++
++## Tests
++
++`internal/cfaccess` (httptest JWKS, generated RSA keys, fake clock): valid,
++wrong signature, aud, iss, expired, not-yet-valid, future iat, missing
++exp/email/kid, alg none and HS256, unknown kid refetch limited to once per
++minute, key rotation, skew tolerance, JWKS failures (status, JSON, no RSA keys,
++oversize, redirect). `internal/server`: approve records the email as actor and
++channel ui, reject and memory decisions, every failure mode on API and pages,
++public assets only, `/api/session`, host and origin protection, token-mode
++regression. `internal/config`: strict validation. `internal/cli`: doctor.
+diff --git a/docs/PROGRESS.md b/docs/PROGRESS.md
+index 8a4139e..cc96ec0 100644
+--- a/docs/PROGRESS.md
++++ b/docs/PROGRESS.md
+@@ -29,6 +29,7 @@ for local checks, audit fixes and external validation limits.
+ | M20 Repository memory | Done |
+ | M21 Opt-in reviewer | Done (off by default) |
+ | M22 Webhook and label ingress | Done (off by default), review fixes merged |
++| M23 Login-based dashboard | Done (Cloudflare Access JWT; token mode default) |
+ 
+ ## Known limitations
+ 
+diff --git a/internal/cfaccess/cfaccess.go b/internal/cfaccess/cfaccess.go
+new file mode 100644
+index 0000000..7b13cbc
+--- /dev/null
++++ b/internal/cfaccess/cfaccess.go
+@@ -0,0 +1,279 @@
++// Package cfaccess verifies Cloudflare Access application tokens
++// (Cf-Access-Jwt-Assertion) with the standard library only. It accepts RS256
++// signatures from the team JWKS and nothing else.
++package cfaccess
++
++import (
++	"context"
++	"crypto"
++	"crypto/rsa"
++	"crypto/sha256"
++	"encoding/base64"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"math/big"
++	"net/http"
++	"strings"
++	"sync"
++	"time"
++)
++
++// Header is the request header Cloudflare Access adds after login.
++const Header = "Cf-Access-Jwt-Assertion"
++
++const (
++	skew          = 60 * time.Second
++	refreshEvery  = time.Minute
++	maxTokenBytes = 16 << 10
++	maxJWKSBytes  = 1 << 20
++	minRSABits    = 2048
++)
++
++// Errors are deliberately coarse; callers must not echo token content.
++var (
++	// ErrInvalid covers every malformed, unsigned, expired or mis-scoped token.
++	ErrInvalid = errors.New("invalid access token")
++	// ErrNotAllowed means a valid token names an email that is not allowed.
++	ErrNotAllowed = errors.New("email not allowed")
++)
++
++// Config describes one Access application.
++type Config struct {
++	TeamDomain    string
++	Audience      string
++	AllowedEmails []string
++	// CertsURL overrides https://<team>/cdn-cgi/access/certs (tests).
++	CertsURL string
++	Client   *http.Client
++	Now      func() time.Time
++}
++
++// Verifier checks tokens and caches the team signing keys by kid.
++type Verifier struct {
++	issuer   string
++	audience string
++	allowed  map[string]bool
++	certs    string
++	client   *http.Client
++	now      func() time.Time
++
++	fetchMu   sync.Mutex
++	mu        sync.Mutex
++	keys      map[string]*rsa.PublicKey
++	lastFetch time.Time
++}
++
++// New builds a verifier. It performs no network I/O.
++func New(c Config) (*Verifier, error) {
++	if c.TeamDomain == "" || c.Audience == "" || len(c.AllowedEmails) == 0 {
++		return nil, errors.New("team domain, audience and allowed emails are required")
++	}
++	v := &Verifier{issuer: "https://" + c.TeamDomain, audience: c.Audience, allowed: map[string]bool{}, certs: c.CertsURL, client: c.Client, now: c.Now}
++	if v.certs == "" {
++		v.certs = "https://" + c.TeamDomain + "/cdn-cgi/access/certs"
++	}
++	if v.now == nil {
++		v.now = time.Now
++	}
++	if v.client == nil {
++		v.client = &http.Client{Timeout: 5 * time.Second}
++	}
++	// Redirects could move the key fetch to another origin.
++	client := *v.client
++	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
++	v.client = &client
++	for _, e := range c.AllowedEmails {
++		v.allowed[strings.ToLower(strings.TrimSpace(e))] = true
++	}
++	return v, nil
++}
++
++type header struct {
++	Alg string `json:"alg"`
++	Kid string `json:"kid"`
++}
++
++type claims struct {
++	Iss   string          `json:"iss"`
++	Aud   json.RawMessage `json:"aud"`
++	Exp   *float64        `json:"exp"`
++	Nbf   *float64        `json:"nbf"`
++	Iat   *float64        `json:"iat"`
++	Email string          `json:"email"`
++}
++
++// Verify returns the lower-cased email of a valid, allowed token.
++func (v *Verifier) Verify(ctx context.Context, token string) (string, error) {
++	if token == "" || len(token) > maxTokenBytes {
++		return "", ErrInvalid
++	}
++	parts := strings.Split(token, ".")
++	if len(parts) != 3 {
++		return "", ErrInvalid
++	}
++	var h header
++	if decodeSegment(parts[0], &h) != nil || h.Alg != "RS256" || h.Kid == "" {
++		return "", ErrInvalid
++	}
++	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
++	if err != nil || len(sig) == 0 {
++		return "", ErrInvalid
++	}
++	key, err := v.key(ctx, h.Kid)
++	if err != nil {
++		return "", ErrInvalid
++	}
++	sum := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
++	if rsa.VerifyPKCS1v15(key, crypto.SHA256, sum[:], sig) != nil {
++		return "", ErrInvalid
++	}
++	var c claims
++	if decodeSegment(parts[1], &c) != nil || c.Iss != v.issuer || !audienceMatches(c.Aud, v.audience) || c.Exp == nil || c.Iat == nil {
++		return "", ErrInvalid
++	}
++	now := v.now()
++	if now.After(unix(*c.Exp).Add(skew)) || now.Add(skew).Before(unix(*c.Iat)) || (c.Nbf != nil && now.Add(skew).Before(unix(*c.Nbf))) {
++		return "", ErrInvalid
++	}
++	email := strings.ToLower(strings.TrimSpace(c.Email))
++	if email == "" || len(email) > 320 || strings.ContainsFunc(email, func(r rune) bool { return r < 0x21 || r == 0x7f }) {
++		return "", ErrInvalid
++	}
++	if !v.allowed[email] {
++		return "", ErrNotAllowed
++	}
++	return email, nil
++}
++
++func unix(f float64) time.Time { return time.Unix(int64(f), 0) }
++
++func decodeSegment(s string, into any) error {
++	raw, err := base64.RawURLEncoding.DecodeString(s)
++	if err != nil {
++		return err
++	}
++	return json.Unmarshal(raw, into)
++}
++
++func audienceMatches(raw json.RawMessage, want string) bool {
++	var one string
++	if json.Unmarshal(raw, &one) == nil {
++		return one == want
++	}
++	var many []string
++	if json.Unmarshal(raw, &many) == nil {
++		for _, a := range many {
++			if a == want {
++				return true
++			}
++		}
++	}
++	return false
++}
++
++// key returns the cached key for kid. An unknown kid triggers at most one
++// refresh per minute, so a flood of forged kids cannot hammer the JWKS URL.
++func (v *Verifier) key(ctx context.Context, kid string) (*rsa.PublicKey, error) {
++	if k := v.cached(kid); k != nil {
++		return k, nil
++	}
++	v.fetchMu.Lock()
++	defer v.fetchMu.Unlock()
++	// Another request may have refreshed while this one waited.
++	if k := v.cached(kid); k != nil {
++		return k, nil
++	}
++	v.mu.Lock()
++	recent := !v.lastFetch.IsZero() && v.now().Sub(v.lastFetch) < refreshEvery
++	if !recent {
++		v.lastFetch = v.now()
++	}
++	v.mu.Unlock()
++	if recent {
++		return nil, errors.New("unknown key")
++	}
++	keys, err := v.fetch(ctx)
++	if err != nil {
++		return nil, err
++	}
++	v.mu.Lock()
++	v.keys = keys
++	k := keys[kid]
++	v.mu.Unlock()
++	if k == nil {
++		return nil, errors.New("unknown key")
++	}
++	return k, nil
++}
++
++func (v *Verifier) cached(kid string) *rsa.PublicKey {
++	v.mu.Lock()
++	defer v.mu.Unlock()
++	return v.keys[kid]
++}
++
++// Check fetches the JWKS once and reports how many RSA keys it holds.
++func (v *Verifier) Check(ctx context.Context) (int, error) {
++	keys, err := v.fetch(ctx)
++	return len(keys), err
++}
++
++type jwks struct {
++	Keys []struct {
++		Kty string `json:"kty"`
++		Kid string `json:"kid"`
++		Use string `json:"use"`
++		Alg string `json:"alg"`
++		N   string `json:"n"`
++		E   string `json:"e"`
++	} `json:"keys"`
++}
++
++func (v *Verifier) fetch(ctx context.Context) (map[string]*rsa.PublicKey, error) {
++	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
++	defer cancel()
++	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.certs, nil)
++	if err != nil {
++		return nil, errors.New("invalid JWKS URL")
++	}
++	req.Header.Set("Accept", "application/json")
++	resp, err := v.client.Do(req)
++	if err != nil {
++		return nil, errors.New("JWKS request failed")
++	}
++	defer func() { _ = resp.Body.Close() }()
++	if resp.StatusCode != http.StatusOK {
++		return nil, fmt.Errorf("JWKS request returned status %d", resp.StatusCode)
++	}
++	body, err := io.ReadAll(io.LimitReader(resp.Body, maxJWKSBytes+1))
++	if err != nil || len(body) > maxJWKSBytes {
++		return nil, errors.New("JWKS body unreadable or too large")
++	}
++	var set jwks
++	if json.Unmarshal(body, &set) != nil {
++		return nil, errors.New("JWKS is not valid JSON")
++	}
++	keys := map[string]*rsa.PublicKey{}
++	for _, k := range set.Keys {
++		if k.Kty != "RSA" || k.Kid == "" || (k.Use != "" && k.Use != "sig") || (k.Alg != "" && k.Alg != "RS256") {
++			continue
++		}
++		n, errN := base64.RawURLEncoding.DecodeString(k.N)
++		e, errE := base64.RawURLEncoding.DecodeString(k.E)
++		if errN != nil || errE != nil || len(e) == 0 || len(e) > 4 {
++			continue
++		}
++		exp := new(big.Int).SetBytes(e)
++		mod := new(big.Int).SetBytes(n)
++		if !exp.IsInt64() || exp.Int64() < 3 || exp.Int64()%2 == 0 || mod.BitLen() < minRSABits {
++			continue
++		}
++		keys[k.Kid] = &rsa.PublicKey{N: mod, E: int(exp.Int64())}
++	}
++	if len(keys) == 0 {
++		return nil, errors.New("JWKS has no usable RSA keys")
++	}
++	return keys, nil
++}
+diff --git a/internal/cfaccess/cfaccess_test.go b/internal/cfaccess/cfaccess_test.go
+new file mode 100644
+index 0000000..07108c1
+--- /dev/null
++++ b/internal/cfaccess/cfaccess_test.go
+@@ -0,0 +1,272 @@
++package cfaccess
++
++import (
++	"context"
++	"crypto"
++	"crypto/hmac"
++	"crypto/rand"
++	"crypto/rsa"
++	"crypto/sha256"
++	"encoding/base64"
++	"encoding/json"
++	"errors"
++	"math/big"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++)
++
++const (
++	team = "crimson-scene-dba4.cloudflareaccess.com"
++	aud  = "0123456789abcdef0123456789abcdef"
++)
++
++var epoch = time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
++
++func newKey(t *testing.T) *rsa.PrivateKey {
++	t.Helper()
++	k, err := rsa.GenerateKey(rand.Reader, 2048)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return k
++}
++
++type jwksServer struct {
++	*httptest.Server
++	mu    sync.Mutex
++	keys  map[string]*rsa.PrivateKey
++	fetch atomic.Int32
++}
++
++func newJWKS(t *testing.T, keys map[string]*rsa.PrivateKey) *jwksServer {
++	s := &jwksServer{keys: keys}
++	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		s.fetch.Add(1)
++		s.mu.Lock()
++		defer s.mu.Unlock()
++		type jwk struct{ Kty, Kid, Use, Alg, N, E string }
++		var out struct {
++			Keys []jwk `json:"keys"`
++		}
++		for kid, k := range s.keys {
++			out.Keys = append(out.Keys, jwk{"RSA", kid, "sig", "RS256", b64(k.N.Bytes()), b64(big.NewInt(int64(k.E)).Bytes())})
++		}
++		_ = json.NewEncoder(w).Encode(map[string]any{"keys": lowerKeys(out.Keys)})
++	}))
++	t.Cleanup(s.Close)
++	return s
++}
++
++// lowerKeys renders JWK field names in lower case as JWKS requires.
++func lowerKeys[T any](in []T) []map[string]string {
++	var out []map[string]string
++	for _, k := range in {
++		raw, _ := json.Marshal(k)
++		var m map[string]string
++		_ = json.Unmarshal(raw, &m)
++		l := map[string]string{}
++		for key, v := range m {
++			l[strings.ToLower(key)] = v
++		}
++		out = append(out, l)
++	}
++	return out
++}
++
++func (s *jwksServer) set(keys map[string]*rsa.PrivateKey) {
++	s.mu.Lock()
++	s.keys = keys
++	s.mu.Unlock()
++}
++
++func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
++
++type clock struct {
++	mu sync.Mutex
++	t  time.Time
++}
++
++func (c *clock) now() time.Time { c.mu.Lock(); defer c.mu.Unlock(); return c.t }
++func (c *clock) add(d time.Duration) {
++	c.mu.Lock()
++	c.t = c.t.Add(d)
++	c.mu.Unlock()
++}
++
++func claimsAt(now time.Time) map[string]any {
++	return map[string]any{"iss": "https://" + team, "aud": []string{aud}, "email": "Owner@Example.com",
++		"iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(time.Hour).Unix()}
++}
++
++func sign(t *testing.T, key *rsa.PrivateKey, header, claims map[string]any) string {
++	t.Helper()
++	h, _ := json.Marshal(header)
++	c, _ := json.Marshal(claims)
++	input := b64(h) + "." + b64(c)
++	sum := sha256.Sum256([]byte(input))
++	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, sum[:])
++	if err != nil {
++		t.Fatal(err)
++	}
++	return input + "." + b64(sig)
++}
++
++func rs(kid string) map[string]any { return map[string]any{"alg": "RS256", "kid": kid, "typ": "JWT"} }
++
++func setup(t *testing.T) (*Verifier, *jwksServer, *clock, *rsa.PrivateKey) {
++	t.Helper()
++	key := newKey(t)
++	srv := newJWKS(t, map[string]*rsa.PrivateKey{"k1": key})
++	clk := &clock{t: epoch}
++	v, err := New(Config{TeamDomain: team, Audience: aud, AllowedEmails: []string{"owner@example.com"}, CertsURL: srv.URL, Now: clk.now})
++	if err != nil {
++		t.Fatal(err)
++	}
++	return v, srv, clk, key
++}
++
++func TestVerifyValid(t *testing.T) {
++	v, _, clk, key := setup(t)
++	email, err := v.Verify(t.Context(), sign(t, key, rs("k1"), claimsAt(clk.now())))
++	if err != nil || email != "owner@example.com" {
++		t.Fatalf("email %q err %v", email, err)
++	}
++	c := claimsAt(clk.now())
++	c["aud"] = aud // string form
++	if _, err := v.Verify(t.Context(), sign(t, key, rs("k1"), c)); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestVerifyRejects(t *testing.T) {
++	v, _, clk, key := setup(t)
++	other := newKey(t)
++	now := clk.now()
++	mod := func(f func(map[string]any)) string {
++		c := claimsAt(now)
++		f(c)
++		return sign(t, key, rs("k1"), c)
++	}
++	hmacTok := func() string {
++		h, _ := json.Marshal(map[string]any{"alg": "HS256", "kid": "k1"})
++		c, _ := json.Marshal(claimsAt(now))
++		in := b64(h) + "." + b64(c)
++		m := hmac.New(sha256.New, []byte("secret"))
++		m.Write([]byte(in))
++		return in + "." + b64(m.Sum(nil))
++	}()
++	noneH, _ := json.Marshal(map[string]any{"alg": "none", "kid": "k1"})
++	noneC, _ := json.Marshal(claimsAt(now))
++	cases := map[string]string{
++		"empty":         "",
++		"garbage":       "a.b",
++		"bad signature": sign(t, other, rs("k1"), claimsAt(now)),
++		"wrong aud":     mod(func(c map[string]any) { c["aud"] = []string{"other"} }),
++		"wrong iss":     mod(func(c map[string]any) { c["iss"] = "https://evil.cloudflareaccess.com" }),
++		"expired":       mod(func(c map[string]any) { c["exp"] = now.Add(-2 * time.Minute).Unix() }),
++		"not yet valid": mod(func(c map[string]any) { c["nbf"] = now.Add(5 * time.Minute).Unix() }),
++		"future iat":    mod(func(c map[string]any) { c["iat"] = now.Add(5 * time.Minute).Unix() }),
++		"no exp":        mod(func(c map[string]any) { delete(c, "exp") }),
++		"no email":      mod(func(c map[string]any) { delete(c, "email") }),
++		"alg none":      b64(noneH) + "." + b64(noneC) + ".",
++		"alg HS256":     hmacTok,
++		"unknown kid":   sign(t, key, rs("zzz"), claimsAt(now)),
++		"missing kid":   sign(t, key, map[string]any{"alg": "RS256"}, claimsAt(now)),
++	}
++	for name, token := range cases {
++		if _, err := v.Verify(t.Context(), token); !errors.Is(err, ErrInvalid) {
++			t.Errorf("%s: err %v, want ErrInvalid", name, err)
++		}
++	}
++	if _, err := v.Verify(t.Context(), mod(func(c map[string]any) { c["email"] = "intruder@example.com" })); !errors.Is(err, ErrNotAllowed) {
++		t.Errorf("email not allowed: %v", err)
++	}
++}
++
++func TestSkewAllowsSmallDrift(t *testing.T) {
++	v, _, clk, key := setup(t)
++	c := claimsAt(clk.now())
++	c["nbf"] = clk.now().Add(30 * time.Second).Unix()
++	c["exp"] = clk.now().Add(-30 * time.Second).Unix()
++	if _, err := v.Verify(t.Context(), sign(t, key, rs("k1"), c)); err != nil {
++		t.Fatalf("30s drift must be tolerated: %v", err)
++	}
++}
++
++func TestUnknownKidRefetchesAtMostOncePerMinute(t *testing.T) {
++	v, srv, clk, key := setup(t)
++	if _, err := v.Verify(t.Context(), sign(t, key, rs("k1"), claimsAt(clk.now()))); err != nil {
++		t.Fatal(err)
++	}
++	if srv.fetch.Load() != 1 {
++		t.Fatalf("fetches %d", srv.fetch.Load())
++	}
++	bad := sign(t, key, rs("nope"), claimsAt(clk.now()))
++	clk.add(2 * time.Minute)
++	for range 5 {
++		_, _ = v.Verify(t.Context(), bad)
++	}
++	if srv.fetch.Load() != 2 {
++		t.Fatalf("unknown kid must refetch exactly once within a minute, fetches %d", srv.fetch.Load())
++	}
++	clk.add(61 * time.Second)
++	_, _ = v.Verify(t.Context(), bad)
++	if srv.fetch.Load() != 3 {
++		t.Fatalf("expected a refetch after the minute, fetches %d", srv.fetch.Load())
++	}
++}
++
++func TestKeyRotation(t *testing.T) {
++	v, srv, clk, key := setup(t)
++	if _, err := v.Verify(t.Context(), sign(t, key, rs("k1"), claimsAt(clk.now()))); err != nil {
++		t.Fatal(err)
++	}
++	fresh := newKey(t)
++	srv.set(map[string]*rsa.PrivateKey{"k2": fresh})
++	clk.add(2 * time.Minute)
++	if _, err := v.Verify(t.Context(), sign(t, fresh, rs("k2"), claimsAt(clk.now()))); err != nil {
++		t.Fatalf("rotated key rejected: %v", err)
++	}
++	// The retired key no longer verifies once the cache has been replaced.
++	if _, err := v.Verify(t.Context(), sign(t, key, rs("k1"), claimsAt(clk.now()))); !errors.Is(err, ErrInvalid) {
++		t.Fatalf("retired key accepted: %v", err)
++	}
++}
++
++func TestJWKSFailures(t *testing.T) {
++	for name, handler := range map[string]http.HandlerFunc{
++		"status":   func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "no", 500) },
++		"not json": func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("<html>")) },
++		"no keys": func(w http.ResponseWriter, _ *http.Request) {
++			_, _ = w.Write([]byte(`{"keys":[{"kty":"EC","kid":"x"}]}`))
++		},
++		"too big": func(w http.ResponseWriter, _ *http.Request) {
++			_, _ = w.Write([]byte(strings.Repeat(" ", maxJWKSBytes+10)))
++		},
++		"redirect": func(w http.ResponseWriter, r *http.Request) {
++			http.Redirect(w, r, "http://127.0.0.1:1/", http.StatusFound)
++		},
++	} {
++		srv := httptest.NewServer(handler)
++		v, err := New(Config{TeamDomain: team, Audience: aud, AllowedEmails: []string{"a@b.co"}, CertsURL: srv.URL})
++		if err != nil {
++			t.Fatal(err)
++		}
++		if _, err := v.Check(context.Background()); err == nil {
++			t.Errorf("%s: expected an error", name)
++		}
++		srv.Close()
++	}
++}
++
++func TestCheckCountsKeys(t *testing.T) {
++	v, _, _, _ := setup(t)
++	if n, err := v.Check(t.Context()); err != nil || n != 1 {
++		t.Fatalf("n=%d err=%v", n, err)
++	}
++}
+diff --git a/internal/cli/cli.go b/internal/cli/cli.go
+index cf9d81e..cef3fdc 100644
+--- a/internal/cli/cli.go
++++ b/internal/cli/cli.go
+@@ -54,7 +54,9 @@ type App struct {
+ 	// Providers injects optional transports and test providers.
+ 	Providers providers.Options
+ 	// RunnerOptions injects local git remotes, GitHub and fake LLMs in tests.
+-	RunnerOptions  runner.Options
++	RunnerOptions runner.Options
++	// AccessCertsURL overrides the Cloudflare Access JWKS URL in doctor tests.
++	AccessCertsURL string
+ 	outputRedactor *secret.Redactor
+ }
+ 
+diff --git a/internal/cli/doctor.go b/internal/cli/doctor.go
+index f560c03..07758a2 100644
+--- a/internal/cli/doctor.go
++++ b/internal/cli/doctor.go
+@@ -15,6 +15,7 @@ import (
+ 	"text/tabwriter"
+ 	"time"
+ 
++	"github.com/aryanpappu/patchbot/internal/cfaccess"
+ 	"github.com/aryanpappu/patchbot/internal/config"
+ 	"github.com/aryanpappu/patchbot/internal/execx"
+ 	"github.com/aryanpappu/patchbot/internal/github"
+@@ -142,6 +143,7 @@ func (a *App) runDoctor(args []string) int {
+ 			}
+ 		}
+ 		doctorStorage(ctx, cfg, add)
++		a.doctorAccess(ctx, cfg, *online, add)
+ 		if rootErr == nil {
+ 			excluded := []string{filepath.Join(cfg.DataDir(), "workspaces"), opts.Dir}
+ 			doctorExecutor(ctx, cfg, root, r, lookup, add, excluded...)
+@@ -423,3 +425,29 @@ func doctorAppOnline(ctx context.Context, cfg *config.Config, app *github.App, a
+ 		add("PASS", check, fmt.Sprintf("installation %d; contents/issues/pull_requests write, metadata read; token minted", info.ID))
+ 	}
+ }
++
++// doctorAccess checks the Cloudflare Access settings and, online, that the
++// team JWKS is reachable and holds RSA keys. Config validity is already
++// enforced by Validate; this reports the mode and the live key set.
++func (a *App) doctorAccess(ctx context.Context, cfg *config.Config, online bool, add func(string, string, string)) {
++	auth := cfg.Server.Auth
++	if auth.Mode != config.AuthCloudflareAccess {
++		return
++	}
++	add("PASS", "server auth", fmt.Sprintf("cloudflare_access: team %s, %d allowed email(s)", auth.TeamDomain, len(auth.AllowedEmails)))
++	if os.Getenv("PATCHBOT_UI_TOKEN") != "" {
++		add("WARN", "server auth", "PATCHBOT_UI_TOKEN is set but ignored in cloudflare_access mode")
++	}
++	if !online {
++		return
++	}
++	verifier, err := cfaccess.New(cfaccess.Config{TeamDomain: auth.TeamDomain, Audience: auth.Audience, AllowedEmails: auth.AllowedEmails, CertsURL: a.AccessCertsURL})
++	if err == nil {
++		var n int
++		if n, err = verifier.Check(ctx); err == nil {
++			add("PASS", "access JWKS", fmt.Sprintf("%d RSA signing key(s) at https://%s/cdn-cgi/access/certs", n, auth.TeamDomain))
++			return
++		}
++	}
++	add("FAIL", "access JWKS", "could not fetch usable RSA keys from the team certs URL; check team_domain and network")
++}
+diff --git a/internal/cli/doctor_test.go b/internal/cli/doctor_test.go
+index 143c418..fb86573 100644
+--- a/internal/cli/doctor_test.go
++++ b/internal/cli/doctor_test.go
+@@ -224,3 +224,47 @@ func TestDoctorAndConfigWarnAboutEveryShortCredential(t *testing.T) {
+ 		}
+ 	}
+ }
++
++func TestDoctorCloudflareAccess(t *testing.T) {
++	root, bin := testpath.Dir(t), t.TempDir()
++	for name, output := range map[string]string{"go": "go version go1.27.3 test/arch", "git": "git version 2.50.1", "repo-test": "test"} {
++		// #nosec G306 -- operator-owned executable fixture needs its owner execute bit.
++		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nprintf '%s\\n' '"+output+"'\n"), 0o700); err != nil {
++			t.Fatal(err)
++		}
++	}
++	data := filepath.Join(root, "data")
++	if err := os.Mkdir(data, 0o700); err != nil {
++		t.Fatal(err)
++	}
++	path := filepath.Join(root, "config.toml")
++	content := fmt.Sprintf("[defaults]\napprovers=[\"owner\"]\n[limits]\ntrusted_path=[%q]\n[data]\ndir=%q\n[server.auth]\nmode=\"cloudflare_access\"\nteam_domain=\"crimson-scene-dba4.cloudflareaccess.com\"\naudience=\"0123456789abcdef0123456789abcdef\"\nallowed_emails=[\"owner@example.com\"]\n[repos.\"owner/repo\"]\ncommands={test=[\"repo-test\"]}\n", bin, data)
++	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	body := `{"keys":[]}`
++	certs := testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprint(w, body) }))
++	defer certs.Close()
++	client, err := github.New(certs.Client(), certs.URL, runner.Token{Value: secret.New("dummy-github-token")})
++	if err != nil {
++		t.Fatal(err)
++	}
++	p := fake.New("anthropic")
++	constructors := llm.Constructors{"anthropic": func(llm.ProviderConfig) (llm.Provider, error) { return p, nil }}
++	// #nosec G101 -- dummy credentials for tests.
++	vars := map[string]string{"ANTHROPIC_API_KEY": "fixture-provider-key", "GITHUB_TOKEN": "dummy-github-token"}
++	invoke := func(args ...string) (int, string) {
++		var out, errs bytes.Buffer
++		app := cli.App{Context: context.Background(), Stdout: &out, Stderr: &errs, AccessCertsURL: certs.URL, Config: config.Options{Path: path, LookupEnv: func(name string) (string, bool) { v, ok := vars[name]; return v, ok }}, RunnerOptions: runner.Options{Constructors: constructors, GitHub: client}}
++		code := app.Run(append([]string{"doctor"}, args...))
++		return code, out.String() + errs.String()
++	}
++	code, text := invoke()
++	if code != 0 || !strings.Contains(text, "cloudflare_access") || strings.Contains(text, "access JWKS") {
++		t.Fatalf("offline: %d %s", code, text)
++	}
++	code, text = invoke("--online")
++	if code != 1 || !strings.Contains(text, "access JWKS") {
++		t.Fatalf("empty JWKS must fail: %d %s", code, text)
++	}
++}
+diff --git a/internal/cli/serve.go b/internal/cli/serve.go
+index cb0c4e3..164c958 100644
+--- a/internal/cli/serve.go
++++ b/internal/cli/serve.go
+@@ -61,7 +61,11 @@ func (a *App) runServe(args []string) int {
+ 		return 1
+ 	}
+ 	redactor.Extend(cfg.Redactor())
+-	if err := server.ValidateAddress(cfg.Server.Addr, secret.New(uiToken)); err != nil {
++	addrToken := secret.New(uiToken)
++	if cfg.Server.Auth.Mode == config.AuthCloudflareAccess {
++		addrToken = secret.New("cloudflare-access") // Access JWTs authenticate non-loopback binds
++	}
++	if err := server.ValidateAddress(cfg.Server.Addr, addrToken); err != nil {
+ 		a.printProblems(redactor, err)
+ 		return 1
+ 	}
+diff --git a/internal/config/access_test.go b/internal/config/access_test.go
+new file mode 100644
+index 0000000..4f50dda
+--- /dev/null
++++ b/internal/config/access_test.go
+@@ -0,0 +1,53 @@
++package config_test
++
++import (
++	"strings"
++	"testing"
++)
++
++const accessBase = validBase + `
++[server.auth]
++mode = "cloudflare_access"
++team_domain = "crimson-scene-dba4.cloudflareaccess.com"
++audience = "0123456789abcdef0123456789abcdef"
++allowed_emails = ["Owner@Example.com"]
++`
++
++func TestServerAuthValidation(t *testing.T) {
++	t.Parallel()
++	if err := loadString(t, validBase, nil).Validate(); err != nil {
++		t.Fatalf("default token mode: %v", err)
++	}
++	if got := loadString(t, validBase, nil).Server.Auth.Mode; got != "token" {
++		t.Fatalf("default mode %q", got)
++	}
++	if err := loadString(t, accessBase, nil).Validate(); err != nil {
++		t.Fatalf("valid access config: %v", err)
++	}
++	// A non-loopback bind is allowed because Access authenticates requests.
++	if err := loadString(t, accessBase+"\n[server]\naddr = \"0.0.0.0:8080\"\n", nil).Validate(); err != nil {
++		t.Fatalf("non-loopback access bind: %v", err)
++	}
++	replace := func(from, to string) string { return strings.Replace(accessBase, from, to, 1) }
++	tests := []struct{ name, file, want string }{
++		{"bad mode", validBase + "[server.auth]\nmode = \"magic\"", "server.auth.mode"},
++		{"scheme in domain", replace(`"crimson-scene-dba4.cloudflareaccess.com"`, `"https://crimson-scene-dba4.cloudflareaccess.com"`), "server.auth.team_domain"},
++		{"other domain", replace("cloudflareaccess.com", "example.com"), "server.auth.team_domain"},
++		{"path in domain", replace(`.cloudflareaccess.com"`, `.cloudflareaccess.com/x"`), "server.auth.team_domain"},
++		{"missing audience", replace(`audience = "0123456789abcdef0123456789abcdef"`, `audience = ""`), "server.auth.audience"},
++		{"short audience", replace("0123456789abcdef0123456789abcdef", "abc"), "server.auth.audience"},
++		{"no emails", replace(`["Owner@Example.com"]`, `[]`), "server.auth.allowed_emails: list at least one"},
++		{"bad email", replace("Owner@Example.com", "not-an-email"), "server.auth.allowed_emails"},
++		{"wildcard email", replace("Owner@Example.com", "*@example.com"), "server.auth.allowed_emails"},
++		{"access fields in token mode", validBase + "[server.auth]\nmode = \"token\"\naudience = \"x\"", "apply only to mode"},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			t.Parallel()
++			err := loadString(t, tt.file, nil).Validate()
++			if err == nil || !strings.Contains(err.Error(), tt.want) {
++				t.Errorf("error = %v, want %q", err, tt.want)
++			}
++		})
++	}
++}
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 45b93d0..5b85529 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -132,10 +132,28 @@ type Log struct {
+ 
+ // Server configures the web interface.
+ type Server struct {
+-	Addr              string `toml:"addr"`
+-	MaxConcurrentRuns int    `toml:"max_concurrent_runs"`
+-	MaxQueuedRuns     int    `toml:"max_queued_runs"`
+-	VueSrc            string `toml:"vue_src"` // cdn or local
++	Addr              string     `toml:"addr"`
++	MaxConcurrentRuns int        `toml:"max_concurrent_runs"`
++	MaxQueuedRuns     int        `toml:"max_queued_runs"`
++	VueSrc            string     `toml:"vue_src"` // cdn or local
++	Auth              ServerAuth `toml:"auth"`
++}
++
++// Server authentication modes.
++const (
++	AuthToken            = "token"
++	AuthCloudflareAccess = "cloudflare_access"
++)
++
++// ServerAuth selects how the web interface authenticates callers. In token
++// mode PATCHBOT_UI_TOKEN guards non-loopback binds, as before. In
++// cloudflare_access mode every request must carry a valid Cloudflare Access
++// JWT for an allowed email, which becomes the recorded actor.
++type ServerAuth struct {
++	Mode          string   `toml:"mode"`
++	TeamDomain    string   `toml:"team_domain"`
++	Audience      string   `toml:"audience"`
++	AllowedEmails []string `toml:"allowed_emails"`
+ }
+ 
+ // Memory configures repository memory. Retrieved memory is unverified context
+diff --git a/internal/config/defaults.toml b/internal/config/defaults.toml
+index 7dc0934..e78a6ca 100644
+--- a/internal/config/defaults.toml
++++ b/internal/config/defaults.toml
+@@ -52,6 +52,9 @@ max_concurrent_runs = 2
+ max_queued_runs = 16
+ vue_src = "cdn"
+ 
++[server.auth]
++mode = "token"
++
+ [data]
+ dir = "~/.patchbot"
+ 
+diff --git a/internal/config/validate.go b/internal/config/validate.go
+index b882f5e..66e7153 100644
+--- a/internal/config/validate.go
++++ b/internal/config/validate.go
+@@ -187,6 +187,7 @@ func (c *Config) validateFixed(v *validator) {
+ 	if host, port, err := net.SplitHostPort(c.Server.Addr); err != nil || host == "" || port == "" {
+ 		v.addf("server.addr: %q is not host:port", c.Server.Addr)
+ 	}
++	c.validateServerAuth(v)
+ 	v.check(strings.TrimSpace(c.Data.Dir) != "", "data.dir: not set")
+ 	m := c.Memory
+ 	v.check(m.MaxEntries >= 1 && m.MaxEntries <= 100, "memory.max_entries: must be between 1 and 100")
+@@ -195,6 +196,33 @@ func (c *Config) validateFixed(v *validator) {
+ 	v.check(m.ObservationTTL > 0, "memory.observation_ttl: must be greater than 0")
+ }
+ 
++var (
++	teamDomainPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.cloudflareaccess\.com$`)
++	audiencePattern   = regexp.MustCompile(`^[A-Za-z0-9._-]{16,128}$`)
++	emailPattern      = regexp.MustCompile(`^[^\s@<>",;:*\\]{1,64}@[A-Za-z0-9.-]{1,255}$`)
++)
++
++func (c *Config) validateServerAuth(v *validator) {
++	a := c.Server.Auth
++	switch a.Mode {
++	case AuthToken:
++		v.check(a.TeamDomain == "" && a.Audience == "" && len(a.AllowedEmails) == 0,
++			"server.auth: team_domain, audience and allowed_emails apply only to mode %q", AuthCloudflareAccess)
++	case AuthCloudflareAccess:
++		v.check(teamDomainPattern.MatchString(a.TeamDomain),
++			"server.auth.team_domain: must be a <team>.cloudflareaccess.com host name without scheme or path")
++		v.check(audiencePattern.MatchString(a.Audience),
++			"server.auth.audience: must be the Access application AUD tag")
++		v.check(len(a.AllowedEmails) > 0, "server.auth.allowed_emails: list at least one email")
++		for _, email := range a.AllowedEmails {
++			v.check(emailPattern.MatchString(email) && strings.Count(email, "@") == 1,
++				"server.auth.allowed_emails: %q is not a plain email address", email)
++		}
++	default:
++		v.addf("server.auth.mode: %q is not one of %s, %s", a.Mode, AuthToken, AuthCloudflareAccess)
++	}
++}
++
+ func (c *Config) validateExecutor(v *validator) {
+ 	e := c.Executor
+ 	v.check(slices.Contains([]string{ExecutorLocal, ExecutorContainer}, e.Kind),
+@@ -371,7 +399,7 @@ func (c *Config) Warnings() []string {
+ 			warnf("repo %q: no test command, so its pull requests will be drafts marked unverified", name)
+ 		}
+ 	}
+-	if host, _, err := net.SplitHostPort(c.Server.Addr); err == nil && !isLoopback(host) {
++	if host, _, err := net.SplitHostPort(c.Server.Addr); err == nil && !isLoopback(host) && c.Server.Auth.Mode != AuthCloudflareAccess {
+ 		warnf("server.addr %q is not a loopback address; patchbot serve will require PATCHBOT_UI_TOKEN", c.Server.Addr)
+ 	}
+ 	return out
+diff --git a/internal/runner/actor.go b/internal/runner/actor.go
+new file mode 100644
+index 0000000..0567911
+--- /dev/null
++++ b/internal/runner/actor.go
+@@ -0,0 +1,25 @@
++package runner
++
++import (
++	"context"
++	"strings"
++)
++
++type actorKey struct{}
++
++// WithActor makes operator actions on ctx record actor instead of
++// approval.local_actor. The web server sets it to the verified login email.
++func WithActor(ctx context.Context, actor string) context.Context {
++	if strings.TrimSpace(actor) == "" {
++		return ctx
++	}
++	return context.WithValue(ctx, actorKey{}, actor)
++}
++
++// actorFor returns the context actor or the configured local actor.
++func (r *Runner) actorFor(ctx context.Context) string {
++	if actor, ok := ctx.Value(actorKey{}).(string); ok && actor != "" {
++		return actor
++	}
++	return r.cfg.Approval.LocalActor
++}
+diff --git a/internal/runner/lifecycle.go b/internal/runner/lifecycle.go
+index 041e0f9..dda50bd 100644
+--- a/internal/runner/lifecycle.go
++++ b/internal/runner/lifecycle.go
+@@ -158,7 +158,7 @@ func (r *Runner) approveDecision(ctx context.Context, id int64, actor, channel s
+ 
+ // Revise records notes, invalidates the previous decision and reruns refinement.
+ func (r *Runner) Revise(ctx context.Context, id int64, notes string) error {
+-	return r.revise(ctx, id, notes, r.cfg.Approval.LocalActor, r.actionChannel(), nil)
++	return r.revise(ctx, id, notes, r.actorFor(ctx), r.actionChannel(), nil)
+ }
+ 
+ func (r *Runner) revise(ctx context.Context, id int64, notes, actor, channel string, expected *store.Spec) error {
+@@ -250,7 +250,7 @@ func (r *Runner) EditSpec(ctx context.Context, id int64, draft tools.SpecDraft)
+ 	}
+ 	spec, err := r.db.EditSpec(ctx, store.SpecEdit{
+ 		Spec: store.Spec{RunID: id, BodyMD: draft.Markdown(), Hash: draft.Hash(), IssueHash: agent.IssueHash(issue.Title, issue.Body), Source: "ui_edit", CreatedAt: r.now()},
+-		From: run.Status, To: status, Generation: run.Generation, PriorVersion: prior.Version, PriorHash: prior.Hash, Actor: r.redactor.Redact(r.cfg.Approval.LocalActor),
++		From: run.Status, To: status, Generation: run.Generation, PriorVersion: prior.Version, PriorHash: prior.Hash, Actor: r.redactor.Redact(r.actorFor(ctx)),
+ 	})
+ 	if err != nil {
+ 		return spec, err
+@@ -275,7 +275,7 @@ func (r *Runner) Reject(ctx context.Context, id int64) error {
+ 	if err != nil {
+ 		return err
+ 	}
+-	return r.db.DecideRun(ctx, run.Status, store.StatusRejected, store.Approval{RunID: id, SpecVersion: spec.Version, SpecHash: spec.Hash, Decision: "reject", Actor: r.redactor.Redact(r.cfg.Approval.LocalActor), Channel: r.actionChannel(), CreatedAt: r.now()}, run.Generation)
++	return r.db.DecideRun(ctx, run.Status, store.StatusRejected, store.Approval{RunID: id, SpecVersion: spec.Version, SpecHash: spec.Hash, Decision: "reject", Actor: r.redactor.Redact(r.actorFor(ctx)), Channel: r.actionChannel(), CreatedAt: r.now()}, run.Generation)
+ }
+ 
+ // Cancel stops local work immediately and CASes the persisted active status.
+@@ -289,7 +289,7 @@ func (r *Runner) Cancel(ctx context.Context, id int64) error {
+ 	}
+ 	// Audit the operator intent before waking a worker that can win the terminal
+ 	// transition. Idempotent cancels are actions too, and CAS retries are not.
+-	if err := r.action(ctx, id, "cancel", r.cfg.Approval.LocalActor, r.actionChannel(), nil); err != nil {
++	if err := r.action(ctx, id, "cancel", r.actorFor(ctx), r.actionChannel(), nil); err != nil {
+ 		return err
+ 	}
+ 	r.mu.Lock()
+@@ -440,7 +440,7 @@ func (r *Runner) Retry(ctx context.Context, id int64, provider, model string) (s
+ 	}
+ 	run, err = r.start(ctx, run, reuse)
+ 	if run.ID != 0 {
+-		err = errors.Join(err, r.action(context.WithoutCancel(ctx), run.ID, "retry", r.cfg.Approval.LocalActor, r.actionChannel(), map[string]int64{"retry_of": id}))
++		err = errors.Join(err, r.action(context.WithoutCancel(ctx), run.ID, "retry", r.actorFor(ctx), r.actionChannel(), map[string]int64{"retry_of": id}))
+ 	}
+ 	return run, err
+ }
+diff --git a/internal/runner/runner.go b/internal/runner/runner.go
+index 75bae94..47091ae 100644
+--- a/internal/runner/runner.go
++++ b/internal/runner/runner.go
+@@ -326,7 +326,7 @@ func (r *Runner) start(ctx context.Context, run store.Run, reuse *store.Spec) (s
+ 	}
+ 	id := run.ID
+ 	initial := run
+-	if err = r.action(ctx, id, "start", r.cfg.Approval.LocalActor, r.actionChannel(), nil); err == nil {
++	if err = r.action(ctx, id, "start", r.actorFor(ctx), r.actionChannel(), nil); err == nil {
+ 		err = r.dispatch(ctx, id, func(work context.Context) error {
+ 			run := initial
+ 			err := r.withWork(work, id, func(work context.Context) error {
+diff --git a/internal/server/README.md b/internal/server/README.md
+index b56c0a7..f27c7f8 100644
+--- a/internal/server/README.md
++++ b/internal/server/README.md
+@@ -103,6 +103,23 @@ The included Vue asset is checked against the shared SHA-384 pin by an offline t
+   `approval.local_actor`, channel `ui` and the time. Memory routes use the same
+   bearer auth, host checks and cross-origin protection as run routes.
+ 
++## Authentication modes
++
++`[server.auth] mode` is `token` (default: `PATCHBOT_UI_TOKEN` bearer, loopback
++may run without one) or `cloudflare_access`. In Access mode the bearer token is
++ignored and every request except `GET /assets/app.js`, `/assets/app.css` and
++`/assets/vue.global.prod.js` (and the HMAC-checked webhook path) must carry a
++valid `Cf-Access-Jwt-Assertion` for an allowed email (`internal/cfaccess`).
++Missing or invalid tokens return 401, a valid token for a disallowed email
++returns 403; API errors use the usual JSON envelope with a generic message and
++pages get a plain-text `401 Unauthorized`. The verified email becomes the actor
++of approve, revise, reject, cancel, retry, spec edit, run start and memory
++decisions (ui channel). Host and cross-origin checks still apply.
++
++`GET /api/session` returns `{"email": "<verified email or empty>", "mode":
++"token" | "cloudflare_access"}`. The page header shows "Signed in as <email>"
++in Access mode, which has no token form.
++
+ ## Work and stream ownership
+ 
+ The manager defaults to two running jobs (`server.max_concurrent_runs`) and
+diff --git a/internal/server/access.go b/internal/server/access.go
+new file mode 100644
+index 0000000..53bdf18
+--- /dev/null
++++ b/internal/server/access.go
+@@ -0,0 +1,74 @@
++package server
++
++import (
++	"context"
++	"errors"
++	"net/http"
++	"strings"
++
++	"github.com/aryanpappu/patchbot/internal/cfaccess"
++	"github.com/aryanpappu/patchbot/internal/runner"
++)
++
++type emailKey struct{}
++
++// accessPublic lists the only paths served without a token: fixed, data-free
++// static assets. Pages are not public because the signed-in email is shown.
++func accessPublic(r *http.Request) bool {
++	if r.Method != http.MethodGet {
++		return false
++	}
++	switch r.URL.Path {
++	case "/assets/app.js", "/assets/app.css", "/assets/vue.global.prod.js":
++		return true
++	}
++	return false
++}
++
++// accessAuth verifies the Cloudflare Access JWT. On success it returns a
++// request whose context carries the email as the action actor. The token is
++// never logged and failures reveal nothing about why they failed.
++func (s *Server) accessAuth(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
++	if accessPublic(r) {
++		return r, true
++	}
++	email, err := s.access.Verify(r.Context(), r.Header.Get(cfaccess.Header))
++	if err == nil {
++		ctx := runner.WithActor(context.WithValue(r.Context(), emailKey{}, email), email)
++		return r.WithContext(ctx), true
++	}
++	status, code, message := http.StatusUnauthorized, "unauthorized", "sign in through Cloudflare Access"
++	if errors.Is(err, cfaccess.ErrNotAllowed) {
++		status, code, message = http.StatusForbidden, "forbidden", "this account is not allowed"
++	}
++	if !strings.HasPrefix(r.URL.Path, "/api/") && r.Method == http.MethodGet {
++		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
++		w.WriteHeader(status)
++		_, _ = w.Write([]byte(http.StatusText(status) + "\n"))
++		return r, false
++	}
++	s.writeError(w, status, code, message)
++	return r, false
++}
++
++// sessionEmail is the verified login email, or empty outside Access mode.
++func sessionEmail(r *http.Request) string {
++	email, _ := r.Context().Value(emailKey{}).(string)
++	return email
++}
++
++func (s *Server) session(w http.ResponseWriter, r *http.Request) {
++	if !s.method(w, r, http.MethodGet) {
++		return
++	}
++	s.writeJSON(w, http.StatusOK, map[string]any{"email": sessionEmail(r), "mode": s.cfg.Server.Auth.Mode})
++}
++
++// actor names who performed a UI/API action: the verified login email in
++// Access mode, otherwise approval.local_actor.
++func (s *Server) actor(r *http.Request) string {
++	if email := sessionEmail(r); email != "" {
++		return email
++	}
++	return s.cfg.Approval.LocalActor
++}
+diff --git a/internal/server/access_test.go b/internal/server/access_test.go
+new file mode 100644
+index 0000000..022d480
+--- /dev/null
++++ b/internal/server/access_test.go
+@@ -0,0 +1,220 @@
++package server
++
++import (
++	"crypto"
++	"crypto/rand"
++	"crypto/rsa"
++	"crypto/sha256"
++	"encoding/base64"
++	"encoding/json"
++	"fmt"
++	"math/big"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/aryanpappu/patchbot/internal/cfaccess"
++	"github.com/aryanpappu/patchbot/internal/config"
++	"github.com/aryanpappu/patchbot/internal/llm/fake"
++	"github.com/aryanpappu/patchbot/internal/store"
++)
++
++const (
++	accessTeam  = "crimson-scene-dba4.cloudflareaccess.com"
++	accessAud   = "0123456789abcdef0123456789abcdef"
++	accessOwner = "owner@example.com"
++)
++
++type accessFixture struct {
++	*fixture
++	key *rsa.PrivateKey
++}
++
++func newAccessFixture(t *testing.T, p *fake.Provider) *accessFixture {
++	t.Helper()
++	key, err := rsa.GenerateKey(rand.Reader, 2048)
++	if err != nil {
++		t.Fatal(err)
++	}
++	jwks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		enc := func(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
++		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{"kty": "RSA", "kid": "k1", "use": "sig", "alg": "RS256", "n": enc(key.N.Bytes()), "e": enc(big.NewInt(int64(key.E)).Bytes())}}})
++	}))
++	t.Cleanup(jwks.Close)
++	verifier, err := cfaccess.New(cfaccess.Config{TeamDomain: accessTeam, Audience: accessAud, AllowedEmails: []string{accessOwner}, CertsURL: jwks.URL})
++	if err != nil {
++		t.Fatal(err)
++	}
++	f := newFixtureConfig(t, p, func(o *Options) { o.Access = verifier }, func(c *config.Config) {
++		c.Server.Auth = config.ServerAuth{Mode: config.AuthCloudflareAccess, TeamDomain: accessTeam, Audience: accessAud, AllowedEmails: []string{accessOwner}}
++	})
++	return &accessFixture{f, key}
++}
++
++func (a *accessFixture) token(mutate func(map[string]any)) string {
++	a.t.Helper()
++	now := time.Now()
++	claims := map[string]any{"iss": "https://" + accessTeam, "aud": []string{accessAud}, "email": accessOwner, "iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(time.Hour).Unix()}
++	if mutate != nil {
++		mutate(claims)
++	}
++	enc := func(v any) string { raw, _ := json.Marshal(v); return base64.RawURLEncoding.EncodeToString(raw) }
++	input := enc(map[string]any{"alg": "RS256", "kid": "k1"}) + "." + enc(claims)
++	sum := sha256.Sum256([]byte(input))
++	sig, err := rsa.SignPKCS1v15(rand.Reader, a.key, crypto.SHA256, sum[:])
++	if err != nil {
++		a.t.Fatal(err)
++	}
++	return input + "." + base64.RawURLEncoding.EncodeToString(sig)
++}
++
++func (a *accessFixture) do(method, path, body, jwt string) *httptest.ResponseRecorder {
++	a.t.Helper()
++	r := httptest.NewRequest(method, "http://"+a.cfg.Server.Addr+path, strings.NewReader(body))
++	if jwt != "" {
++		r.Header.Set(cfaccess.Header, jwt)
++	}
++	w := httptest.NewRecorder()
++	a.server.ServeHTTP(w, r)
++	if jwt != "" && strings.Contains(w.Body.String(), jwt) {
++		a.t.Fatal("JWT echoed in response")
++	}
++	return w
++}
++
++func TestAccessApproveRecordsEmailAsActor(t *testing.T) {
++	a := newAccessFixture(t, fake.New("anthropic", specStep(), writeStep(), submitStep()))
++	a.withRepo()
++	jwt := a.token(nil)
++	w := a.do("POST", "/api/runs", `{"repo":"owner/repo","issue":12,"mode":"fix"}`, jwt)
++	requireStatus(t, w, 202)
++	run := a.responseRun(w)
++	a.waitFor(run.ID, store.StatusAwaitingApproval)
++	requireStatus(t, a.do("POST", fmt.Sprintf("/api/runs/%d/approve", run.ID), `{}`, jwt), 202)
++	a.waitFor(run.ID, store.StatusSucceeded)
++	approvals, err := a.db.ListApprovals(t.Context(), run.ID)
++	if err != nil || len(approvals) != 1 || approvals[0].Actor != accessOwner || approvals[0].Channel != "ui" {
++		t.Fatalf("approval audit: %+v: %v", approvals, err)
++	}
++	actions, err := a.db.ListActions(t.Context(), run.ID)
++	if err != nil || len(actions) == 0 {
++		t.Fatal(err)
++	}
++	for _, action := range actions {
++		if action.Actor != accessOwner || action.Channel != "ui" {
++			t.Fatalf("action audit: %+v", action)
++		}
++	}
++}
++
++func TestAccessRejectCancelMemoryUseEmail(t *testing.T) {
++	a := newAccessFixture(t, nil)
++	jwt := a.token(nil)
++	run := a.seed(store.StatusAwaitingApproval)
++	requireStatus(t, a.do("POST", fmt.Sprintf("/api/runs/%d/reject", run.ID), `{}`, jwt), 200)
++	approvals, err := a.db.ListApprovals(t.Context(), run.ID)
++	if err != nil || len(approvals) != 1 || approvals[0].Actor != accessOwner {
++		t.Fatalf("reject audit: %+v: %v", approvals, err)
++	}
++	w := a.do("POST", "/api/memory", `{"repo":"owner/repo","text":"Run gofmt before committing."}`, jwt)
++	requireStatus(t, w, 201)
++	var created struct{ Entry store.MemoryEntry }
++	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
++		t.Fatal(err)
++	}
++	requireStatus(t, a.do("POST", fmt.Sprintf("/api/memory/%d/forget", created.Entry.ID), `{}`, jwt), 200)
++	actions, err := a.db.ListMemoryActions(t.Context(), created.Entry.ID)
++	if err != nil || len(actions) == 0 {
++		t.Fatalf("no memory actions: %v", err)
++	}
++	for _, m := range actions {
++		if m.Actor != accessOwner {
++			t.Fatalf("memory actor %q", m.Actor)
++		}
++	}
++}
++
++func TestAccessRejectsBadCredentials(t *testing.T) {
++	a := newAccessFixture(t, nil)
++	cases := map[string]struct {
++		jwt    string
++		status int
++	}{
++		"missing":     {"", 401},
++		"garbage":     {"not.a.jwt", 401},
++		"wrong aud":   {a.token(func(c map[string]any) { c["aud"] = []string{"x"} }), 401},
++		"wrong iss":   {a.token(func(c map[string]any) { c["iss"] = "https://x.cloudflareaccess.com" }), 401},
++		"expired":     {a.token(func(c map[string]any) { c["exp"] = time.Now().Add(-time.Hour).Unix() }), 401},
++		"not allowed": {a.token(func(c map[string]any) { c["email"] = "intruder@example.com" }), 403},
++	}
++	for name, tc := range cases {
++		for _, path := range []string{"/api/runs", "/api/session", "/api/memory"} {
++			requireStatus(t, a.do("GET", path, "", tc.jwt), tc.status)
++		}
++		w := a.do("POST", "/api/runs", `{}`, tc.jwt)
++		requireStatus(t, w, tc.status)
++		if strings.Contains(w.Body.String(), "intruder") || strings.Contains(strings.ToLower(w.Body.String()), "signature") {
++			t.Errorf("%s: detail leaked: %s", name, w.Body.String())
++		}
++		page := a.do("GET", "/runs", "", tc.jwt)
++		if page.Code != tc.status || strings.Contains(page.Body.String(), "<html") || !strings.HasPrefix(page.Header().Get("Content-Type"), "text/plain") {
++			t.Errorf("%s: page %d %q", name, page.Code, page.Body.String())
++		}
++	}
++	// Tamper with the signature of an otherwise valid token.
++	valid := a.token(nil)
++	tampered := valid[:len(valid)-4] + "AAAA"
++	requireStatus(t, a.do("GET", "/api/runs", "", tampered), 401)
++}
++
++func TestAccessPublicAssetsAndSession(t *testing.T) {
++	a := newAccessFixture(t, nil)
++	if w := a.do("GET", "/assets/app.css", "", ""); w.Code != 200 {
++		t.Fatalf("asset without JWT: %d", w.Code)
++	}
++	if w := a.do("GET", "/assets/other.js", "", ""); w.Code != 401 {
++		t.Fatalf("unlisted asset path must need a JWT: %d", w.Code)
++	}
++	jwt := a.token(nil)
++	w := a.do("GET", "/api/session", "", jwt)
++	requireStatus(t, w, 200)
++	var session struct{ Email, Mode string }
++	if err := json.Unmarshal(w.Body.Bytes(), &session); err != nil || session.Email != accessOwner || session.Mode != "cloudflare_access" {
++		t.Fatalf("session %s", w.Body.String())
++	}
++	page := a.do("GET", "/runs", "", jwt)
++	if page.Code != 200 || !strings.Contains(page.Body.String(), "Signed in as "+accessOwner) || strings.Contains(page.Body.String(), `"auth_required":true`) {
++		t.Fatalf("page %d: %s", page.Code, page.Body.String())
++	}
++}
++
++func TestAccessKeepsHostAndOriginProtection(t *testing.T) {
++	a := newAccessFixture(t, nil)
++	jwt := a.token(nil)
++	r := httptest.NewRequest("GET", "http://evil.example/api/session", nil)
++	r.Header.Set(cfaccess.Header, jwt)
++	w := httptest.NewRecorder()
++	a.server.ServeHTTP(w, r)
++	requireStatus(t, w, 403)
++	r = httptest.NewRequest("POST", "http://"+a.cfg.Server.Addr+"/api/runs", strings.NewReader(`{}`))
++	r.Header.Set(cfaccess.Header, jwt)
++	r.Header.Set("Origin", "https://evil.example")
++	w = httptest.NewRecorder()
++	a.server.ServeHTTP(w, r)
++	requireStatus(t, w, 403)
++}
++
++func TestTokenModeSessionUnchanged(t *testing.T) {
++	f := newFixture(t, nil, nil)
++	w := f.request("GET", "/api/session", "")
++	requireStatus(t, w, 200)
++	var session struct{ Email, Mode string }
++	if err := json.Unmarshal(w.Body.Bytes(), &session); err != nil || session.Email != "" || session.Mode != "token" {
++		t.Fatalf("session %s", w.Body.String())
++	}
++	if page := f.request("GET", "/runs", ""); page.Code != 200 || strings.Contains(page.Body.String(), "Signed in as") {
++		t.Fatalf("token mode page changed: %d", page.Code)
++	}
++}
+diff --git a/internal/server/api.go b/internal/server/api.go
+index b6d3833..a3ac60e 100644
+--- a/internal/server/api.go
++++ b/internal/server/api.go
+@@ -27,6 +27,7 @@ func (s *Server) routes() http.Handler {
+ 	mux.HandleFunc("/runs/new", s.page)
+ 	mux.HandleFunc("/runs/{id}", s.page)
+ 	mux.HandleFunc("/assets/{name}", s.asset)
++	mux.HandleFunc("/api/session", s.session)
+ 	mux.HandleFunc("/api/providers", s.providers)
+ 	mux.HandleFunc("/api/providers/{id}/models", s.providerModels)
+ 	mux.HandleFunc("/api/runs", s.runs)
+@@ -360,7 +361,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
+ 		}
+ 		switch action {
+ 		case "approve":
+-			err = s.runner.ApproveAndExecute(r.Context(), id, s.cfg.Approval.LocalActor)
++			err = s.runner.ApproveAndExecute(r.Context(), id, s.actor(r))
+ 			status = http.StatusAccepted
+ 		case "reject":
+ 			err = s.runner.Reject(r.Context(), id)
+diff --git a/internal/server/fixture_test.go b/internal/server/fixture_test.go
+index 0edb913..f3c6787 100644
+--- a/internal/server/fixture_test.go
++++ b/internal/server/fixture_test.go
+@@ -116,6 +116,11 @@ type fixture struct {
+ }
+ 
+ func newFixture(t *testing.T, p *fake.Provider, adjust func(*Options)) *fixture {
++	t.Helper()
++	return newFixtureConfig(t, p, adjust, nil)
++}
++
++func newFixtureConfig(t *testing.T, p *fake.Provider, adjust func(*Options), adjustConfig func(*config.Config)) *fixture {
+ 	t.Helper()
+ 	f := &fixture{t: t, provider: p, gh: &fakeGitHub{}}
+ 	if f.provider == nil {
+@@ -147,6 +152,9 @@ commands = {test = ["test", "-f", "result.txt"]}
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
++	if adjustConfig != nil {
++		adjustConfig(f.cfg)
++	}
+ 	f.db, err = store.Open(t.Context(), f.cfg.DatabasePath())
+ 	if err != nil {
+ 		t.Fatal(err)
+diff --git a/internal/server/memory.go b/internal/server/memory.go
+index 024e7ff..af85a47 100644
+--- a/internal/server/memory.go
++++ b/internal/server/memory.go
+@@ -14,7 +14,7 @@ import (
+ )
+ 
+ // Memory routes share the server's bearer auth, host checks and cross-origin
+-// mutation protection. Decisions use approval.local_actor on the ui channel.
++// mutation protection. Decisions use the verified Access email (else approval.local_actor) on the ui channel.
+ func (s *Server) memoryRoutes(mux *http.ServeMux) {
+ 	mux.HandleFunc("/api/memory", s.memoryList)
+ 	for _, action := range []string{store.MemoryApprove, store.MemoryReject, store.MemoryForget} {
+@@ -101,7 +101,7 @@ func (s *Server) memoryAdd(w http.ResponseWriter, r *http.Request) {
+ 		s.writeError(w, 400, "invalid_request", "require an allowlisted repo")
+ 		return
+ 	}
+-	entry, err := memory.AddLesson(r.Context(), s.db, s.redactor, memory.LessonInput{Repo: repo, Text: input.Text, Source: store.MemorySourceOperator, Actor: s.cfg.Approval.LocalActor, Channel: "ui"})
++	entry, err := memory.AddLesson(r.Context(), s.db, s.redactor, memory.LessonInput{Repo: repo, Text: input.Text, Source: store.MemorySourceOperator, Actor: s.actor(r), Channel: "ui"})
+ 	if errors.Is(err, tools.ErrInvalidLesson) {
+ 		s.writeError(w, 400, "invalid_request", tools.ErrInvalidLesson.Error())
+ 		return
+@@ -136,7 +136,7 @@ func (s *Server) memoryDecide(w http.ResponseWriter, r *http.Request) {
+ 		return
+ 	}
+ 	action := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+-	entry, err := memory.Decide(r.Context(), s.db, memory.DecideInput{ID: id, Action: action, Actor: s.cfg.Approval.LocalActor, Channel: "ui", HashPrefix: input.ContentHash,
++	entry, err := memory.Decide(r.Context(), s.db, memory.DecideInput{ID: id, Action: action, Actor: s.actor(r), Channel: "ui", HashPrefix: input.ContentHash,
+ 		Allowed: func(repo string) bool { return s.cfg.Repos[repo] != nil }})
+ 	switch {
+ 	case errors.Is(err, memory.ErrHashRequired):
+diff --git a/internal/server/server.go b/internal/server/server.go
+index af40547..fa9b6aa 100644
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -17,6 +17,7 @@ import (
+ 	"sync"
+ 	"time"
+ 
++	"github.com/aryanpappu/patchbot/internal/cfaccess"
+ 	"github.com/aryanpappu/patchbot/internal/config"
+ 	"github.com/aryanpappu/patchbot/internal/llm"
+ 	"github.com/aryanpappu/patchbot/internal/llm/providers"
+@@ -28,7 +29,10 @@ import (
+ 
+ // Options supplies trusted infrastructure. Zero values use production defaults.
+ type Options struct {
+-	Token           secret.Secret
++	Token secret.Secret
++	// Access overrides the Cloudflare Access verifier built from the
++	// configuration (tests point it at a local JWKS server).
++	Access          *cfaccess.Verifier
+ 	Runner          runner.Options
+ 	ShutdownTimeout time.Duration
+ 	// Short intervals are useful to exercise timers without network or live keys.
+@@ -53,6 +57,7 @@ type Server struct {
+ 	http            *http.Server
+ 	tokenHash       [32]byte
+ 	authenticated   bool
++	access          *cfaccess.Verifier
+ 	opts            Options
+ 	mu              sync.RWMutex
+ 	addr            string
+@@ -87,6 +92,15 @@ func ValidateAddress(addr string, token secret.Secret) error {
+ 	return nil
+ }
+ 
++// s0 is the credential ValidateAddress sees: Access JWT verification stands in
++// for the UI token on non-loopback binds.
++func s0(opts Options, cfg *config.Config) secret.Secret {
++	if cfg.Server.Auth.Mode == config.AuthCloudflareAccess {
++		return secret.New("cloudflare-access")
++	}
++	return opts.Token
++}
++
+ // New constructs one runner and starts lifecycle maintenance and ownership heartbeats.
+ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) (*Server, error) {
+ 	if cfg == nil || db == nil {
+@@ -95,7 +109,19 @@ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options)
+ 	if !opts.Token.IsSet() {
+ 		opts.Token = secret.New(os.Getenv("PATCHBOT_UI_TOKEN"))
+ 	}
+-	if err := ValidateAddress(cfg.Server.Addr, opts.Token); err != nil {
++	if cfg.Server.Auth.Mode == config.AuthCloudflareAccess {
++		// Access replaces the bearer token; the token is ignored in this mode.
++		opts.Token = secret.Secret{}
++		if opts.Access == nil {
++			a := cfg.Server.Auth
++			var err error
++			opts.Access, err = cfaccess.New(cfaccess.Config{TeamDomain: a.TeamDomain, Audience: a.Audience, AllowedEmails: a.AllowedEmails})
++			if err != nil {
++				return nil, errors.New("invalid cloudflare_access configuration")
++			}
++		}
++	}
++	if err := ValidateAddress(cfg.Server.Addr, s0(opts, cfg)); err != nil {
+ 		return nil, err
+ 	}
+ 	if opts.ShutdownTimeout <= 0 {
+@@ -118,6 +144,7 @@ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options)
+ 	}
+ 	s := &Server{cfg: cfg, db: db, opts: opts, addr: cfg.Server.Addr, manager: newManager(cfg.Server.MaxConcurrentRuns, cfg.Server.MaxQueuedRuns), redactor: cfg.Redactor(), done: make(chan struct{}), maintenanceDone: make(chan struct{})}
+ 	s.authenticated = opts.Token.IsSet()
++	s.access = opts.Access
+ 	s.tokenHash = sha256.Sum256([]byte(opts.Token.Reveal()))
+ 	s.redactor.AddExact(opts.Token.Reveal())
+ 	s.redactor.AddSecrets(secret.New(os.Getenv("GITHUB_TOKEN")))
+@@ -219,7 +246,7 @@ func (s *Server) syncLabels(ctx context.Context, interval time.Duration) {
+ // Serve runs HTTP until the caller cancels ctx or Shutdown is called. The
+ // listener must be bound to the configured address; ListenAndServe binds it.
+ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
+-	if err := ValidateAddress(listener.Addr().String(), s.opts.Token); err != nil {
++	if err := ValidateAddress(listener.Addr().String(), s0(s.opts, s.cfg)); err != nil {
+ 		_ = listener.Close()
+ 		return err
+ 	}
+@@ -316,6 +343,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 		s.webhook(w, r)
+ 		return
+ 	}
++	if s.access != nil {
++		var ok bool
++		if r, ok = s.accessAuth(w, r); !ok {
++			return
++		}
++	}
+ 	// Only data-free shells and their fixed assets are public. Browser navigation
+ 	// cannot attach a bearer header; every API and SSE request still requires it.
+ 	if s.authenticated && (r.Method != http.MethodGet || !web.PublicPath(r.URL.Path)) {
+diff --git a/internal/server/web.go b/internal/server/web.go
+index cb5aaf3..a5f3f94 100644
+--- a/internal/server/web.go
++++ b/internal/server/web.go
+@@ -13,7 +13,7 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
+ 	if !s.method(w, r, http.MethodGet) {
+ 		return
+ 	}
+-	state := web.State{Page: "runs", AuthRequired: s.authenticated}
++	state := web.State{Page: "runs", AuthRequired: s.authenticated, Email: sessionEmail(r)}
+ 	if r.URL.Path == "/runs/new" {
+ 		state.Page = "new"
+ 	} else if value := r.PathValue("id"); value != "" {
+@@ -23,7 +23,7 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
+ 			return
+ 		}
+ 		state.Page, state.RunID = "detail", id
+-		if !s.authenticated {
++		if !s.authenticated && s.access == nil {
+ 			data, err := s.detailData(r.Context(), id)
+ 			if err != nil {
+ 				s.respondError(w, err)
+diff --git a/internal/web/assets/app.css b/internal/web/assets/app.css
+index b773509..d7cfb24 100644
+--- a/internal/web/assets/app.css
++++ b/internal/web/assets/app.css
+@@ -36,3 +36,4 @@ fieldset { min-width: 0; border: 1px solid var(--edge); }
+ .skip:focus { left: 1rem; top: .2rem; background: Canvas; padding: .5rem; }
+ @media (prefers-color-scheme: dark) { a { color: #92c4ff; } }
+ @media (max-width: 36rem) { header, main { padding: .75rem; } .panel { padding: .75rem; } .filters, .file-row { display: block; } .actions > button { flex: 1 1 7rem; } }
++.whoami { color: var(--muted, inherit); font-size: .9rem; }
+diff --git a/internal/web/shell.html b/internal/web/shell.html
+index 7b0435e..2eeb643 100644
+--- a/internal/web/shell.html
++++ b/internal/web/shell.html
+@@ -11,7 +11,7 @@
+ </head>
+ <body>
+   <a class="skip" href="#main">Skip to content</a>
+-  <header><a href="/runs">patchbot</a><nav aria-label="Main"><a href="/runs">Runs</a><a href="/runs/new">New run</a></nav></header>
++  <header><a href="/runs">patchbot</a><nav aria-label="Main"><a href="/runs">Runs</a><a href="/runs/new">New run</a></nav>{{with .State.Email}}<span class="whoami">Signed in as {{.}}</span>{{end}}</header>
+   <main id="main" tabindex="-1">
+     <div id="app"><h1>patchbot</h1>{{with .State.Preview}}<pre class="output">{{.}}</pre>{{end}}<p role="status">Loading the run interface… If this remains visible, Vue could not load. Check the CDN connection and integrity pin, or run <code>make vendor-vue</code> and rebuild for local mode.</p></div>
+     <noscript>JavaScript is required for the run interface.</noscript>
+diff --git a/internal/web/web.go b/internal/web/web.go
+index fdcba01..2e5f18e 100644
+--- a/internal/web/web.go
++++ b/internal/web/web.go
+@@ -33,6 +33,8 @@ type State struct {
+ 	AuthRequired bool            `json:"auth_required"`
+ 	Initial      json.RawMessage `json:"initial,omitempty"`
+ 	Preview      string          `json:"preview,omitempty"`
++	// Email is the verified Cloudflare Access login, shown in the header.
++	Email string `json:"email,omitempty"`
+ }
+ 
+ // Render writes a page shell. State remains an ordinary Go value so html/template
+diff --git a/patchbot.example.toml b/patchbot.example.toml
+index 37c587b..b52e8e1 100644
+--- a/patchbot.example.toml
++++ b/patchbot.example.toml
+@@ -60,6 +60,16 @@ max_concurrent_runs = 2              # executing jobs
+ max_queued_runs = 16                 # pending jobs; excess requests return 429
+ vue_src = "cdn"                     # cdn or local (vendored Vue is included)
+ 
++[server.auth]
++mode = "token"                      # token (PATCHBOT_UI_TOKEN, default) or cloudflare_access
++# Login via Cloudflare Access (owner-only app in front of the tunnel). Every
++# page and API request must carry a valid Cf-Access-Jwt-Assertion; the verified
++# email is recorded as the actor of each UI/API decision.
++# mode = "cloudflare_access"
++# team_domain = "your-team.cloudflareaccess.com"   # Zero Trust > Settings > Custom Pages > team domain
++# audience = "<Application Audience (AUD) tag>"     # Access > Applications > your app > Overview
++# allowed_emails = ["you@example.com"]
++
+ [data]
+ dir = "~/.patchbot"                 # private 0700 directory; SQLite is 0600
+ 
+
+exec
+/bin/zsh -lc "nl -ba internal/cfaccess/cfaccess.go; cat internal/server/access.go; sed -n '300,420p' internal/server/server.go; cat internal/runner/actor.go; git diff development...HEAD -- internal/config internal/runner internal/cli/serve.go internal/cli/cli.go" in /Users/pappumishra/Documents/selfproject/patchbot-m23-login
+ succeeded in 0ms:
+     1	// Package cfaccess verifies Cloudflare Access application tokens
+     2	// (Cf-Access-Jwt-Assertion) with the standard library only. It accepts RS256
+     3	// signatures from the team JWKS and nothing else.
+     4	package cfaccess
+     5	
+     6	import (
+     7		"context"
+     8		"crypto"
+     9		"crypto/rsa"
+    10		"crypto/sha256"
+    11		"encoding/base64"
+    12		"encoding/json"
+    13		"errors"
+    14		"fmt"
+    15		"io"
+    16		"math/big"
+    17		"net/http"
+    18		"strings"
+    19		"sync"
+    20		"time"
+    21	)
+    22	
+    23	// Header is the request header Cloudflare Access adds after login.
+    24	const Header = "Cf-Access-Jwt-Assertion"
+    25	
+    26	const (
+    27		skew          = 60 * time.Second
+    28		refreshEvery  = time.Minute
+    29		maxTokenBytes = 16 << 10
+    30		maxJWKSBytes  = 1 << 20
+    31		minRSABits    = 2048
+    32	)
+    33	
+    34	// Errors are deliberately coarse; callers must not echo token content.
+    35	var (
+    36		// ErrInvalid covers every malformed, unsigned, expired or mis-scoped token.
+    37		ErrInvalid = errors.New("invalid access token")
+    38		// ErrNotAllowed means a valid token names an email that is not allowed.
+    39		ErrNotAllowed = errors.New("email not allowed")
+    40	)
+    41	
+    42	// Config describes one Access application.
+    43	type Config struct {
+    44		TeamDomain    string
+    45		Audience      string
+    46		AllowedEmails []string
+    47		// CertsURL overrides https://<team>/cdn-cgi/access/certs (tests).
+    48		CertsURL string
+    49		Client   *http.Client
+    50		Now      func() time.Time
+    51	}
+    52	
+    53	// Verifier checks tokens and caches the team signing keys by kid.
+    54	type Verifier struct {
+    55		issuer   string
+    56		audience string
+    57		allowed  map[string]bool
+    58		certs    string
+    59		client   *http.Client
+    60		now      func() time.Time
+    61	
+    62		fetchMu   sync.Mutex
+    63		mu        sync.Mutex
+    64		keys      map[string]*rsa.PublicKey
+    65		lastFetch time.Time
+    66	}
+    67	
+    68	// New builds a verifier. It performs no network I/O.
+    69	func New(c Config) (*Verifier, error) {
+    70		if c.TeamDomain == "" || c.Audience == "" || len(c.AllowedEmails) == 0 {
+    71			return nil, errors.New("team domain, audience and allowed emails are required")
+    72		}
+    73		v := &Verifier{issuer: "https://" + c.TeamDomain, audience: c.Audience, allowed: map[string]bool{}, certs: c.CertsURL, client: c.Client, now: c.Now}
+    74		if v.certs == "" {
+    75			v.certs = "https://" + c.TeamDomain + "/cdn-cgi/access/certs"
+    76		}
+    77		if v.now == nil {
+    78			v.now = time.Now
+    79		}
+    80		if v.client == nil {
+    81			v.client = &http.Client{Timeout: 5 * time.Second}
+    82		}
+    83		// Redirects could move the key fetch to another origin.
+    84		client := *v.client
+    85		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+    86		v.client = &client
+    87		for _, e := range c.AllowedEmails {
+    88			v.allowed[strings.ToLower(strings.TrimSpace(e))] = true
+    89		}
+    90		return v, nil
+    91	}
+    92	
+    93	type header struct {
+    94		Alg string `json:"alg"`
+    95		Kid string `json:"kid"`
+    96	}
+    97	
+    98	type claims struct {
+    99		Iss   string          `json:"iss"`
+   100		Aud   json.RawMessage `json:"aud"`
+   101		Exp   *float64        `json:"exp"`
+   102		Nbf   *float64        `json:"nbf"`
+   103		Iat   *float64        `json:"iat"`
+   104		Email string          `json:"email"`
+   105	}
+   106	
+   107	// Verify returns the lower-cased email of a valid, allowed token.
+   108	func (v *Verifier) Verify(ctx context.Context, token string) (string, error) {
+   109		if token == "" || len(token) > maxTokenBytes {
+   110			return "", ErrInvalid
+   111		}
+   112		parts := strings.Split(token, ".")
+   113		if len(parts) != 3 {
+   114			return "", ErrInvalid
+   115		}
+   116		var h header
+   117		if decodeSegment(parts[0], &h) != nil || h.Alg != "RS256" || h.Kid == "" {
+   118			return "", ErrInvalid
+   119		}
+   120		sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+   121		if err != nil || len(sig) == 0 {
+   122			return "", ErrInvalid
+   123		}
+   124		key, err := v.key(ctx, h.Kid)
+   125		if err != nil {
+   126			return "", ErrInvalid
+   127		}
+   128		sum := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+   129		if rsa.VerifyPKCS1v15(key, crypto.SHA256, sum[:], sig) != nil {
+   130			return "", ErrInvalid
+   131		}
+   132		var c claims
+   133		if decodeSegment(parts[1], &c) != nil || c.Iss != v.issuer || !audienceMatches(c.Aud, v.audience) || c.Exp == nil || c.Iat == nil {
+   134			return "", ErrInvalid
+   135		}
+   136		now := v.now()
+   137		if now.After(unix(*c.Exp).Add(skew)) || now.Add(skew).Before(unix(*c.Iat)) || (c.Nbf != nil && now.Add(skew).Before(unix(*c.Nbf))) {
+   138			return "", ErrInvalid
+   139		}
+   140		email := strings.ToLower(strings.TrimSpace(c.Email))
+   141		if email == "" || len(email) > 320 || strings.ContainsFunc(email, func(r rune) bool { return r < 0x21 || r == 0x7f }) {
+   142			return "", ErrInvalid
+   143		}
+   144		if !v.allowed[email] {
+   145			return "", ErrNotAllowed
+   146		}
+   147		return email, nil
+   148	}
+   149	
+   150	func unix(f float64) time.Time { return time.Unix(int64(f), 0) }
+   151	
+   152	func decodeSegment(s string, into any) error {
+   153		raw, err := base64.RawURLEncoding.DecodeString(s)
+   154		if err != nil {
+   155			return err
+   156		}
+   157		return json.Unmarshal(raw, into)
+   158	}
+   159	
+   160	func audienceMatches(raw json.RawMessage, want string) bool {
+   161		var one string
+   162		if json.Unmarshal(raw, &one) == nil {
+   163			return one == want
+   164		}
+   165		var many []string
+   166		if json.Unmarshal(raw, &many) == nil {
+   167			for _, a := range many {
+   168				if a == want {
+   169					return true
+   170				}
+   171			}
+   172		}
+   173		return false
+   174	}
+   175	
+   176	// key returns the cached key for kid. An unknown kid triggers at most one
+   177	// refresh per minute, so a flood of forged kids cannot hammer the JWKS URL.
+   178	func (v *Verifier) key(ctx context.Context, kid string) (*rsa.PublicKey, error) {
+   179		if k := v.cached(kid); k != nil {
+   180			return k, nil
+   181		}
+   182		v.fetchMu.Lock()
+   183		defer v.fetchMu.Unlock()
+   184		// Another request may have refreshed while this one waited.
+   185		if k := v.cached(kid); k != nil {
+   186			return k, nil
+   187		}
+   188		v.mu.Lock()
+   189		recent := !v.lastFetch.IsZero() && v.now().Sub(v.lastFetch) < refreshEvery
+   190		if !recent {
+   191			v.lastFetch = v.now()
+   192		}
+   193		v.mu.Unlock()
+   194		if recent {
+   195			return nil, errors.New("unknown key")
+   196		}
+   197		keys, err := v.fetch(ctx)
+   198		if err != nil {
+   199			return nil, err
+   200		}
+   201		v.mu.Lock()
+   202		v.keys = keys
+   203		k := keys[kid]
+   204		v.mu.Unlock()
+   205		if k == nil {
+   206			return nil, errors.New("unknown key")
+   207		}
+   208		return k, nil
+   209	}
+   210	
+   211	func (v *Verifier) cached(kid string) *rsa.PublicKey {
+   212		v.mu.Lock()
+   213		defer v.mu.Unlock()
+   214		return v.keys[kid]
+   215	}
+   216	
+   217	// Check fetches the JWKS once and reports how many RSA keys it holds.
+   218	func (v *Verifier) Check(ctx context.Context) (int, error) {
+   219		keys, err := v.fetch(ctx)
+   220		return len(keys), err
+   221	}
+   222	
+   223	type jwks struct {
+   224		Keys []struct {
+   225			Kty string `json:"kty"`
+   226			Kid string `json:"kid"`
+   227			Use string `json:"use"`
+   228			Alg string `json:"alg"`
+   229			N   string `json:"n"`
+   230			E   string `json:"e"`
+   231		} `json:"keys"`
+   232	}
+   233	
+   234	func (v *Verifier) fetch(ctx context.Context) (map[string]*rsa.PublicKey, error) {
+   235		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+   236		defer cancel()
+   237		req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.certs, nil)
+   238		if err != nil {
+   239			return nil, errors.New("invalid JWKS URL")
+   240		}
+   241		req.Header.Set("Accept", "application/json")
+   242		resp, err := v.client.Do(req)
+   243		if err != nil {
+   244			return nil, errors.New("JWKS request failed")
+   245		}
+   246		defer func() { _ = resp.Body.Close() }()
+   247		if resp.StatusCode != http.StatusOK {
+   248			return nil, fmt.Errorf("JWKS request returned status %d", resp.StatusCode)
+   249		}
+   250		body, err := io.ReadAll(io.LimitReader(resp.Body, maxJWKSBytes+1))
+   251		if err != nil || len(body) > maxJWKSBytes {
+   252			return nil, errors.New("JWKS body unreadable or too large")
+   253		}
+   254		var set jwks
+   255		if json.Unmarshal(body, &set) != nil {
+   256			return nil, errors.New("JWKS is not valid JSON")
+   257		}
+   258		keys := map[string]*rsa.PublicKey{}
+   259		for _, k := range set.Keys {
+   260			if k.Kty != "RSA" || k.Kid == "" || (k.Use != "" && k.Use != "sig") || (k.Alg != "" && k.Alg != "RS256") {
+   261				continue
+   262			}
+   263			n, errN := base64.RawURLEncoding.DecodeString(k.N)
+   264			e, errE := base64.RawURLEncoding.DecodeString(k.E)
+   265			if errN != nil || errE != nil || len(e) == 0 || len(e) > 4 {
+   266				continue
+   267			}
+   268			exp := new(big.Int).SetBytes(e)
+   269			mod := new(big.Int).SetBytes(n)
+   270			if !exp.IsInt64() || exp.Int64() < 3 || exp.Int64()%2 == 0 || mod.BitLen() < minRSABits {
+   271				continue
+   272			}
+   273			keys[k.Kid] = &rsa.PublicKey{N: mod, E: int(exp.Int64())}
+   274		}
+   275		if len(keys) == 0 {
+   276			return nil, errors.New("JWKS has no usable RSA keys")
+   277		}
+   278		return keys, nil
+   279	}
+package server
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/aryanpappu/patchbot/internal/cfaccess"
+	"github.com/aryanpappu/patchbot/internal/runner"
+)
+
+type emailKey struct{}
+
+// accessPublic lists the only paths served without a token: fixed, data-free
+// static assets. Pages are not public because the signed-in email is shown.
+func accessPublic(r *http.Request) bool {
+	if r.Method != http.MethodGet {
+		return false
+	}
+	switch r.URL.Path {
+	case "/assets/app.js", "/assets/app.css", "/assets/vue.global.prod.js":
+		return true
+	}
+	return false
+}
+
+// accessAuth verifies the Cloudflare Access JWT. On success it returns a
+// request whose context carries the email as the action actor. The token is
+// never logged and failures reveal nothing about why they failed.
+func (s *Server) accessAuth(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
+	if accessPublic(r) {
+		return r, true
+	}
+	email, err := s.access.Verify(r.Context(), r.Header.Get(cfaccess.Header))
+	if err == nil {
+		ctx := runner.WithActor(context.WithValue(r.Context(), emailKey{}, email), email)
+		return r.WithContext(ctx), true
+	}
+	status, code, message := http.StatusUnauthorized, "unauthorized", "sign in through Cloudflare Access"
+	if errors.Is(err, cfaccess.ErrNotAllowed) {
+		status, code, message = http.StatusForbidden, "forbidden", "this account is not allowed"
+	}
+	if !strings.HasPrefix(r.URL.Path, "/api/") && r.Method == http.MethodGet {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(http.StatusText(status) + "\n"))
+		return r, false
+	}
+	s.writeError(w, status, code, message)
+	return r, false
+}
+
+// sessionEmail is the verified login email, or empty outside Access mode.
+func sessionEmail(r *http.Request) string {
+	email, _ := r.Context().Value(emailKey{}).(string)
+	return email
+}
+
+func (s *Server) session(w http.ResponseWriter, r *http.Request) {
+	if !s.method(w, r, http.MethodGet) {
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"email": sessionEmail(r), "mode": s.cfg.Server.Auth.Mode})
+}
+
+// actor names who performed a UI/API action: the verified login email in
+// Access mode, otherwise approval.local_actor.
+func (s *Server) actor(r *http.Request) string {
+	if email := sessionEmail(r); email != "" {
+		return email
+	}
+	return s.cfg.Approval.LocalActor
+}
+		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), s.opts.ShutdownTimeout)
+		defer stop()
+		_ = s.Shutdown(cleanup)
+		return errors.New("could not bind server address")
+	}
+	return s.Serve(ctx, listener)
+}
+
+// Shutdown rejects new work, stops maintenance and SSE, and drains in-flight
+// runs up to ctx's deadline. On timeout it cancels their execution contexts.
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.shutdownOnce.Do(func() {
+		s.mu.Lock()
+		s.stopping = true
+		s.mu.Unlock()
+		s.manager.stopAdmission()
+		s.stop()
+		close(s.done)
+		if s.unsubscribe != nil {
+			s.unsubscribe()
+		}
+	})
+	httpErr := s.http.Shutdown(ctx)
+	workErr := s.manager.wait(ctx)
+	if httpErr != nil {
+		_ = s.http.Close()
+	}
+	select {
+	case <-s.maintenanceDone:
+	case <-ctx.Done():
+		return errors.Join(httpErr, workErr, ctx.Err())
+	}
+	return errors.Join(httpErr, workErr)
+}
+
+// ServeHTTP applies authentication and security to every route and error.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Security-Policy", web.CSP(s.cfg.Server.VueSrc == "local"))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Cache-Control", "no-store")
+	if s.cfg.Webhook.Enabled && r.URL.Path == s.cfg.Webhook.Path {
+		s.webhook(w, r)
+		return
+	}
+	if s.access != nil {
+		var ok bool
+		if r, ok = s.accessAuth(w, r); !ok {
+			return
+		}
+	}
+	// Only data-free shells and their fixed assets are public. Browser navigation
+	// cannot attach a bearer header; every API and SSE request still requires it.
+	if s.authenticated && (r.Method != http.MethodGet || !web.PublicPath(r.URL.Path)) {
+		value, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		candidate := sha256.Sum256([]byte(value))
+		if !ok || subtle.ConstantTimeCompare(candidate[:], s.tokenHash[:]) != 1 {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			s.writeError(w, http.StatusUnauthorized, "unauthorized", "bearer token required")
+			return
+		}
+	}
+	if r.Method != http.MethodGet {
+		if err := http.NewCrossOriginProtection().Check(r); err != nil {
+			s.writeError(w, http.StatusForbidden, "forbidden", "cross-origin request refused")
+			return
+		}
+	}
+	if !s.validHost(r) {
+		s.writeError(w, http.StatusForbidden, "forbidden", "request host refused")
+		return
+	}
+	s.mu.RLock()
+	stopping := s.stopping
+	s.mu.RUnlock()
+	if stopping {
+		s.writeError(w, http.StatusServiceUnavailable, "unavailable", "server is shutting down")
+		return
+	}
+	if r.URL.Path != path.Clean(r.URL.Path) {
+		s.writeError(w, 404, "not_found", "resource not found")
+		return
+	}
+	s.handler.ServeHTTP(w, r)
+}
+
+func (s *Server) validHost(r *http.Request) bool {
+	s.mu.RLock()
+	addr := s.addr
+	s.mu.RUnlock()
+	boundHost, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	host, requestPort, err := net.SplitHostPort(r.Host)
+	if err != nil {
+		// Browsers omit the port when the listener uses HTTP's default port.
+		host = r.Host
+		if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+			host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+			if net.ParseIP(host) == nil {
+				return false
+			}
+		} else if strings.Contains(host, ":") {
+			return false
+		}
+		requestPort = "80"
+		if r.TLS != nil {
+			requestPort = "443"
+		}
+	}
+	if host == "" || requestPort != port {
+		return false
+	}
+	ip := net.ParseIP(boundHost)
+	requestIP := net.ParseIP(host)
+	if ip != nil && !ip.IsUnspecified() && requestIP != nil && ip.Equal(requestIP) {
+		return true
+	}
+	loopback := (ip != nil && ip.IsLoopback()) || strings.EqualFold(boundHost, "localhost")
+package runner
+
+import (
+	"context"
+	"strings"
+)
+
+type actorKey struct{}
+
+// WithActor makes operator actions on ctx record actor instead of
+// approval.local_actor. The web server sets it to the verified login email.
+func WithActor(ctx context.Context, actor string) context.Context {
+	if strings.TrimSpace(actor) == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, actorKey{}, actor)
+}
+
+// actorFor returns the context actor or the configured local actor.
+func (r *Runner) actorFor(ctx context.Context) string {
+	if actor, ok := ctx.Value(actorKey{}).(string); ok && actor != "" {
+		return actor
+	}
+	return r.cfg.Approval.LocalActor
+}
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-H2KYBHSv' (errno=Operation not permitted)
+diff --git a/internal/cli/cli.go b/internal/cli/cli.go
+index cf9d81e..cef3fdc 100644
+--- a/internal/cli/cli.go
++++ b/internal/cli/cli.go
+@@ -54,7 +54,9 @@ type App struct {
+ 	// Providers injects optional transports and test providers.
+ 	Providers providers.Options
+ 	// RunnerOptions injects local git remotes, GitHub and fake LLMs in tests.
+-	RunnerOptions  runner.Options
++	RunnerOptions runner.Options
++	// AccessCertsURL overrides the Cloudflare Access JWKS URL in doctor tests.
++	AccessCertsURL string
+ 	outputRedactor *secret.Redactor
+ }
+ 
+diff --git a/internal/cli/serve.go b/internal/cli/serve.go
+index cb0c4e3..164c958 100644
+--- a/internal/cli/serve.go
++++ b/internal/cli/serve.go
+@@ -61,7 +61,11 @@ func (a *App) runServe(args []string) int {
+ 		return 1
+ 	}
+ 	redactor.Extend(cfg.Redactor())
+-	if err := server.ValidateAddress(cfg.Server.Addr, secret.New(uiToken)); err != nil {
++	addrToken := secret.New(uiToken)
++	if cfg.Server.Auth.Mode == config.AuthCloudflareAccess {
++		addrToken = secret.New("cloudflare-access") // Access JWTs authenticate non-loopback binds
++	}
++	if err := server.ValidateAddress(cfg.Server.Addr, addrToken); err != nil {
+ 		a.printProblems(redactor, err)
+ 		return 1
+ 	}
+diff --git a/internal/config/access_test.go b/internal/config/access_test.go
+new file mode 100644
+index 0000000..4f50dda
+--- /dev/null
++++ b/internal/config/access_test.go
+@@ -0,0 +1,53 @@
++package config_test
++
++import (
++	"strings"
++	"testing"
++)
++
++const accessBase = validBase + `
++[server.auth]
++mode = "cloudflare_access"
++team_domain = "crimson-scene-dba4.cloudflareaccess.com"
++audience = "0123456789abcdef0123456789abcdef"
++allowed_emails = ["Owner@Example.com"]
++`
++
++func TestServerAuthValidation(t *testing.T) {
++	t.Parallel()
++	if err := loadString(t, validBase, nil).Validate(); err != nil {
++		t.Fatalf("default token mode: %v", err)
++	}
++	if got := loadString(t, validBase, nil).Server.Auth.Mode; got != "token" {
++		t.Fatalf("default mode %q", got)
++	}
++	if err := loadString(t, accessBase, nil).Validate(); err != nil {
++		t.Fatalf("valid access config: %v", err)
++	}
++	// A non-loopback bind is allowed because Access authenticates requests.
++	if err := loadString(t, accessBase+"\n[server]\naddr = \"0.0.0.0:8080\"\n", nil).Validate(); err != nil {
++		t.Fatalf("non-loopback access bind: %v", err)
++	}
++	replace := func(from, to string) string { return strings.Replace(accessBase, from, to, 1) }
++	tests := []struct{ name, file, want string }{
++		{"bad mode", validBase + "[server.auth]\nmode = \"magic\"", "server.auth.mode"},
++		{"scheme in domain", replace(`"crimson-scene-dba4.cloudflareaccess.com"`, `"https://crimson-scene-dba4.cloudflareaccess.com"`), "server.auth.team_domain"},
++		{"other domain", replace("cloudflareaccess.com", "example.com"), "server.auth.team_domain"},
++		{"path in domain", replace(`.cloudflareaccess.com"`, `.cloudflareaccess.com/x"`), "server.auth.team_domain"},
++		{"missing audience", replace(`audience = "0123456789abcdef0123456789abcdef"`, `audience = ""`), "server.auth.audience"},
++		{"short audience", replace("0123456789abcdef0123456789abcdef", "abc"), "server.auth.audience"},
++		{"no emails", replace(`["Owner@Example.com"]`, `[]`), "server.auth.allowed_emails: list at least one"},
++		{"bad email", replace("Owner@Example.com", "not-an-email"), "server.auth.allowed_emails"},
++		{"wildcard email", replace("Owner@Example.com", "*@example.com"), "server.auth.allowed_emails"},
++		{"access fields in token mode", validBase + "[server.auth]\nmode = \"token\"\naudience = \"x\"", "apply only to mode"},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			t.Parallel()
++			err := loadString(t, tt.file, nil).Validate()
++			if err == nil || !strings.Contains(err.Error(), tt.want) {
++				t.Errorf("error = %v, want %q", err, tt.want)
++			}
++		})
++	}
++}
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 45b93d0..5b85529 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -132,10 +132,28 @@ type Log struct {
+ 
+ // Server configures the web interface.
+ type Server struct {
+-	Addr              string `toml:"addr"`
+-	MaxConcurrentRuns int    `toml:"max_concurrent_runs"`
+-	MaxQueuedRuns     int    `toml:"max_queued_runs"`
+-	VueSrc            string `toml:"vue_src"` // cdn or local
++	Addr              string     `toml:"addr"`
++	MaxConcurrentRuns int        `toml:"max_concurrent_runs"`
++	MaxQueuedRuns     int        `toml:"max_queued_runs"`
++	VueSrc            string     `toml:"vue_src"` // cdn or local
++	Auth              ServerAuth `toml:"auth"`
++}
++
++// Server authentication modes.
++const (
++	AuthToken            = "token"
++	AuthCloudflareAccess = "cloudflare_access"
++)
++
++// ServerAuth selects how the web interface authenticates callers. In token
++// mode PATCHBOT_UI_TOKEN guards non-loopback binds, as before. In
++// cloudflare_access mode every request must carry a valid Cloudflare Access
++// JWT for an allowed email, which becomes the recorded actor.
++type ServerAuth struct {
++	Mode          string   `toml:"mode"`
++	TeamDomain    string   `toml:"team_domain"`
++	Audience      string   `toml:"audience"`
++	AllowedEmails []string `toml:"allowed_emails"`
+ }
+ 
+ // Memory configures repository memory. Retrieved memory is unverified context
+diff --git a/internal/config/defaults.toml b/internal/config/defaults.toml
+index 7dc0934..e78a6ca 100644
+--- a/internal/config/defaults.toml
++++ b/internal/config/defaults.toml
+@@ -52,6 +52,9 @@ max_concurrent_runs = 2
+ max_queued_runs = 16
+ vue_src = "cdn"
+ 
++[server.auth]
++mode = "token"
++
+ [data]
+ dir = "~/.patchbot"
+ 
+diff --git a/internal/config/validate.go b/internal/config/validate.go
+index b882f5e..66e7153 100644
+--- a/internal/config/validate.go
++++ b/internal/config/validate.go
+@@ -187,6 +187,7 @@ func (c *Config) validateFixed(v *validator) {
+ 	if host, port, err := net.SplitHostPort(c.Server.Addr); err != nil || host == "" || port == "" {
+ 		v.addf("server.addr: %q is not host:port", c.Server.Addr)
+ 	}
++	c.validateServerAuth(v)
+ 	v.check(strings.TrimSpace(c.Data.Dir) != "", "data.dir: not set")
+ 	m := c.Memory
+ 	v.check(m.MaxEntries >= 1 && m.MaxEntries <= 100, "memory.max_entries: must be between 1 and 100")
+@@ -195,6 +196,33 @@ func (c *Config) validateFixed(v *validator) {
+ 	v.check(m.ObservationTTL > 0, "memory.observation_ttl: must be greater than 0")
+ }
+ 
++var (
++	teamDomainPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.cloudflareaccess\.com$`)
++	audiencePattern   = regexp.MustCompile(`^[A-Za-z0-9._-]{16,128}$`)
++	emailPattern      = regexp.MustCompile(`^[^\s@<>",;:*\\]{1,64}@[A-Za-z0-9.-]{1,255}$`)
++)
++
++func (c *Config) validateServerAuth(v *validator) {
++	a := c.Server.Auth
++	switch a.Mode {
++	case AuthToken:
++		v.check(a.TeamDomain == "" && a.Audience == "" && len(a.AllowedEmails) == 0,
++			"server.auth: team_domain, audience and allowed_emails apply only to mode %q", AuthCloudflareAccess)
++	case AuthCloudflareAccess:
++		v.check(teamDomainPattern.MatchString(a.TeamDomain),
++			"server.auth.team_domain: must be a <team>.cloudflareaccess.com host name without scheme or path")
++		v.check(audiencePattern.MatchString(a.Audience),
++			"server.auth.audience: must be the Access application AUD tag")
++		v.check(len(a.AllowedEmails) > 0, "server.auth.allowed_emails: list at least one email")
++		for _, email := range a.AllowedEmails {
++			v.check(emailPattern.MatchString(email) && strings.Count(email, "@") == 1,
++				"server.auth.allowed_emails: %q is not a plain email address", email)
++		}
++	default:
++		v.addf("server.auth.mode: %q is not one of %s, %s", a.Mode, AuthToken, AuthCloudflareAccess)
++	}
++}
++
+ func (c *Config) validateExecutor(v *validator) {
+ 	e := c.Executor
+ 	v.check(slices.Contains([]string{ExecutorLocal, ExecutorContainer}, e.Kind),
+@@ -371,7 +399,7 @@ func (c *Config) Warnings() []string {
+ 			warnf("repo %q: no test command, so its pull requests will be drafts marked unverified", name)
+ 		}
+ 	}
+-	if host, _, err := net.SplitHostPort(c.Server.Addr); err == nil && !isLoopback(host) {
++	if host, _, err := net.SplitHostPort(c.Server.Addr); err == nil && !isLoopback(host) && c.Server.Auth.Mode != AuthCloudflareAccess {
+ 		warnf("server.addr %q is not a loopback address; patchbot serve will require PATCHBOT_UI_TOKEN", c.Server.Addr)
+ 	}
+ 	return out
+diff --git a/internal/runner/actor.go b/internal/runner/actor.go
+new file mode 100644
+index 0000000..0567911
+--- /dev/null
++++ b/internal/runner/actor.go
+@@ -0,0 +1,25 @@
++package runner
++
++import (
++	"context"
++	"strings"
++)
++
++type actorKey struct{}
++
++// WithActor makes operator actions on ctx record actor instead of
++// approval.local_actor. The web server sets it to the verified login email.
++func WithActor(ctx context.Context, actor string) context.Context {
++	if strings.TrimSpace(actor) == "" {
++		return ctx
++	}
++	return context.WithValue(ctx, actorKey{}, actor)
++}
++
++// actorFor returns the context actor or the configured local actor.
++func (r *Runner) actorFor(ctx context.Context) string {
++	if actor, ok := ctx.Value(actorKey{}).(string); ok && actor != "" {
++		return actor
++	}
++	return r.cfg.Approval.LocalActor
++}
+diff --git a/internal/runner/lifecycle.go b/internal/runner/lifecycle.go
+index 041e0f9..dda50bd 100644
+--- a/internal/runner/lifecycle.go
++++ b/internal/runner/lifecycle.go
+@@ -158,7 +158,7 @@ func (r *Runner) approveDecision(ctx context.Context, id int64, actor, channel s
+ 
+ // Revise records notes, invalidates the previous decision and reruns refinement.
+ func (r *Runner) Revise(ctx context.Context, id int64, notes string) error {
+-	return r.revise(ctx, id, notes, r.cfg.Approval.LocalActor, r.actionChannel(), nil)
++	return r.revise(ctx, id, notes, r.actorFor(ctx), r.actionChannel(), nil)
+ }
+ 
+ func (r *Runner) revise(ctx context.Context, id int64, notes, actor, channel string, expected *store.Spec) error {
+@@ -250,7 +250,7 @@ func (r *Runner) EditSpec(ctx context.Context, id int64, draft tools.SpecDraft)
+ 	}
+ 	spec, err := r.db.EditSpec(ctx, store.SpecEdit{
+ 		Spec: store.Spec{RunID: id, BodyMD: draft.Markdown(), Hash: draft.Hash(), IssueHash: agent.IssueHash(issue.Title, issue.Body), Source: "ui_edit", CreatedAt: r.now()},
+-		From: run.Status, To: status, Generation: run.Generation, PriorVersion: prior.Version, PriorHash: prior.Hash, Actor: r.redactor.Redact(r.cfg.Approval.LocalActor),
++		From: run.Status, To: status, Generation: run.Generation, PriorVersion: prior.Version, PriorHash: prior.Hash, Actor: r.redactor.Redact(r.actorFor(ctx)),
+ 	})
+ 	if err != nil {
+ 		return spec, err
+@@ -275,7 +275,7 @@ func (r *Runner) Reject(ctx context.Context, id int64) error {
+ 	if err != nil {
+ 		return err
+ 	}
+-	return r.db.DecideRun(ctx, run.Status, store.StatusRejected, store.Approval{RunID: id, SpecVersion: spec.Version, SpecHash: spec.Hash, Decision: "reject", Actor: r.redactor.Redact(r.cfg.Approval.LocalActor), Channel: r.actionChannel(), CreatedAt: r.now()}, run.Generation)
++	return r.db.DecideRun(ctx, run.Status, store.StatusRejected, store.Approval{RunID: id, SpecVersion: spec.Version, SpecHash: spec.Hash, Decision: "reject", Actor: r.redactor.Redact(r.actorFor(ctx)), Channel: r.actionChannel(), CreatedAt: r.now()}, run.Generation)
+ }
+ 
+ // Cancel stops local work immediately and CASes the persisted active status.
+@@ -289,7 +289,7 @@ func (r *Runner) Cancel(ctx context.Context, id int64) error {
+ 	}
+ 	// Audit the operator intent before waking a worker that can win the terminal
+ 	// transition. Idempotent cancels are actions too, and CAS retries are not.
+-	if err := r.action(ctx, id, "cancel", r.cfg.Approval.LocalActor, r.actionChannel(), nil); err != nil {
++	if err := r.action(ctx, id, "cancel", r.actorFor(ctx), r.actionChannel(), nil); err != nil {
+ 		return err
+ 	}
+ 	r.mu.Lock()
+@@ -440,7 +440,7 @@ func (r *Runner) Retry(ctx context.Context, id int64, provider, model string) (s
+ 	}
+ 	run, err = r.start(ctx, run, reuse)
+ 	if run.ID != 0 {
+-		err = errors.Join(err, r.action(context.WithoutCancel(ctx), run.ID, "retry", r.cfg.Approval.LocalActor, r.actionChannel(), map[string]int64{"retry_of": id}))
++		err = errors.Join(err, r.action(context.WithoutCancel(ctx), run.ID, "retry", r.actorFor(ctx), r.actionChannel(), map[string]int64{"retry_of": id}))
+ 	}
+ 	return run, err
+ }
+diff --git a/internal/runner/runner.go b/internal/runner/runner.go
+index 75bae94..47091ae 100644
+--- a/internal/runner/runner.go
++++ b/internal/runner/runner.go
+@@ -326,7 +326,7 @@ func (r *Runner) start(ctx context.Context, run store.Run, reuse *store.Spec) (s
+ 	}
+ 	id := run.ID
+ 	initial := run
+-	if err = r.action(ctx, id, "start", r.cfg.Approval.LocalActor, r.actionChannel(), nil); err == nil {
++	if err = r.action(ctx, id, "start", r.actorFor(ctx), r.actionChannel(), nil); err == nil {
+ 		err = r.dispatch(ctx, id, func(work context.Context) error {
+ 			run := initial
+ 			err := r.withWork(work, id, func(work context.Context) error {
+
+exec
+/bin/zsh -lc "cat internal/server/manager.go; cat internal/server/webhook.go; sed -n '190,390p' internal/server/api.go; rg -n 'Validate\\(|DisallowUnknown|Undecoded|WithCancel|WithoutCancel|Background|LocalActor' internal/config/load.go internal/server internal/runner/runner.go internal/runner/lifecycle.go; sed -n '150,235p' internal/cfaccess/cfaccess_test.go" in /Users/pappumishra/Documents/selfproject/patchbot-m23-login
+ succeeded in 0ms:
+package server
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"time"
+)
+
+var (
+	errShuttingDown = errors.New("server is shutting down")
+	errQueueFull    = errors.New("pending run queue is full; retry when capacity is available")
+)
+
+type job struct {
+	id     int64
+	ctx    context.Context
+	cancel context.CancelFunc
+	work   func(context.Context) error
+}
+
+type reservationKey struct{}
+
+type reservation struct {
+	manager *manager
+	used    bool // protected by manager.mu
+}
+
+// manager owns a bounded queue without allocating goroutines for waiting work.
+// Reservations secure admission before the runner commits lifecycle decisions.
+type manager struct {
+	mu            sync.Mutex
+	running       map[int64]*job
+	pending       []*job
+	limit         int
+	queueLimit    int
+	reserved      int
+	closing       bool
+	done          chan struct{}
+	drained       bool
+	heartbeatDone chan struct{}
+}
+
+func newManager(limit, queueLimit int) *manager {
+	if limit <= 0 {
+		limit = 2
+	}
+	if queueLimit <= 0 {
+		queueLimit = 16
+	}
+	return &manager{running: make(map[int64]*job), limit: limit, queueLimit: queueLimit, done: make(chan struct{})}
+}
+
+func (m *manager) reserve(ctx context.Context) (context.Context, func(), error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closing {
+		return ctx, nil, errShuttingDown
+	}
+	if len(m.pending)+m.reserved >= m.queueLimit {
+		return ctx, nil, errQueueFull
+	}
+	m.reserved++
+	r := &reservation{manager: m}
+	release := func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if !r.used {
+			r.used = true
+			m.reserved--
+			m.checkDrained()
+		}
+	}
+	return context.WithValue(ctx, reservationKey{}, r), release, nil
+}
+
+func (m *manager) submit(ctx context.Context, id int64, work func(context.Context) error) error {
+	r, ok := ctx.Value(reservationKey{}).(*reservation)
+	if !ok || r.manager != m {
+		admitted, release, err := m.reserve(ctx)
+		if err != nil {
+			return err
+		}
+		defer release()
+		return m.submit(admitted, id, work)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if r.used {
+		return errors.New("work admission already consumed")
+	}
+	r.used = true
+	m.reserved--
+	workCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	m.pending = append(m.pending, &job{id: id, ctx: workCtx, cancel: cancel, work: work})
+	m.schedule()
+	return nil
+}
+
+// schedule runs under mu and starts only work that can execute immediately.
+// Skipping a blocked run lets unrelated jobs use otherwise idle workers.
+func (m *manager) schedule() {
+	for i := 0; i < len(m.pending) && len(m.running) < m.limit; {
+		current := m.pending[i]
+		if m.running[current.id] != nil {
+			i++
+			continue
+		}
+		copy(m.pending[i:], m.pending[i+1:])
+		m.pending[len(m.pending)-1] = nil
+		m.pending = m.pending[:len(m.pending)-1]
+		m.running[current.id] = current
+		go m.run(current)
+	}
+	m.checkDrained()
+}
+
+func (m *manager) run(current *job) {
+	defer current.cancel()
+	if current.ctx.Err() == nil {
+		_ = current.work(current.ctx) // The runner persists failures; raw errors never reach logs.
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.running, current.id)
+	m.schedule()
+}
+
+func (m *manager) cancel(id int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if current := m.running[id]; current != nil {
+		current.cancel()
+	}
+	kept := m.pending[:0]
+	for _, current := range m.pending {
+		if current.id == id {
+			current.cancel()
+		} else {
+			kept = append(kept, current)
+		}
+	}
+	clear(m.pending[len(kept):])
+	m.pending = kept
+	m.checkDrained()
+}
+
+func (m *manager) checkDrained() {
+	if m.closing && !m.drained && len(m.running) == 0 && len(m.pending) == 0 && m.reserved == 0 {
+		m.drained = true
+		close(m.done)
+	}
+}
+
+func (m *manager) stopAdmission() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.closing = true
+	m.checkDrained()
+}
+
+func (m *manager) wait(ctx context.Context) error {
+	select {
+	case <-m.done:
+		if m.heartbeatDone != nil {
+			select {
+			case <-m.heartbeatDone:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	case <-ctx.Done():
+		m.mu.Lock()
+		for _, current := range m.running {
+			current.cancel()
+		}
+		for _, current := range m.pending {
+			current.cancel()
+		}
+		clear(m.pending)
+		m.pending = nil
+		m.checkDrained()
+		m.mu.Unlock()
+		return ctx.Err()
+	}
+}
+
+func (m *manager) busy(id int64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.running[id] != nil {
+		return true
+	}
+	for _, current := range m.pending {
+		if current.id == id {
+			return true
+		}
+	}
+	return false
+}
+
+// startHeartbeats owns queued and running jobs until shutdown has drained them.
+// One ticker covers the entire bounded queue, including same-run follow-ups.
+func (m *manager) startHeartbeats(interval time.Duration, beat func(context.Context, int64) error) {
+	m.heartbeatDone = make(chan struct{})
+	go func() {
+		defer close(m.heartbeatDone)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-m.done:
+				return
+			case <-ticker.C:
+				m.mu.Lock()
+				ids := make(map[int64]bool, len(m.running)+len(m.pending))
+				for id := range m.running {
+					ids[id] = true
+				}
+				for _, current := range m.pending {
+					ids[current.id] = true
+				}
+				m.mu.Unlock()
+				for id := range ids {
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					_ = beat(ctx, id) // Waiting/terminal transitions can win the heartbeat CAS.
+					cancel()
+				}
+			}
+		}
+	}()
+}
+package server
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/aryanpappu/patchbot/internal/github"
+	"github.com/aryanpappu/patchbot/internal/store"
+)
+
+func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	s.mu.RLock()
+	stopping := s.stopping
+	s.mu.RUnlock()
+	if stopping {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		return
+	}
+	signature, ok := strings.CutPrefix(r.Header.Get("X-Hub-Signature-256"), "sha256=")
+	received, err := hex.DecodeString(signature)
+	mac := hmac.New(sha256.New, []byte(s.cfg.Webhook.Secret.Reveal()))
+	_, _ = mac.Write(body)
+	if !ok || err != nil || !s.cfg.Webhook.Secret.IsSet() || !hmac.Equal(received, mac.Sum(nil)) {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	id := r.Header.Get("X-GitHub-Delivery")
+	if id == "" || len(id) > 200 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	var payload struct {
+		Action     string `json:"action"`
+		Repository struct {
+			FullName string `json:"full_name"`
+		} `json:"repository"`
+		Issue github.Issue `json:"issue"`
+		Label github.Label `json:"label"`
+	}
+	if json.Unmarshal(body, &payload) != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	event := r.Header.Get("X-GitHub-Event")
+	repo := strings.ToLower(payload.Repository.FullName)
+	eligible := event == "issue_comment" || (event == "issues" && (payload.Action == "unlabeled" || (payload.Action == "labeled" && s.cfg.Webhook.TriggerLabels[payload.Label.Name] != "")))
+	if payload.Issue.HTMLURL != "" && !strings.EqualFold(payload.Issue.HTMLURL, "https://github.com/"+repo+"/issues/"+strconv.Itoa(payload.Issue.Number)) {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	if !eligible || payload.Issue.IsPullRequest || payload.Issue.Number <= 0 || s.cfg.Repos[repo] == nil {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	if err := s.db.RecordDelivery(r.Context(), store.Delivery{ID: id, Event: event, Repo: repo, Issue: int64(payload.Issue.Number)}, s.pendingLimit()); err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	select {
+	case s.ingressWake <- struct{}{}:
+	default:
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+const (
+	// maxPendingDeliveries bounds unprocessed receipts; beyond it the receiver
+	// answers 503 without recording, and GitHub may redeliver later.
+	maxPendingDeliveries = 1000
+	// maxDeliveryAttempts abandons a hint that keeps failing; label and comment
+	// polling still recover the underlying state.
+	maxDeliveryAttempts = 10
+	// deliveryRetention is how long processed receipts stay deduplicated.
+	deliveryRetention = 14 * 24 * time.Hour
+	// ingressReconcileTimeout bounds one coalesced issue reconcile so a slow
+	// GitHub response cannot stall the maintenance loop.
+	ingressReconcileTimeout = 2 * time.Minute
+)
+
+func (s *Server) pendingLimit() int {
+	if s.maxPending > 0 {
+		return s.maxPending
+	}
+	return maxPendingDeliveries
+}
+
+type ingressGroup struct {
+	repo             string
+	issue            int64
+	ids              []string
+	comments, labels bool
+}
+
+// reconcileDeliveries coalesces pending hints per issue: any number of replayed
+// or bursty deliveries for one issue cost one current-state reconcile.
+func (s *Server) reconcileDeliveries(ctx context.Context) error {
+	s.ingressMu.Lock()
+	defer s.ingressMu.Unlock()
+	deliveries, err := s.db.PendingDeliveries(ctx)
+	if err != nil {
+		return err
+	}
+	type key struct {
+		repo  string
+		issue int64
+	}
+	index := make(map[key]*ingressGroup)
+	var groups []*ingressGroup
+	for _, d := range deliveries {
+		k := key{d.Repo, d.Issue}
+		g := index[k]
+		if g == nil {
+			g = &ingressGroup{repo: d.Repo, issue: d.Issue}
+			index[k] = g
+			groups = append(groups, g)
+		}
+		g.ids = append(g.ids, d.ID)
+		if d.Event == "issues" {
+			g.labels = true
+		} else {
+			g.comments = true
+		}
+	}
+	var errs []error
+	for _, g := range groups {
+		if ctx.Err() != nil {
+			return errors.Join(append(errs, ctx.Err())...)
+		}
+		work, cancel := context.WithTimeout(ctx, ingressReconcileTimeout)
+		err := s.runner.ReconcileIssue(work, g.repo, g.issue, g.comments, g.labels)
+		cancel()
+		if err != nil {
+			errs = append(errs, err)
+			if ctx.Err() != nil {
+				continue // shutdown is not a failed attempt
+			}
+			abandoned, failErr := s.db.FailDeliveries(ctx, g.ids, maxDeliveryAttempts)
+			if failErr != nil {
+				errs = append(errs, failErr)
+			}
+			if abandoned > 0 {
+				slog.Warn("abandoned webhook deliveries after repeated failures", "repo", g.repo, "issue", g.issue, "count", abandoned)
+			}
+			continue
+		}
+		if err := s.db.CompleteDeliveries(ctx, g.ids); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// pruneDeliveries forgets processed receipts after the retention window.
+func (s *Server) pruneDeliveries(ctx context.Context) error {
+	_, err := s.db.PruneDeliveries(ctx, time.Now().Add(-deliveryRetention))
+	return err
+}
+
+// logMaintenance reports a background failure without raw secrets.
+func (s *Server) logMaintenance(task string, err error) {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return
+	}
+	message := err.Error()
+	if s.redactor != nil {
+		message = s.redactor.Redact(message)
+	}
+	slog.Warn("maintenance task failed", "task", task, "error", message)
+}
+		if err := json.Unmarshal(raw, &cursor); err != nil || cursor.ID <= 0 || cursor.CreatedAt < 0 {
+			return filter, errors.New("invalid cursor")
+		}
+	}
+	return filter, nil
+}
+
+func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
+	filter, err := parseFilter(r.URL.Query())
+	if err != nil {
+		s.writeError(w, 400, "invalid_request", "invalid run filter or cursor")
+		return
+	}
+	page, err := s.db.ListRuns(r.Context(), filter)
+	if err != nil {
+		s.respondError(w, err)
+		return
+	}
+	for i := range page.Runs {
+		page.Runs[i] = publicRun(page.Runs[i])
+	}
+	s.writeJSON(w, 200, page)
+}
+
+func (s *Server) runID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		s.writeError(w, 400, "invalid_request", "run ID must be a positive integer")
+		return 0, false
+	}
+	if _, err := s.db.GetRun(r.Context(), id); err != nil {
+		s.respondError(w, err)
+		return 0, false
+	}
+	return id, true
+}
+
+func (s *Server) runDetail(w http.ResponseWriter, r *http.Request) {
+	if !s.method(w, r, http.MethodGet) {
+		return
+	}
+	id, ok := s.runID(w, r)
+	if !ok {
+		return
+	}
+	data, err := s.detailData(r.Context(), id)
+	if err != nil {
+		s.respondError(w, err)
+		return
+	}
+	s.writeJSON(w, 200, data)
+}
+
+// Both the API and the unauthenticated loopback shell use this read model.
+// Token-protected shells never load it; their browser must authenticate first.
+func (s *Server) detailData(ctx context.Context, id int64) (map[string]any, error) {
+	run, err := s.db.GetRun(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	specs, err := s.db.ListSpecs(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	approvals, err := s.db.ListApprovals(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	steps, err := s.db.ListSteps(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	artifacts, err := s.db.ListArtifacts(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	reviews, err := s.db.ListReviews(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	publicArtifacts := []store.ArtifactMetadata{}
+	for _, a := range artifacts {
+		if publicArtifact(a.Kind) {
+			publicArtifacts = append(publicArtifacts, a)
+		}
+	}
+	for _, a := range testArtifacts(steps) {
+		publicArtifacts = append(publicArtifacts, store.ArtifactMetadata{Kind: a.Kind, Attempt: a.Attempt, Bytes: int64(len(a.Content)), CreatedAt: a.CreatedAt})
+	}
+	// The detail endpoint returns step summaries, without transcripts.
+	for i := range steps {
+		steps[i].InputJSON = ""
+		steps[i].OutputText = ""
+	}
+	var latest *store.Spec
+	if len(specs) > 0 {
+		latest = &specs[len(specs)-1]
+	}
+	return map[string]any{"run": publicRun(run), "capabilities": s.runner.ActionCapabilities(run, latest), "latest_spec": latest, "spec_versions": specs, "approvals": approvals, "steps": steps, "artifacts": publicArtifacts, "reviews": reviews}, nil
+}
+
+func (s *Server) editSpec(w http.ResponseWriter, r *http.Request) {
+	if !s.method(w, r, http.MethodPut) {
+		return
+	}
+	id, ok := s.runID(w, r)
+	if !ok {
+		return
+	}
+	var draft tools.SpecDraft
+	if !s.decode(w, r, &draft, false) {
+		return
+	}
+	spec, err := s.runner.EditSpec(r.Context(), id, draft)
+	if err != nil {
+		s.respondError(w, err)
+		return
+	}
+	s.writeJSON(w, 200, map[string]any{"spec": spec})
+}
+
+func (s *Server) action(w http.ResponseWriter, r *http.Request) {
+	if !s.method(w, r, http.MethodPost) {
+		return
+	}
+	id, ok := s.runID(w, r)
+	if !ok {
+		return
+	}
+	action := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+	var err error
+	status := http.StatusOK
+	switch action {
+	case "revise":
+		var input struct {
+			Notes string `json:"notes"`
+		}
+		if !s.decode(w, r, &input, false) {
+			return
+		}
+		if strings.TrimSpace(input.Notes) == "" {
+			s.writeError(w, 400, "invalid_request", "revision notes are required")
+			return
+		}
+		err = s.runner.Revise(r.Context(), id, input.Notes)
+		status = http.StatusAccepted
+	case "retry":
+		var input struct {
+			Provider string `json:"provider"`
+			Model    string `json:"model"`
+		}
+		if !s.decode(w, r, &input, true) {
+			return
+		}
+		if !validModels(input.Model) || (input.Provider != "" && s.cfg.Providers[input.Provider] == nil) {
+			s.writeError(w, 400, "invalid_request", "invalid provider or model")
+			return
+		}
+		var run store.Run
+		run, err = s.runner.Retry(r.Context(), id, input.Provider, input.Model)
+		if err != nil {
+			s.respondError(w, err)
+			return
+		}
+		w.Header().Set("Location", fmt.Sprintf("/api/runs/%d", run.ID))
+		s.writeJSON(w, http.StatusAccepted, map[string]any{"run": publicRun(run)})
+		return
+	default:
+		var input struct{}
+		if !s.decode(w, r, &input, true) {
+			return
+		}
+		switch action {
+		case "approve":
+			err = s.runner.ApproveAndExecute(r.Context(), id, s.actor(r))
+			status = http.StatusAccepted
+		case "reject":
+			err = s.runner.Reject(r.Context(), id)
+		case "cancel":
+			err = s.runner.Cancel(r.Context(), id)
+			if err == nil {
+				s.manager.cancel(id)
+			}
+		}
+	}
+	if err != nil {
+		s.respondError(w, err)
+		return
+	}
+	run, err := s.db.GetRun(r.Context(), id)
+	if err != nil {
+		s.respondError(w, err)
+		return
+	}
+	s.writeJSON(w, status, map[string]any{"run": publicRun(run)})
+}
+
+func publicArtifact(name string) bool {
+	switch name {
+	case "diff", "baseline", "test_output", "review", "pr_title", "pr_body":
+		return true
+internal/runner/runner.go:120:	if err := cfg.Validate(); err != nil {
+internal/runner/runner.go:351:	latest, readErr := r.db.GetRun(context.WithoutCancel(ctx), id)
+internal/runner/lifecycle.go:322:	ctx, cancel := context.WithCancel(ctx)
+internal/runner/lifecycle.go:344:				beatCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+internal/runner/lifecycle.go:377:	cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+internal/runner/lifecycle.go:443:		err = errors.Join(err, r.action(context.WithoutCancel(ctx), run.ID, "retry", r.actorFor(ctx), r.actionChannel(), map[string]int64{"retry_of": id}))
+internal/config/load.go:330:	for _, key := range md.Undecoded() {
+internal/server/access.go:73:	return s.cfg.Approval.LocalActor
+internal/server/manager.go:94:	workCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+internal/server/manager.go:226:					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+internal/server/fixture_test.go:179:		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+internal/server/webhook_test.go:88:	if err := f.server.Shutdown(context.Background()); err != nil {
+internal/server/findings_m13_test.go:253:	ctx, cancel := context.WithCancel(t.Context())
+internal/server/lifecycle_test.go:43:	parent, cancel := context.WithCancel(t.Context())
+internal/server/lifecycle_test.go:134:		ctx, stop := context.WithTimeout(context.Background(), time.Second)
+internal/server/lifecycle_test.go:168:	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+internal/server/lifecycle_test.go:287:	ctx, cancel := context.WithCancel(t.Context())
+internal/server/lifecycle_test.go:343:	parent, cancel := context.WithCancel(ctx)
+internal/server/json.go:22:	decoder.DisallowUnknownFields()
+internal/server/json.go:34:		strict.DisallowUnknownFields()
+internal/server/api_test.go:218:func TestCancelStopsBackgroundWork(t *testing.T) {
+internal/server/server.go:192:	maintenanceCtx, stop := context.WithCancel(context.Background())
+internal/server/server.go:265:			cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), s.opts.ShutdownTimeout)
+internal/server/server.go:284:	cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), s.opts.ShutdownTimeout)
+internal/server/server.go:300:		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), s.opts.ShutdownTimeout)
+	mod := func(f func(map[string]any)) string {
+		c := claimsAt(now)
+		f(c)
+		return sign(t, key, rs("k1"), c)
+	}
+	hmacTok := func() string {
+		h, _ := json.Marshal(map[string]any{"alg": "HS256", "kid": "k1"})
+		c, _ := json.Marshal(claimsAt(now))
+		in := b64(h) + "." + b64(c)
+		m := hmac.New(sha256.New, []byte("secret"))
+		m.Write([]byte(in))
+		return in + "." + b64(m.Sum(nil))
+	}()
+	noneH, _ := json.Marshal(map[string]any{"alg": "none", "kid": "k1"})
+	noneC, _ := json.Marshal(claimsAt(now))
+	cases := map[string]string{
+		"empty":         "",
+		"garbage":       "a.b",
+		"bad signature": sign(t, other, rs("k1"), claimsAt(now)),
+		"wrong aud":     mod(func(c map[string]any) { c["aud"] = []string{"other"} }),
+		"wrong iss":     mod(func(c map[string]any) { c["iss"] = "https://evil.cloudflareaccess.com" }),
+		"expired":       mod(func(c map[string]any) { c["exp"] = now.Add(-2 * time.Minute).Unix() }),
+		"not yet valid": mod(func(c map[string]any) { c["nbf"] = now.Add(5 * time.Minute).Unix() }),
+		"future iat":    mod(func(c map[string]any) { c["iat"] = now.Add(5 * time.Minute).Unix() }),
+		"no exp":        mod(func(c map[string]any) { delete(c, "exp") }),
+		"no email":      mod(func(c map[string]any) { delete(c, "email") }),
+		"alg none":      b64(noneH) + "." + b64(noneC) + ".",
+		"alg HS256":     hmacTok,
+		"unknown kid":   sign(t, key, rs("zzz"), claimsAt(now)),
+		"missing kid":   sign(t, key, map[string]any{"alg": "RS256"}, claimsAt(now)),
+	}
+	for name, token := range cases {
+		if _, err := v.Verify(t.Context(), token); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: err %v, want ErrInvalid", name, err)
+		}
+	}
+	if _, err := v.Verify(t.Context(), mod(func(c map[string]any) { c["email"] = "intruder@example.com" })); !errors.Is(err, ErrNotAllowed) {
+		t.Errorf("email not allowed: %v", err)
+	}
+}
+
+func TestSkewAllowsSmallDrift(t *testing.T) {
+	v, _, clk, key := setup(t)
+	c := claimsAt(clk.now())
+	c["nbf"] = clk.now().Add(30 * time.Second).Unix()
+	c["exp"] = clk.now().Add(-30 * time.Second).Unix()
+	if _, err := v.Verify(t.Context(), sign(t, key, rs("k1"), c)); err != nil {
+		t.Fatalf("30s drift must be tolerated: %v", err)
+	}
+}
+
+func TestUnknownKidRefetchesAtMostOncePerMinute(t *testing.T) {
+	v, srv, clk, key := setup(t)
+	if _, err := v.Verify(t.Context(), sign(t, key, rs("k1"), claimsAt(clk.now()))); err != nil {
+		t.Fatal(err)
+	}
+	if srv.fetch.Load() != 1 {
+		t.Fatalf("fetches %d", srv.fetch.Load())
+	}
+	bad := sign(t, key, rs("nope"), claimsAt(clk.now()))
+	clk.add(2 * time.Minute)
+	for range 5 {
+		_, _ = v.Verify(t.Context(), bad)
+	}
+	if srv.fetch.Load() != 2 {
+		t.Fatalf("unknown kid must refetch exactly once within a minute, fetches %d", srv.fetch.Load())
+	}
+	clk.add(61 * time.Second)
+	_, _ = v.Verify(t.Context(), bad)
+	if srv.fetch.Load() != 3 {
+		t.Fatalf("expected a refetch after the minute, fetches %d", srv.fetch.Load())
+	}
+}
+
+func TestKeyRotation(t *testing.T) {
+	v, srv, clk, key := setup(t)
+	if _, err := v.Verify(t.Context(), sign(t, key, rs("k1"), claimsAt(clk.now()))); err != nil {
+		t.Fatal(err)
+	}
+	fresh := newKey(t)
+	srv.set(map[string]*rsa.PrivateKey{"k2": fresh})
+	clk.add(2 * time.Minute)
+	if _, err := v.Verify(t.Context(), sign(t, fresh, rs("k2"), claimsAt(clk.now()))); err != nil {
+		t.Fatalf("rotated key rejected: %v", err)
+	}
+	// The retired key no longer verifies once the cache has been replaced.
+
+codex
+The JWKS cache has no expiry for known keys, so a retired key can remain trusted indefinitely. I’m checking the fetch failure path for a separate availability issue; the route checks and actor context propagation haven’t shown a bypass.
+exec
+/bin/zsh -lc "sed -n '105,175p' internal/server/server.go; sed -n '300,345p' internal/config/load.go; sed -n '1,110p' internal/cli/serve.go; rg -n 'webhook.path|Webhook.Path|Auth.Mode|ReadHeaderTimeout' internal/config internal/server/server.go internal/cli/doctor.go; sed -n '225,280p' internal/cfaccess/cfaccess_test.go; rg --files -g '*AGENTS*' -g 'go.mod'" in /Users/pappumishra/Documents/selfproject/patchbot-m23-login
+ succeeded in 0ms:
+func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) (*Server, error) {
+	if cfg == nil || db == nil {
+		return nil, errors.New("server requires configuration and storage")
+	}
+	if !opts.Token.IsSet() {
+		opts.Token = secret.New(os.Getenv("PATCHBOT_UI_TOKEN"))
+	}
+	if cfg.Server.Auth.Mode == config.AuthCloudflareAccess {
+		// Access replaces the bearer token; the token is ignored in this mode.
+		opts.Token = secret.Secret{}
+		if opts.Access == nil {
+			a := cfg.Server.Auth
+			var err error
+			opts.Access, err = cfaccess.New(cfaccess.Config{TeamDomain: a.TeamDomain, Audience: a.Audience, AllowedEmails: a.AllowedEmails})
+			if err != nil {
+				return nil, errors.New("invalid cloudflare_access configuration")
+			}
+		}
+	}
+	if err := ValidateAddress(cfg.Server.Addr, s0(opts, cfg)); err != nil {
+		return nil, err
+	}
+	if opts.ShutdownTimeout <= 0 {
+		opts.ShutdownTimeout = 30 * time.Second
+	}
+	if opts.HeartbeatInterval <= 0 {
+		opts.HeartbeatInterval = 15 * time.Second
+	}
+	if opts.StreamWriteTimeout <= 0 {
+		opts.StreamWriteTimeout = 5 * time.Second
+	}
+	if opts.PollInterval <= 0 {
+		opts.PollInterval = time.Second
+	}
+	if opts.SyncInterval <= 0 {
+		opts.SyncInterval = 60 * time.Second
+	}
+	if opts.Runner.Constructors == nil {
+		opts.Runner.Constructors = providers.Constructors(providers.Options{})
+	}
+	s := &Server{cfg: cfg, db: db, opts: opts, addr: cfg.Server.Addr, manager: newManager(cfg.Server.MaxConcurrentRuns, cfg.Server.MaxQueuedRuns), redactor: cfg.Redactor(), done: make(chan struct{}), maintenanceDone: make(chan struct{})}
+	s.authenticated = opts.Token.IsSet()
+	s.access = opts.Access
+	s.tokenHash = sha256.Sum256([]byte(opts.Token.Reveal()))
+	s.redactor.AddExact(opts.Token.Reveal())
+	s.redactor.AddSecrets(secret.New(os.Getenv("GITHUB_TOKEN")))
+	if opts.Runner.Tokens != nil {
+		if value, err := opts.Runner.Tokens.Token(ctx); err == nil {
+			s.redactor.AddExact(value)
+		}
+	}
+	if source, ok := db.(interface {
+		SubscribeEvents(func(store.Event)) func()
+	}); ok {
+		s.unsubscribe = source.SubscribeEvents(func(event store.Event) { s.bus.publish(event.RunID) })
+	}
+	opts.Runner.Dispatch = s.manager.submit
+	opts.Runner.Admit = s.manager.reserve
+	opts.Runner.ActionChannel = "ui"
+	s.redactor.Extend(opts.Runner.Redactor)
+	opts.Runner.Redactor = s.redactor
+	var err error
+	s.runner, err = runner.New(ctx, cfg, db, opts.Runner)
+	if err != nil {
+		if s.unsubscribe != nil {
+			s.unsubscribe()
+		}
+		return nil, errors.New("could not initialize runner")
+	}
+	configs, err := cfg.LLMProviders()
+	if err != nil {
+	case strings.HasPrefix(msg, "invalid duration"):
+		kind = `want a duration string such as "30m"`
+	case msg == "want a date like 2026-01-31":
+		kind = "want a date like 2026-01-31"
+	case strings.Contains(msg, "is out of range"), strings.Contains(msg, "is out of the safe"):
+		kind = "a number is out of range"
+	case strings.HasPrefix(msg, "expected value but found"):
+		kind = "expected a value; text needs quotes"
+	case strings.HasPrefix(msg, "incompatible types:"), strings.HasPrefix(msg, "type mismatch"):
+		kind = "incompatible types"
+	}
+	if line > 0 {
+		return fmt.Sprintf("line %d: %s", line, kind)
+	}
+	return kind
+}
+
+// checkKeys rejects keys that look like secrets and keys the schema does not
+// have. The secret check comes first because its message says what to do.
+func checkKeys(md toml.MetaData) error {
+	var errs []error
+	seen := map[string]bool{}
+	for _, key := range md.Keys() {
+		if name, ok := secretLookingSegment(key); ok && !covered(seen, key) {
+			seen[key.String()] = true
+			errs = append(errs, fmt.Errorf(
+				"key %s: %q looks like a secret; secrets are read only from environment variables, "+
+					"so name the variable with api_key_env and remove the value from the file", key, name))
+		}
+	}
+	for _, key := range md.Undecoded() {
+		if covered(seen, key) {
+			continue
+		}
+		errs = append(errs, fmt.Errorf("unknown key %s", key))
+	}
+	return errors.Join(errs...)
+}
+
+// covered reports whether key or one of its parents is already reported.
+func covered(seen map[string]bool, key toml.Key) bool {
+	for i := 1; i <= len(key); i++ {
+		if seen[key[:i].String()] {
+			return true
+		}
+	}
+package cli
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/llm/providers"
+	"github.com/aryanpappu/patchbot/internal/runner"
+	"github.com/aryanpappu/patchbot/internal/secret"
+	"github.com/aryanpappu/patchbot/internal/server"
+	"github.com/aryanpappu/patchbot/internal/store"
+)
+
+const serveUsage = `Usage: patchbot serve [--addr 127.0.0.1:8080] [--config FILE]
+
+Serve the web page, JSON API and event streams. Non-loopback addresses require
+PATCHBOT_UI_TOKEN. When set, enter it on the page; every API request requires
+that bearer token. Page shells and static assets contain no private data.
+`
+
+func (a *App) runServe(args []string) int {
+	flags := flag.NewFlagSet("patchbot serve", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	opts := a.Config
+	var addr string
+	flags.StringVar(&opts.Path, "config", opts.Path, "configuration file")
+	flags.StringVar(&addr, "addr", "", "listening address")
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			_, _ = fmt.Fprint(a.Stdout, serveUsage)
+			return 0
+		}
+		_, _ = fmt.Fprint(a.Stderr, serveUsage)
+		return 2
+	}
+	if flags.NArg() != 0 {
+		_, _ = fmt.Fprint(a.Stderr, serveUsage)
+		return 2
+	}
+	if addr != "" {
+		opts.Flags = append(append([]config.Override(nil), opts.Flags...), config.Override{Key: "server.addr", Value: addr, Flag: "--addr"})
+	}
+	lookup := opts.LookupEnv
+	if lookup == nil {
+		lookup = os.LookupEnv
+	}
+	uiToken, _ := lookup("PATCHBOT_UI_TOKEN")
+	githubToken, _ := lookup("GITHUB_TOKEN")
+	redactor := secret.NewRedactor(githubToken)
+	redactor.AddExact(uiToken)
+	cfg, err := a.loadConfig(opts)
+	if err != nil {
+		a.printProblems(redactor, err)
+		return 1
+	}
+	redactor.Extend(cfg.Redactor())
+	addrToken := secret.New(uiToken)
+	if cfg.Server.Auth.Mode == config.AuthCloudflareAccess {
+		addrToken = secret.New("cloudflare-access") // Access JWTs authenticate non-loopback binds
+	}
+	if err := server.ValidateAddress(cfg.Server.Addr, addrToken); err != nil {
+		a.printProblems(redactor, err)
+		return 1
+	}
+	if err := cfg.Validate(); err != nil {
+		a.printProblems(redactor, err)
+		return 1
+	}
+	if err := cfg.EnsureDataDir(); err != nil {
+		a.printProblems(redactor, errors.New("could not create data directory"))
+		return 1
+	}
+	parent := a.Context
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	db, err := store.Open(ctx, cfg.DatabasePath())
+	if err != nil {
+		a.printProblems(redactor, errors.New("could not open server storage"))
+		return 1
+	}
+	defer func() { _ = db.Close() }()
+	runnerOpts := a.RunnerOptions
+	fullRedactor := secret.NewRedactor()
+	fullRedactor.Extend(runnerOpts.Redactor)
+	fullRedactor.Extend(a.outputRedactor)
+	runnerOpts.Redactor = fullRedactor
+	if runnerOpts.Constructors == nil {
+		runnerOpts.Constructors = providers.Constructors(a.Providers)
+	}
+	if runnerOpts.Tokens == nil {
+		runnerOpts.Tokens = runner.Token{Value: secret.New(githubToken)}
+	}
+	service, err := server.New(ctx, cfg, db, server.Options{Token: secret.New(uiToken), Runner: runnerOpts})
+	if err != nil {
+		a.printProblems(redactor, err)
+		return 1
+	}
+	err = service.ListenAndServe(ctx)
+	if err != nil {
+		a.printProblems(redactor, errors.New("server stopped with an error"))
+internal/server/server.go:98:	if cfg.Server.Auth.Mode == config.AuthCloudflareAccess {
+internal/server/server.go:112:	if cfg.Server.Auth.Mode == config.AuthCloudflareAccess {
+internal/server/server.go:190:	s.http = &http.Server{Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, ErrorLog: log.New(io.Discard, "", 0)}
+internal/server/server.go:342:	if s.cfg.Webhook.Enabled && r.URL.Path == s.cfg.Webhook.Path {
+internal/config/webhook_test.go:29:	if !cfg.Webhook.Enabled || cfg.Webhook.Path != "/custom-hook" || cfg.Webhook.TriggerLabels["custom"] != "refine" || len(cfg.Webhook.TriggerLabels) != 1 || !cfg.Webhook.Secret.IsSet() {
+internal/config/access_test.go:21:	if got := loadString(t, validBase, nil).Server.Auth.Mode; got != "token" {
+internal/config/validate.go:49:	v.check(strings.HasPrefix(w.Path, "/") && w.Path != "/" && path.Clean(w.Path) == w.Path && !strings.ContainsAny(w.Path, "{} ?#\\"), "webhook.path: must be a clean literal path starting with /")
+internal/config/validate.go:402:	if host, _, err := net.SplitHostPort(c.Server.Addr); err == nil && !isLoopback(host) && c.Server.Auth.Mode != AuthCloudflareAccess {
+	v, srv, clk, key := setup(t)
+	if _, err := v.Verify(t.Context(), sign(t, key, rs("k1"), claimsAt(clk.now()))); err != nil {
+		t.Fatal(err)
+	}
+	fresh := newKey(t)
+	srv.set(map[string]*rsa.PrivateKey{"k2": fresh})
+	clk.add(2 * time.Minute)
+	if _, err := v.Verify(t.Context(), sign(t, fresh, rs("k2"), claimsAt(clk.now()))); err != nil {
+		t.Fatalf("rotated key rejected: %v", err)
+	}
+	// The retired key no longer verifies once the cache has been replaced.
+	if _, err := v.Verify(t.Context(), sign(t, key, rs("k1"), claimsAt(clk.now()))); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("retired key accepted: %v", err)
+	}
+}
+
+func TestJWKSFailures(t *testing.T) {
+	for name, handler := range map[string]http.HandlerFunc{
+		"status":   func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "no", 500) },
+		"not json": func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("<html>")) },
+		"no keys": func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"keys":[{"kty":"EC","kid":"x"}]}`))
+		},
+		"too big": func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(strings.Repeat(" ", maxJWKSBytes+10)))
+		},
+		"redirect": func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "http://127.0.0.1:1/", http.StatusFound)
+		},
+	} {
+		srv := httptest.NewServer(handler)
+		v, err := New(Config{TeamDomain: team, Audience: aud, AllowedEmails: []string{"a@b.co"}, CertsURL: srv.URL})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := v.Check(context.Background()); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+		srv.Close()
+	}
+}
+
+func TestCheckCountsKeys(t *testing.T) {
+	v, _, _, _ := setup(t)
+	if n, err := v.Check(t.Context()); err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+}
+go.mod
+
+codex
+- **Medium — [internal/cfaccess/cfaccess.go:179](/Users/pappumishra/Documents/selfproject/patchbot-m23-login/internal/cfaccess/cfaccess.go:179): Cached signing keys never expire.** Requests with a known `kid` never refresh JWKS, so removing that key upstream does not revoke trust until another unknown key triggers a successful refresh or the process restarts. Tokens signed with a compromised, retired key remain accepted, including forged allowed-email claims. **Fix:** enforce a bounded cache lifetime even for known keys, refresh periodically, and reject keys beyond a defined maximum stale age.
+
+- **Medium — [internal/cfaccess/cfaccess.go:191](/Users/pappumishra/Documents/selfproject/patchbot-m23-login/internal/cfaccess/cfaccess.go:191): Unauthenticated clients can poison the JWKS refresh cooldown.** On a cold cache, a forged RS256 token with any `kid` starts a fetch using the attacker's request context. Disconnecting cancels that fetch, but `lastFetch` already blocks every retry for one minute, denying legitimate logins. Repeating at retry boundaries can prolong the outage where the listener is directly reachable. **Fix:** run shared fetches under an independent bounded context; distinguish successful refresh throttling from failed-fetch backoff so client cancellation cannot consume the refresh window.
+tokens used
+37,681
+- **Medium — [internal/cfaccess/cfaccess.go:179](/Users/pappumishra/Documents/selfproject/patchbot-m23-login/internal/cfaccess/cfaccess.go:179): Cached signing keys never expire.** Requests with a known `kid` never refresh JWKS, so removing that key upstream does not revoke trust until another unknown key triggers a successful refresh or the process restarts. Tokens signed with a compromised, retired key remain accepted, including forged allowed-email claims. **Fix:** enforce a bounded cache lifetime even for known keys, refresh periodically, and reject keys beyond a defined maximum stale age.
+
+- **Medium — [internal/cfaccess/cfaccess.go:191](/Users/pappumishra/Documents/selfproject/patchbot-m23-login/internal/cfaccess/cfaccess.go:191): Unauthenticated clients can poison the JWKS refresh cooldown.** On a cold cache, a forged RS256 token with any `kid` starts a fetch using the attacker's request context. Disconnecting cancels that fetch, but `lastFetch` already blocks every retry for one minute, denying legitimate logins. Repeating at retry boundaries can prolong the outage where the listener is directly reachable. **Fix:** run shared fetches under an independent bounded context; distinguish successful refresh throttling from failed-fetch backoff so client cancellation cannot consume the refresh window.

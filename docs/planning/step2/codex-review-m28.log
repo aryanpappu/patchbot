@@ -1,0 +1,2570 @@
+Reading additional input from stdin...
+OpenAI Codex v0.166.0
+--------
+workdir: /Users/pappumishra/Documents/selfproject/patchbot-m28-connect-github
+model: gpt-6.1-sol
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: none
+reasoning summaries: none
+session id: 01a1d981-0b5c-7061-b5ec-cb57386b4ced
+--------
+user
+Review branch m28-connect-github vs development (git diff development...HEAD): GitHub App manifest 'Connect GitHub' flow for patchbot. Focus: OAuth-style state CSRF/replay/fixation, an attacker registering their own App into patchbot (callback without bearer), code exchange SSRF/leaks, PEM file write races/symlinks/permissions, secrets in logs/db/responses, fail-closed when not connected, CSP relaxation, migration correctness. Report only real findings: file:line, severity, scenario, fix. Concise.
+codex
+I’ll review the diff against `development` and trace the connection flow for exploitable issues in the areas you listed.
+exec
+/bin/zsh -lc 'git diff --stat development...HEAD; git status --short' in /Users/pappumishra/Documents/selfproject/patchbot-m28-connect-github
+ succeeded in 38ms:
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-ubuw5Fvr' (errno=Operation not permitted)
+ CHANGELOG.md                                    |   5 +
+ README.md                                       |  55 +++
+ SECURITY.md                                     |  20 +
+ docs/ARCHITECTURE.md                            |   1 +
+ docs/DECISIONS.md                               |   1 +
+ docs/M28-REPORT.md                              | 101 +++++
+ internal/cli/doctor.go                          |  15 +-
+ internal/cli/doctor_setup_test.go               |  74 ++++
+ internal/config/config.go                       |   7 +
+ internal/config/defaults.toml                   |   2 +
+ internal/config/github_test.go                  |  11 +-
+ internal/config/validate.go                     |  21 +-
+ internal/github/setup.go                        | 279 +++++++++++++
+ internal/github/setup_test.go                   | 159 ++++++++
+ internal/runner/auth.go                         |  29 ++
+ internal/runner/runner.go                       |   5 +
+ internal/server/api.go                          |   5 +
+ internal/server/githubsetup.go                  | 323 +++++++++++++++
+ internal/server/githubsetup_test.go             | 498 ++++++++++++++++++++++++
+ internal/server/json.go                         |   2 +
+ internal/server/server.go                       |   9 +-
+ internal/store/githubapp.go                     |  76 ++++
+ internal/store/githubapp_test.go                |  30 ++
+ internal/store/migrations/0008_reserved_m23.sql |   2 +
+ internal/store/migrations/0009_github_app.sql   |  12 +
+ internal/store/store.go                         |   5 +
+ internal/web/assets/setup.js                    |  76 ++++
+ internal/web/web.go                             |   4 +-
+ patchbot.example.toml                           |   7 +
+ 29 files changed, 1827 insertions(+), 7 deletions(-)
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-3fENWYsK' (errno=Operation not permitted)
+
+exec
+/bin/zsh -lc "rg --files -g AGENTS.md -g '*github*' -g '*manifest*'" in /Users/pappumishra/Documents/selfproject/patchbot-m28-connect-github
+ succeeded in 0ms:
+internal/store/githubapp.go
+internal/store/migrations/0009_github_app.sql
+internal/store/githubapp_test.go
+internal/server/githubsetup_test.go
+internal/server/githubsetup.go
+internal/config/github_test.go
+
+exec
+/bin/zsh -lc 'git diff development...HEAD -- internal/server/githubsetup.go internal/github/setup.go internal/store/githubapp.go internal/runner/auth.go internal/server/server.go internal/web/web.go internal/store/migrations internal/config/validate.go' in /Users/pappumishra/Documents/selfproject/patchbot-m28-connect-github
+ succeeded in 0ms:
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-4bvx5Tgj' (errno=Operation not permitted)
+diff --git a/internal/config/validate.go b/internal/config/validate.go
+index b882f5e..82937e9 100644
+--- a/internal/config/validate.go
++++ b/internal/config/validate.go
+@@ -69,10 +69,12 @@ func (c *Config) validateGitHub(v *validator) {
+ 		v.addf(`github.auth: must be "pat" or "app"`)
+ 		return
+ 	}
++	v.validateSetup(g)
+ 	if !g.App() {
+ 		return
+ 	}
+-	v.check(g.AppID > 0, "github.app_id: app mode requires the numeric GitHub App ID")
++	// app_id 0 is setup mode: the ID is read from the database after "Connect GitHub".
++	v.check(g.AppID >= 0, "github.app_id: must be the numeric GitHub App ID, or 0 until GitHub is connected from the dashboard")
+ 	v.check(g.InstallationID >= 0, "github.installation_id: must be 0 (resolve per repository) or a positive ID")
+ 	keyPath := g.PrivateKeyFile
+ 	if keyPath == "" || !filepath.IsAbs(keyPath) || filepath.Clean(keyPath) != keyPath || strings.ContainsRune(keyPath, 0) {
+@@ -86,6 +88,23 @@ func (c *Config) validateGitHub(v *validator) {
+ 	}
+ }
+ 
++var setupAppNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 _-]{0,33}$`)
++
++// validateSetup checks the optional "Connect GitHub" settings.
++func (v *validator) validateSetup(g GitHub) {
++	if g.SetupAppName != "" {
++		v.check(setupAppNameRE.MatchString(g.SetupAppName), "github.setup_app_name: use 1-34 letters, digits, spaces, '-' or '_'")
++	}
++	if g.SetupPublicURL == "" {
++		return
++	}
++	u, err := url.Parse(g.SetupPublicURL)
++	loopback := err == nil && (u.Hostname() == "localhost" || net.ParseIP(u.Hostname()).IsLoopback())
++	ok := err == nil && u.Host != "" && u.User == nil && u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" && u.Opaque == "" &&
++		(u.Path == "" || u.Path == "/") && (u.Scheme == "https" || (u.Scheme == "http" && loopback))
++	v.check(ok, "github.setup_public_url: must be an origin such as https://patchbot.example.org (http only for localhost), without path, query or credentials")
++}
++
+ type validator struct {
+ 	errs     []error
+ 	redactor *secret.Redactor
+diff --git a/internal/github/setup.go b/internal/github/setup.go
+new file mode 100644
+index 0000000..364cbd6
+--- /dev/null
++++ b/internal/github/setup.go
+@@ -0,0 +1,279 @@
++package github
++
++import (
++	"context"
++	"crypto/rand"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"net/http"
++	"net/url"
++	"os"
++	"path/filepath"
++	"regexp"
++	"strings"
++	"time"
++
++	"github.com/aryanpappu/patchbot/internal/version"
++)
++
++const (
++	// maxConversionBody bounds the manifest conversion response (a PEM key and a
++	// few short fields are well under 16 KiB).
++	maxConversionBody = 64 << 10
++	// conversionTimeout bounds the one-time code exchange.
++	conversionTimeout = 20 * time.Second
++	// SetupNewAppURL is where the browser posts the manifest.
++	SetupNewAppURL = "https://github.com/settings/apps/new"
++)
++
++var manifestCodeRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
++
++// Manifest is the GitHub App manifest patchbot registers. Only the fields
++// patchbot needs are present: no webhook (inactive), no events, private, and
++// exactly the run permissions.
++type Manifest struct {
++	Name               string            `json:"name"`
++	URL                string            `json:"url"`
++	HookAttributes     ManifestHook      `json:"hook_attributes"`
++	RedirectURL        string            `json:"redirect_url"`
++	Public             bool              `json:"public"`
++	DefaultPermissions map[string]string `json:"default_permissions"`
++}
++
++// ManifestHook is the inactive webhook declaration GitHub requires to carry a URL.
++type ManifestHook struct {
++	URL    string `json:"url"`
++	Active bool   `json:"active"`
++}
++
++// CallbackPath is the redirect target GitHub returns the one-time code to.
++const CallbackPath = "/setup/github/callback"
++
++// NewManifest builds the manifest for publicURL (an origin without a path).
++func NewManifest(publicURL, name string) Manifest {
++	origin := strings.TrimRight(publicURL, "/")
++	perms := make(map[string]string, len(RunPermissions))
++	for k, v := range RunPermissions {
++		perms[k] = v
++	}
++	return Manifest{
++		Name:               name,
++		URL:                origin,
++		HookAttributes:     ManifestHook{URL: origin + "/hooks/github", Active: false},
++		RedirectURL:        origin + CallbackPath,
++		Public:             false,
++		DefaultPermissions: perms,
++	}
++}
++
++// RandomAppName returns "patchbot-" followed by six random lowercase letters
++// and digits. App names are unique across GitHub, so a fixed name would collide.
++func RandomAppName() (string, error) {
++	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
++	b := make([]byte, 6)
++	if _, err := rand.Read(b); err != nil {
++		return "", errors.New("cannot read random bytes")
++	}
++	for i := range b {
++		b[i] = alphabet[int(b[i])%len(alphabet)]
++	}
++	return "patchbot-" + string(b), nil
++}
++
++// Conversion is the part of the manifest conversion response patchbot keeps.
++// The response also carries client_id, client_secret and webhook_secret; they
++// are never decoded, so they never leave the response buffer.
++type Conversion struct {
++	ID   int64
++	Slug string
++	PEM  []byte
++}
++
++// ConvertManifest exchanges the one-time code for the new App's credentials:
++// POST {baseURL}/app-manifests/{code}/conversions. The body is bounded, the
++// call has a deadline, redirects are refused, and neither the response nor the
++// code is ever included in an error.
++func ConvertManifest(ctx context.Context, httpClient *http.Client, baseURL, code string) (Conversion, error) {
++	if !manifestCodeRE.MatchString(code) {
++		return Conversion{}, errors.New("GitHub setup: invalid code")
++	}
++	if baseURL == "" {
++		baseURL = defaultBaseURL
++	}
++	base, err := url.Parse(baseURL)
++	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" || base.User != nil {
++		return Conversion{}, errors.New("GitHub setup: invalid API base URL")
++	}
++	target := *base
++	target.Path = strings.TrimRight(base.Path, "/") + "/app-manifests/" + code + "/conversions"
++	target.RawQuery = ""
++	ctx, cancel := context.WithTimeout(ctx, conversionTimeout)
++	defer cancel()
++	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), nil)
++	if err != nil {
++		return Conversion{}, errors.New("GitHub setup: cannot build the request")
++	}
++	req.Header.Set("Accept", "application/vnd.github+json")
++	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
++	req.Header.Set("User-Agent", "patchbot/"+version.Version)
++	client := http.Client{}
++	if httpClient != nil {
++		client = *httpClient
++	}
++	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
++	resp, err := client.Do(req)
++	if err != nil {
++		if ctx.Err() != nil {
++			return Conversion{}, errors.New("GitHub setup: the code exchange timed out")
++		}
++		return Conversion{}, errors.New("GitHub setup: the code exchange request failed")
++	}
++	defer func() { _ = resp.Body.Close() }()
++	data, err := io.ReadAll(io.LimitReader(resp.Body, maxConversionBody+1))
++	defer clear(data)
++	if err != nil || len(data) > maxConversionBody {
++		return Conversion{}, errors.New("GitHub setup: unreadable or oversized response")
++	}
++	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
++		return Conversion{}, fmt.Errorf("GitHub setup: GitHub refused the code exchange (HTTP %d); the code is single-use and expires after one hour", resp.StatusCode)
++	}
++	var out struct {
++		ID   int64  `json:"id"`
++		Slug string `json:"slug"`
++		PEM  string `json:"pem"`
++	}
++	if err := json.Unmarshal(data, &out); err != nil {
++		return Conversion{}, errors.New("GitHub setup: invalid response")
++	}
++	if out.ID <= 0 || !validSlug(out.Slug) || len(out.Slug) > 100 {
++		return Conversion{}, errors.New("GitHub setup: response lacks a valid App ID or slug")
++	}
++	pemBytes := []byte(out.PEM)
++	if key, err := ParseAppPrivateKey(pemBytes); err != nil || key == nil {
++		clear(pemBytes)
++		return Conversion{}, errors.New("GitHub setup: response lacks a usable private key")
++	}
++	return Conversion{ID: out.ID, Slug: out.Slug, PEM: pemBytes}, nil
++}
++
++// WriteNewKeyFile atomically creates path with mode 0600 holding pem, owned by
++// the current (service) user. It refuses to touch an existing file, symlink or
++// dangling link, and it never creates the parent directory: the operator
++// provisions it. The key is written to an exclusive temp file in the same
++// directory, synced, then hard-linked into place (link fails if path exists),
++// so a reader never sees a partial key and an existing key is never replaced.
++func WriteNewKeyFile(path string, pem []byte, excludedRoots ...string) error {
++	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsRune(path, 0) {
++		return errors.New("private_key_file: must be a clean absolute path")
++	}
++	if _, err := os.Lstat(path); err == nil {
++		return ErrKeyFileExists
++	} else if !errors.Is(err, os.ErrNotExist) {
++		return errors.New("private_key_file: cannot inspect the path")
++	}
++	dir := filepath.Dir(path)
++	info, err := os.Stat(dir)
++	if err != nil || !info.IsDir() {
++		return errors.New("private_key_file: its directory must already exist and be owned by the service user")
++	}
++	if _, err := ParseAppPrivateKey(pem); err != nil {
++		return err
++	}
++	tmp, err := os.CreateTemp(dir, ".patchbot-key-*")
++	if err != nil {
++		return errors.New("private_key_file: cannot create a file in its directory")
++	}
++	tmpName := tmp.Name()
++	defer func() { _ = os.Remove(tmpName) }()
++	fail := func(msg string) error { _ = tmp.Close(); return errors.New("private_key_file: " + msg) }
++	if err := tmp.Chmod(0o600); err != nil {
++		return fail("cannot set mode 0600")
++	}
++	if _, err := tmp.Write(pem); err != nil {
++		return fail("cannot write")
++	}
++	if err := tmp.Sync(); err != nil {
++		return fail("cannot sync")
++	}
++	if err := tmp.Close(); err != nil {
++		return errors.New("private_key_file: cannot close")
++	}
++	if err := os.Link(tmpName, path); err != nil {
++		if errors.Is(err, os.ErrExist) {
++			return ErrKeyFileExists
++		}
++		return errors.New("private_key_file: cannot move the key into place")
++	}
++	if err := CheckAppKeyFile(path, excludedRoots...); err != nil {
++		_ = os.Remove(path)
++		return err
++	}
++	return nil
++}
++
++// ErrKeyFileExists means the key path is already occupied; setup never overwrites it.
++var ErrKeyFileExists = errors.New("private_key_file: already exists; refusing to overwrite")
++
++// AppInstallation is one account the App is installed on.
++type AppInstallation struct {
++	ID                  int64  `json:"id"`
++	Account             string `json:"account"`
++	RepositorySelection string `json:"repository_selection"`
++}
++
++// Installations lists the App's installations with GET /app/installations,
++// authenticated by a JWT. Repositories are not listed: that needs an
++// installation token, which patchbot mints only per run and repository.
++func (a *App) Installations(ctx context.Context) ([]AppInstallation, error) {
++	target := *a.jwtClient.baseURL
++	target.Path = strings.TrimRight(target.Path, "/") + "/app/installations"
++	target.RawPath = ""
++	target.RawQuery = "per_page=100"
++	var raw []struct {
++		ID      int64 `json:"id"`
++		Account struct {
++			Login string `json:"login"`
++		} `json:"account"`
++		RepositorySelection string `json:"repository_selection"`
++	}
++	err := a.retry(ctx, func() error {
++		_, err := a.jwtClient.request(ctx, nil, http.MethodGet, &target, nil, &raw, http.StatusOK)
++		return err
++	})
++	if err != nil {
++		return nil, err
++	}
++	out := make([]AppInstallation, 0, len(raw))
++	for _, item := range raw {
++		out = append(out, AppInstallation{ID: item.ID, Account: item.Account.Login, RepositorySelection: item.RepositorySelection})
++	}
++	return out, nil
++}
++
++// PreflightKeyFile checks, before the single-use code is spent, that a key can
++// be written to path: the path is free and its directory exists and accepts a
++// new file. Losing the key after the App was created would strand that App.
++func PreflightKeyFile(path string) error {
++	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsRune(path, 0) {
++		return errors.New("private_key_file: must be a clean absolute path")
++	}
++	if _, err := os.Lstat(path); err == nil {
++		return ErrKeyFileExists
++	} else if !errors.Is(err, os.ErrNotExist) {
++		return errors.New("private_key_file: cannot inspect the path")
++	}
++	dir := filepath.Dir(path)
++	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
++		return errors.New("private_key_file: its directory must already exist and be owned by the service user")
++	}
++	probe, err := os.CreateTemp(dir, ".patchbot-probe-*")
++	if err != nil {
++		return errors.New("private_key_file: its directory is not writable by the service user")
++	}
++	name := probe.Name()
++	_ = probe.Close()
++	_ = os.Remove(name)
++	return nil
++}
+diff --git a/internal/runner/auth.go b/internal/runner/auth.go
+index 996eace..d4d0a9c 100644
+--- a/internal/runner/auth.go
++++ b/internal/runner/auth.go
+@@ -19,6 +19,21 @@ import (
+ // author, and fails startup on any error: there is no fallback to a PAT.
+ func (r *Runner) setupGitHub(ctx context.Context) error {
+ 	opts := &r.opts
++	if opts.RepoTokens == nil && r.cfg.GitHub.App() && r.cfg.GitHub.AppID == 0 {
++		// Setup mode: the App ID comes from the "Connect GitHub" flow. Without
++		// one the server still starts, but every credential request fails closed
++		// (never a PAT) and new runs are refused with ErrGitHubNotConnected.
++		app, found, err := r.db.GitHubApp(ctx)
++		if err != nil {
++			return errors.New("could not read the connected GitHub App")
++		}
++		if found {
++			r.cfg.GitHub.AppID = app.AppID
++		} else {
++			r.notConnected = true
++			opts.RepoTokens = notConnectedTokens{}
++		}
++	}
+ 	if opts.RepoTokens == nil && r.cfg.GitHub.App() {
+ 		app, identity, err := NewGitHubApp(ctx, r.cfg, opts.GitHubAPI, opts.GitHubHTTP, r.registerToken)
+ 		if err != nil {
+@@ -54,6 +69,20 @@ func (r *Runner) setupGitHub(ctx context.Context) error {
+ 	return nil
+ }
+ 
++// ErrGitHubNotConnected refuses new runs until the Connect GitHub flow ran.
++var ErrGitHubNotConnected = errors.New("GitHub is not connected yet: open /setup/github in the dashboard and connect GitHub first")
++
++// notConnectedTokens fails every credential request in setup mode.
++type notConnectedTokens struct{}
++
++func (notConnectedTokens) RepoToken(context.Context, github.RepoRef) (string, error) {
++	return "", ErrGitHubNotConnected
++}
++
++// GitHubConnected reports whether the runner has GitHub credentials. It is
++// false only in app mode before the Connect GitHub flow created the App.
++func (r *Runner) GitHubConnected() bool { return !r.notConnected }
++
+ // registerToken masks a minted token, and its git header form, in every
+ // redactor that output can pass through: the runner's own and the caller's
+ // (CLI or server). It runs before the token is used anywhere.
+diff --git a/internal/server/githubsetup.go b/internal/server/githubsetup.go
+new file mode 100644
+index 0000000..ebf69e6
+--- /dev/null
++++ b/internal/server/githubsetup.go
+@@ -0,0 +1,323 @@
++package server
++
++import (
++	"context"
++	"crypto/rand"
++	"crypto/sha256"
++	"crypto/subtle"
++	"encoding/base64"
++	"encoding/json"
++	"errors"
++	"html/template"
++	"net/http"
++	"net/url"
++	"os"
++	"path/filepath"
++	"strconv"
++	"sync"
++	"time"
++
++	"github.com/aryanpappu/patchbot/internal/github"
++	"github.com/aryanpappu/patchbot/internal/store"
++)
++
++const (
++	setupStateTTL  = 10 * time.Minute
++	setupStateMax  = 16
++	setupCallback  = github.CallbackPath
++	statusTimeout  = 15 * time.Second
++	setupCSP       = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; form-action 'self' https://github.com; frame-ancestors 'none'; base-uri 'none'"
++	installBaseURL = "https://github.com/apps/"
++)
++
++// setupStates holds the one-time state values of in-flight Connect GitHub
++// attempts. Only SHA-256 digests are kept; take compares every digest in
++// constant time and removes a match, so a state works once.
++type setupStates struct {
++	mu      sync.Mutex
++	entries []setupState
++}
++
++type setupState struct {
++	digest  [32]byte
++	expires time.Time
++}
++
++var errSetupBusy = errors.New("too many setup attempts in progress; wait ten minutes")
++
++func (s *setupStates) issue(now time.Time) (string, error) {
++	raw := make([]byte, 32)
++	if _, err := rand.Read(raw); err != nil {
++		return "", errors.New("cannot read random bytes")
++	}
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	s.pruneLocked(now)
++	if len(s.entries) >= setupStateMax {
++		return "", errSetupBusy
++	}
++	s.entries = append(s.entries, setupState{sha256.Sum256(raw), now.Add(setupStateTTL)})
++	return base64.RawURLEncoding.EncodeToString(raw), nil
++}
++
++func (s *setupStates) pruneLocked(now time.Time) {
++	kept := s.entries[:0]
++	for _, e := range s.entries {
++		if now.Before(e.expires) {
++			kept = append(kept, e)
++		}
++	}
++	s.entries = kept
++}
++
++// take consumes state. It returns false for an unknown, reused, expired or
++// malformed value.
++func (s *setupStates) take(state string, now time.Time) bool {
++	raw, err := base64.RawURLEncoding.DecodeString(state)
++	if err != nil || len(raw) != 32 {
++		return false
++	}
++	digest := sha256.Sum256(raw)
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	s.pruneLocked(now)
++	match := -1
++	for i, e := range s.entries {
++		if subtle.ConstantTimeCompare(e.digest[:], digest[:]) == 1 {
++			match = i
++		}
++	}
++	if match < 0 {
++		return false
++	}
++	s.entries = append(s.entries[:match], s.entries[match+1:]...)
++	return true
++}
++
++func (s *Server) setupNow() time.Time {
++	if s.opts.Runner.Clock != nil {
++		return s.opts.Runner.Clock()
++	}
++	return time.Now()
++}
++
++// setupAvailability reports why the flow cannot run, or "" when it can.
++func (s *Server) setupAvailability(ctx context.Context) (reason string, connected bool) {
++	g := s.cfg.GitHub
++	if g.AppID > 0 {
++		return "GitHub is already connected (app_id is set in the configuration).", true
++	}
++	if _, found, err := s.db.GitHubApp(ctx); err != nil {
++		return "Could not read the stored GitHub App.", false
++	} else if found {
++		return "GitHub is already connected.", true
++	}
++	if g.PrivateKeyFile != "" {
++		if _, err := os.Lstat(g.PrivateKeyFile); err == nil {
++			return "A private key file already exists, so GitHub is treated as connected. Remove it deliberately to start over.", true
++		}
++	}
++	switch {
++	case !g.App():
++		return `Set [github] auth = "app" to use Connect GitHub.`, false
++	case g.PrivateKeyFile == "":
++		return "Set [github] private_key_file to the path where the key will be stored.", false
++	case g.SetupPublicURL == "":
++		return "Set [github] setup_public_url to this server's public origin.", false
++	}
++	return "", false
++}
++
++type setupPageData struct {
++	Title, Message   string
++	Connect          bool
++	Slug, InstallURL string
++	RestartHint      bool
++	AppID            int64
++}
++
++var setupTemplate = template.Must(template.New("setup").Parse(`<!doctype html>
++<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
++<title>patchbot · connect GitHub</title>
++<link rel="stylesheet" href="/assets/app.css">
++<script defer src="/assets/setup.js"></script></head>
++<body><header><a href="/runs">patchbot</a><nav aria-label="Main"><a href="/runs">Runs</a><a href="/runs/new">New run</a></nav></header>
++<main id="main"><h1>{{.Title}}</h1>
++{{with .Message}}<p role="status">{{.}}</p>{{end}}
++{{if .Connect}}<div class="panel"><p>patchbot asks GitHub to create a private App named in the manifest, with only contents, issues and pull requests (write) and metadata (read), and no webhook. GitHub shows you the request first; you confirm it there. The private key goes straight to this server and is never shown to you.</p>
++<button id="connect" type="button">Connect GitHub</button><p id="setup-status" role="status"></p><noscript><p>JavaScript is required for this page.</p></noscript></div>{{end}}
++{{if .Slug}}<div class="panel"><h2>Next: install the App</h2>
++<p>The App <strong>{{.Slug}}</strong> (ID {{.AppID}}) was created. Install it only on the repositories patchbot may work on:</p>
++<p><a href="{{.InstallURL}}" rel="noopener noreferrer">Install {{.Slug}} on chosen repositories</a></p>
++{{if .RestartHint}}<p class="warning">Restart patchbot (for example <code>systemctl restart patchbot</code>) so it starts using the new App. Until then new runs are refused.</p>{{end}}
++<button id="recheck" type="button">Re-check status</button><p id="recheck-status" role="status"></p></div>{{end}}
++</main></body></html>`))
++
++func (s *Server) setupPage(w http.ResponseWriter, status int, data setupPageData) {
++	w.Header().Set("Content-Security-Policy", setupCSP)
++	w.Header().Set("Content-Type", "text/html; charset=utf-8")
++	w.WriteHeader(status)
++	_ = setupTemplate.Execute(w, data)
++}
++
++// githubSetupPage serves GET /setup/github. It is a data-free shell, public
++// like the other shells: the manifest and state are only issued by the
++// authenticated POST /api/github/setup/start that its script calls.
++func (s *Server) githubSetupPage(w http.ResponseWriter, r *http.Request) {
++	if !s.method(w, r, http.MethodGet) {
++		return
++	}
++	if reason, _ := s.setupAvailability(r.Context()); reason != "" {
++		s.setupPage(w, http.StatusConflict, setupPageData{Title: "Connect GitHub is not available", Message: reason})
++		return
++	}
++	s.setupPage(w, http.StatusOK, setupPageData{Title: "Connect GitHub", Connect: true})
++}
++
++// githubSetupStart issues a state and the manifest. Bearer authentication and
++// the cross-origin check in ServeHTTP apply.
++func (s *Server) githubSetupStart(w http.ResponseWriter, r *http.Request) {
++	if !s.method(w, r, http.MethodPost) {
++		return
++	}
++	if reason, _ := s.setupAvailability(r.Context()); reason != "" {
++		s.writeError(w, http.StatusConflict, "setup_unavailable", reason)
++		return
++	}
++	if err := github.PreflightKeyFile(s.cfg.GitHub.PrivateKeyFile); err != nil {
++		s.writeError(w, http.StatusConflict, "key_file", err.Error())
++		return
++	}
++	name := s.cfg.GitHub.SetupAppName
++	if name == "" {
++		var err error
++		if name, err = github.RandomAppName(); err != nil {
++			s.writeError(w, http.StatusInternalServerError, "internal", "could not create an App name")
++			return
++		}
++	}
++	state, err := s.setup.issue(s.setupNow())
++	if err != nil {
++		if errors.Is(err, errSetupBusy) {
++			s.writeError(w, http.StatusTooManyRequests, "busy", err.Error())
++		} else {
++			s.writeError(w, http.StatusInternalServerError, "internal", "could not create a setup state")
++		}
++		return
++	}
++	manifest, err := json.Marshal(github.NewManifest(s.cfg.GitHub.SetupPublicURL, name))
++	if err != nil {
++		s.writeError(w, http.StatusInternalServerError, "internal", "could not encode the manifest")
++		return
++	}
++	s.writeJSON(w, http.StatusOK, map[string]string{
++		"action":   github.SetupNewAppURL + "?state=" + url.QueryEscape(state),
++		"manifest": string(manifest),
++	})
++}
++
++// githubSetupCallback serves GET /setup/github/callback. Browser navigation
++// from GitHub cannot carry the bearer token, so the single-use random state
++// issued by the authenticated start call is the credential here.
++func (s *Server) githubSetupCallback(w http.ResponseWriter, r *http.Request) {
++	if !s.method(w, r, http.MethodGet) {
++		return
++	}
++	s.setupMu.Lock()
++	defer s.setupMu.Unlock()
++	ctx := r.Context()
++	if reason, _ := s.setupAvailability(ctx); reason != "" {
++		s.setupPage(w, http.StatusConflict, setupPageData{Title: "Connect GitHub is not available", Message: reason})
++		return
++	}
++	query := r.URL.Query()
++	code, state := query.Get("code"), query.Get("state")
++	if !s.setup.take(state, s.setupNow()) {
++		s.setupPage(w, http.StatusBadRequest, setupPageData{Title: "Connect GitHub failed", Message: "The setup link is invalid, expired or already used. Go back to /setup/github and start again."})
++		return
++	}
++	keyPath := s.cfg.GitHub.PrivateKeyFile
++	if err := github.PreflightKeyFile(keyPath); err != nil {
++		s.setupPage(w, http.StatusConflict, setupPageData{Title: "Connect GitHub failed", Message: err.Error()})
++		return
++	}
++	conv, err := github.ConvertManifest(ctx, s.opts.Runner.GitHubHTTP, s.opts.Runner.GitHubAPI, code)
++	if err != nil {
++		s.setupPage(w, http.StatusBadGateway, setupPageData{Title: "Connect GitHub failed", Message: err.Error() + ". Start again from /setup/github."})
++		return
++	}
++	defer clear(conv.PEM)
++	excluded := []string{s.cfg.DataDir(), filepath.Join(s.cfg.DataDir(), "workspaces")}
++	if err := github.WriteNewKeyFile(keyPath, conv.PEM, excluded...); err != nil {
++		s.setupPage(w, http.StatusInternalServerError, setupPageData{Title: "The App was created but its key was not saved",
++			Message: err.Error() + ". Delete the App named " + conv.Slug + " in your GitHub developer settings, fix the problem and start again."})
++		return
++	}
++	record := store.GitHubApp{AppID: conv.ID, Slug: conv.Slug, CreatedAt: s.setupNow()}
++	if err := s.db.SaveGitHubApp(ctx, record); err != nil {
++		s.setupPage(w, http.StatusInternalServerError, setupPageData{Title: "The App and key were saved, but recording it failed",
++			Message: "Add app_id = " + strconv.FormatInt(conv.ID, 10) + " to [github] in the configuration and restart patchbot."})
++		return
++	}
++	s.setupPage(w, http.StatusOK, setupPageData{Title: "GitHub connected", Slug: conv.Slug, AppID: conv.ID,
++		InstallURL: installBaseURL + url.PathEscape(conv.Slug) + "/installations/new", RestartHint: !s.runner.GitHubConnected()})
++}
++
++// githubStatus serves GET /api/github/status.
++func (s *Server) githubStatus(w http.ResponseWriter, r *http.Request) {
++	if !s.method(w, r, http.MethodGet) {
++		return
++	}
++	ctx := r.Context()
++	out := map[string]any{"mode": s.cfg.GitHub.Auth, "connected": false, "slug": "", "app_id": int64(0)}
++	if !s.cfg.GitHub.App() {
++		s.writeJSON(w, http.StatusOK, out)
++		return
++	}
++	appID := s.cfg.GitHub.AppID
++	slug := ""
++	record, found, err := s.db.GitHubApp(ctx)
++	if err != nil {
++		s.writeError(w, http.StatusInternalServerError, "internal", "could not read the stored GitHub App")
++		return
++	}
++	if found {
++		slug = record.Slug
++		if appID == 0 {
++			appID = record.AppID
++		}
++	}
++	out["setup_available"], out["restart_required"] = false, false
++	if reason, _ := s.setupAvailability(ctx); reason == "" {
++		out["setup_available"] = true
++	}
++	if appID == 0 {
++		s.writeJSON(w, http.StatusOK, out)
++		return
++	}
++	out["app_id"], out["slug"] = appID, slug
++	excluded := []string{s.cfg.DataDir(), filepath.Join(s.cfg.DataDir(), "workspaces")}
++	key, err := github.LoadAppPrivateKey(s.cfg.GitHub.PrivateKeyFile, excluded...)
++	if err != nil {
++		out["key_error"] = err.Error()
++		s.writeJSON(w, http.StatusOK, out)
++		return
++	}
++	out["connected"] = true
++	out["restart_required"] = !s.runner.GitHubConnected()
++	app, err := github.NewApp(github.AppOptions{AppID: appID, Key: key, BaseURL: s.opts.Runner.GitHubAPI, HTTPClient: s.opts.Runner.GitHubHTTP})
++	if err != nil {
++		out["installations_error"] = "Could not check installations."
++		s.writeJSON(w, http.StatusOK, out)
++		return
++	}
++	checkCtx, cancel := context.WithTimeout(ctx, statusTimeout)
++	defer cancel()
++	installs, err := app.Installations(checkCtx)
++	if err != nil {
++		out["installations_error"] = "Could not list installations from GitHub: " + err.Error()
++	} else {
++		out["installations"] = installs
++	}
++	s.writeJSON(w, http.StatusOK, out)
++}
+diff --git a/internal/server/server.go b/internal/server/server.go
+index af40547..71fafbf 100644
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -18,6 +18,7 @@ import (
+ 	"time"
+ 
+ 	"github.com/aryanpappu/patchbot/internal/config"
++	"github.com/aryanpappu/patchbot/internal/github"
+ 	"github.com/aryanpappu/patchbot/internal/llm"
+ 	"github.com/aryanpappu/patchbot/internal/llm/providers"
+ 	"github.com/aryanpappu/patchbot/internal/runner"
+@@ -66,6 +67,9 @@ type Server struct {
+ 	ingressWake     chan struct{}
+ 	// maxPending overrides maxPendingDeliveries in tests when positive.
+ 	maxPending int
++	// setup holds Connect GitHub states; setupMu serializes the callback.
++	setup   setupStates
++	setupMu sync.Mutex
+ }
+ 
+ // ValidateAddress refuses public or wildcard binds without a UI credential.
+@@ -318,7 +322,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 	}
+ 	// Only data-free shells and their fixed assets are public. Browser navigation
+ 	// cannot attach a bearer header; every API and SSE request still requires it.
+-	if s.authenticated && (r.Method != http.MethodGet || !web.PublicPath(r.URL.Path)) {
++	// The Connect GitHub callback is a browser redirect from GitHub and cannot
++	// carry the bearer header; its single-use random state is its credential.
++	callback := r.Method == http.MethodGet && r.URL.Path == github.CallbackPath
++	if s.authenticated && !callback && (r.Method != http.MethodGet || !web.PublicPath(r.URL.Path)) {
+ 		value, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+ 		candidate := sha256.Sum256([]byte(value))
+ 		if !ok || subtle.ConstantTimeCompare(candidate[:], s.tokenHash[:]) != 1 {
+diff --git a/internal/store/githubapp.go b/internal/store/githubapp.go
+new file mode 100644
+index 0000000..88e613b
+--- /dev/null
++++ b/internal/store/githubapp.go
+@@ -0,0 +1,76 @@
++package store
++
++import (
++	"context"
++	"database/sql"
++	"errors"
++	"net/url"
++	"path/filepath"
++	"time"
++)
++
++// GitHubApp is the App created by the Connect GitHub flow. It holds no secret.
++type GitHubApp struct {
++	AppID          int64
++	Slug           string
++	InstallationID int64
++	CreatedAt      time.Time
++}
++
++// GitHubApp returns the connected App, or false when none was recorded.
++func (s *SQLite) GitHubApp(ctx context.Context) (GitHubApp, bool, error) {
++	return scanGitHubApp(s.db.QueryRowContext(ctx, `SELECT app_id,slug,installation_id,created_at FROM github_app WHERE id=1`))
++}
++
++// SaveGitHubApp records the App once. A second call returns ErrConflict so a
++// replayed callback can never replace a connected App.
++func (s *SQLite) SaveGitHubApp(ctx context.Context, app GitHubApp) error {
++	if app.AppID <= 0 || app.Slug == "" || len(app.Slug) > 100 || app.InstallationID < 0 {
++		return errors.New("invalid GitHub App record")
++	}
++	res, err := s.db.ExecContext(ctx, `INSERT INTO github_app(id,app_id,slug,installation_id,created_at)
++		VALUES(1,?,?,?,?) ON CONFLICT(id) DO NOTHING`, app.AppID, app.Slug, app.InstallationID, timestamp(app.CreatedAt).UnixMilli())
++	if err != nil {
++		return mapError(err)
++	}
++	if n, _ := res.RowsAffected(); n == 0 {
++		return ErrConflict
++	}
++	return nil
++}
++
++// ReadGitHubApp reads the connected App from a database file opened read-only
++// (doctor uses it; it never creates or migrates the file). A database without
++// the table, or without a row, reports false.
++func ReadGitHubApp(ctx context.Context, path string) (GitHubApp, bool, error) {
++	abs, err := filepath.Abs(path)
++	if err != nil {
++		return GitHubApp{}, false, err
++	}
++	u := &url.URL{Scheme: "file", Path: abs, RawQuery: "mode=ro"}
++	db, err := sql.Open("sqlite", u.String())
++	if err != nil {
++		return GitHubApp{}, false, err
++	}
++	defer func() { _ = db.Close() }()
++	app, found, err := scanGitHubApp(db.QueryRowContext(ctx, `SELECT app_id,slug,installation_id,created_at FROM github_app WHERE id=1`))
++	if err != nil {
++		// An older database has no table yet: not connected.
++		return GitHubApp{}, false, nil
++	}
++	return app, found, nil
++}
++
++func scanGitHubApp(row *sql.Row) (GitHubApp, bool, error) {
++	var app GitHubApp
++	var created int64
++	err := row.Scan(&app.AppID, &app.Slug, &app.InstallationID, &created)
++	if errors.Is(err, sql.ErrNoRows) {
++		return GitHubApp{}, false, nil
++	}
++	if err != nil {
++		return GitHubApp{}, false, mapError(err)
++	}
++	app.CreatedAt = time.UnixMilli(created).UTC()
++	return app, true, nil
++}
+diff --git a/internal/store/migrations/0008_reserved_m23.sql b/internal/store/migrations/0008_reserved_m23.sql
+new file mode 100644
+index 0000000..8e87e4f
+--- /dev/null
++++ b/internal/store/migrations/0008_reserved_m23.sql
+@@ -0,0 +1,2 @@
++-- Reserved for M23 so migration numbering stays contiguous across branches.
++-- Intentionally empty.
+diff --git a/internal/store/migrations/0009_github_app.sql b/internal/store/migrations/0009_github_app.sql
+new file mode 100644
+index 0000000..085ad36
+--- /dev/null
++++ b/internal/store/migrations/0009_github_app.sql
+@@ -0,0 +1,12 @@
++-- The GitHub App created by the "Connect GitHub" manifest flow (M28). A single
++-- row: the app ID, its slug and the installation ID (0 until resolved). The
++-- private key is never stored here; it lives in the 0600 key file. The
++-- manifest conversion also returns a client secret and a webhook secret; both
++-- are discarded and have no column.
++CREATE TABLE github_app (
++    id INTEGER PRIMARY KEY CHECK (id = 1),
++    app_id INTEGER NOT NULL CHECK (app_id > 0),
++    slug TEXT NOT NULL CHECK (length(slug) > 0 AND length(slug) <= 100),
++    installation_id INTEGER NOT NULL DEFAULT 0 CHECK (installation_id >= 0),
++    created_at INTEGER NOT NULL CHECK (created_at >= 0)
++) STRICT;
+diff --git a/internal/web/web.go b/internal/web/web.go
+index fdcba01..e324148 100644
+--- a/internal/web/web.go
++++ b/internal/web/web.go
+@@ -62,7 +62,7 @@ func CSP(local bool) string {
+ // PublicPath identifies exact shell/asset GET paths that contain no private data.
+ func PublicPath(path string) bool {
+ 	switch path {
+-	case "/", "/runs", "/runs/new", "/assets/app.js", "/assets/app.css", "/assets/vue.global.prod.js":
++	case "/", "/runs", "/runs/new", "/setup/github", "/assets/app.js", "/assets/app.css", "/assets/setup.js", "/assets/vue.global.prod.js":
+ 		return true
+ 	}
+ 	if len(path) > len("/runs/") && path[:len("/runs/")] == "/runs/" {
+@@ -81,6 +81,8 @@ func Asset(w http.ResponseWriter, r *http.Request, local bool) {
+ 		name, media = "app.js", "text/javascript; charset=utf-8"
+ 	case "/assets/app.css":
+ 		name, media = "app.css", "text/css; charset=utf-8"
++	case "/assets/setup.js":
++		name, media = "setup.js", "text/javascript; charset=utf-8"
+ 	case "/assets/vue.global.prod.js":
+ 		if local {
+ 			name, media = "vue.global.prod.js", "text/javascript; charset=utf-8"
+
+exec
+/bin/zsh -lc "sed -n '260,420p' internal/server/server.go; cat internal/web/assets/setup.js; rg -n 'CheckAppKeyFile|symlink|ownership|mode|migrat' internal/github/key* internal/store/sqlite* internal/store/migrate*; git diff development...HEAD -- internal/runner/runner.go internal/server/api.go internal/server/json.go internal/cli/doctor.go; cat internal/config/validate.go" in /Users/pappumishra/Documents/selfproject/patchbot-m28-connect-github
+ succeeded in 0ms:
+	}
+	cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), s.opts.ShutdownTimeout)
+	defer stop()
+	shutdownErr := s.Shutdown(cleanup)
+	if shutdownErr != nil {
+		return shutdownErr
+	}
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
+}
+
+// ListenAndServe binds the configured address and handles graceful shutdown.
+func (s *Server) ListenAndServe(ctx context.Context) error {
+	listener, err := net.Listen("tcp", s.cfg.Server.Addr)
+	if err != nil {
+		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), s.opts.ShutdownTimeout)
+		defer stop()
+		_ = s.Shutdown(cleanup)
+		return errors.New("could not bind server address")
+	}
+	return s.Serve(ctx, listener)
+}
+
+// Shutdown rejects new work, stops maintenance and SSE, and drains in-flight
+// runs up to ctx's deadline. On timeout it cancels their execution contexts.
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.shutdownOnce.Do(func() {
+		s.mu.Lock()
+		s.stopping = true
+		s.mu.Unlock()
+		s.manager.stopAdmission()
+		s.stop()
+		close(s.done)
+		if s.unsubscribe != nil {
+			s.unsubscribe()
+		}
+	})
+	httpErr := s.http.Shutdown(ctx)
+	workErr := s.manager.wait(ctx)
+	if httpErr != nil {
+		_ = s.http.Close()
+	}
+	select {
+	case <-s.maintenanceDone:
+	case <-ctx.Done():
+		return errors.Join(httpErr, workErr, ctx.Err())
+	}
+	return errors.Join(httpErr, workErr)
+}
+
+// ServeHTTP applies authentication and security to every route and error.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Security-Policy", web.CSP(s.cfg.Server.VueSrc == "local"))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Cache-Control", "no-store")
+	if s.cfg.Webhook.Enabled && r.URL.Path == s.cfg.Webhook.Path {
+		s.webhook(w, r)
+		return
+	}
+	// Only data-free shells and their fixed assets are public. Browser navigation
+	// cannot attach a bearer header; every API and SSE request still requires it.
+	// The Connect GitHub callback is a browser redirect from GitHub and cannot
+	// carry the bearer header; its single-use random state is its credential.
+	callback := r.Method == http.MethodGet && r.URL.Path == github.CallbackPath
+	if s.authenticated && !callback && (r.Method != http.MethodGet || !web.PublicPath(r.URL.Path)) {
+		value, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		candidate := sha256.Sum256([]byte(value))
+		if !ok || subtle.ConstantTimeCompare(candidate[:], s.tokenHash[:]) != 1 {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			s.writeError(w, http.StatusUnauthorized, "unauthorized", "bearer token required")
+			return
+		}
+	}
+	if r.Method != http.MethodGet {
+		if err := http.NewCrossOriginProtection().Check(r); err != nil {
+			s.writeError(w, http.StatusForbidden, "forbidden", "cross-origin request refused")
+			return
+		}
+	}
+	if !s.validHost(r) {
+		s.writeError(w, http.StatusForbidden, "forbidden", "request host refused")
+		return
+	}
+	s.mu.RLock()
+	stopping := s.stopping
+	s.mu.RUnlock()
+	if stopping {
+		s.writeError(w, http.StatusServiceUnavailable, "unavailable", "server is shutting down")
+		return
+	}
+	if r.URL.Path != path.Clean(r.URL.Path) {
+		s.writeError(w, 404, "not_found", "resource not found")
+		return
+	}
+	s.handler.ServeHTTP(w, r)
+}
+
+func (s *Server) validHost(r *http.Request) bool {
+	s.mu.RLock()
+	addr := s.addr
+	s.mu.RUnlock()
+	boundHost, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	host, requestPort, err := net.SplitHostPort(r.Host)
+	if err != nil {
+		// Browsers omit the port when the listener uses HTTP's default port.
+		host = r.Host
+		if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+			host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+			if net.ParseIP(host) == nil {
+				return false
+			}
+		} else if strings.Contains(host, ":") {
+			return false
+		}
+		requestPort = "80"
+		if r.TLS != nil {
+			requestPort = "443"
+		}
+	}
+	if host == "" || requestPort != port {
+		return false
+	}
+	ip := net.ParseIP(boundHost)
+	requestIP := net.ParseIP(host)
+	if ip != nil && !ip.IsUnspecified() && requestIP != nil && ip.Equal(requestIP) {
+		return true
+	}
+	loopback := (ip != nil && ip.IsLoopback()) || strings.EqualFold(boundHost, "localhost")
+	if strings.EqualFold(host, "localhost") || (requestIP != nil && requestIP.IsLoopback()) {
+		if loopback {
+			return true
+		}
+		// A wildcard listener can still accept its actual local numeric address
+		// below, but it does not acquire the localhost hostname alias.
+		if requestIP == nil || ip == nil || !ip.IsUnspecified() {
+			return false
+		}
+	}
+	configuredHost, _, err := net.SplitHostPort(s.cfg.Server.Addr)
+	if err == nil && net.ParseIP(configuredHost) == nil && configuredHost != "" && strings.EqualFold(host, configuredHost) {
+		return true
+	}
+	if ip == nil || !ip.IsUnspecified() {
+		return false
+	}
+	local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if !ok {
+		return false
+	}
+	localHost, localPort, err := net.SplitHostPort(local.String())
+	return err == nil && localPort == port && strings.EqualFold(host, localHost)
+}
+// Connect GitHub page script. Plain DOM only; every dynamic value is set with
+// textContent or as a form field value, never as HTML.
+(() => {
+  const storageKey = "patchbot.ui-token";
+  const headers = (extra) => {
+    let token = "";
+    try { token = sessionStorage.getItem(storageKey) || ""; } catch { /* no storage: unauthenticated mode only */ }
+    return token ? { ...extra, Authorization: "Bearer " + token } : extra;
+  };
+  const say = (id, message) => {
+    const node = document.getElementById(id);
+    if (node) { node.textContent = message; }
+  };
+  const failure = (body, status) => {
+    if (status === 401) { return "Sign in first: open the Runs page and enter the UI token, then come back."; }
+    return (body && body.error && body.error.message) || "Request failed.";
+  };
+
+  const connect = document.getElementById("connect");
+  if (connect) {
+    connect.addEventListener("click", async () => {
+      connect.disabled = true;
+      say("setup-status", "Preparing the GitHub request…");
+      try {
+        const response = await fetch("/api/github/setup/start", { method: "POST", headers: headers({}) });
+        const body = await response.json().catch(() => null);
+        if (!response.ok || !body || !body.action || !body.manifest) {
+          say("setup-status", failure(body, response.status));
+          connect.disabled = false;
+          return;
+        }
+        const form = document.createElement("form");
+        form.method = "post";
+        form.action = body.action;
+        const field = document.createElement("input");
+        field.type = "hidden";
+        field.name = "manifest";
+        field.value = body.manifest;
+        form.append(field);
+        document.body.append(form);
+        form.submit();
+      } catch {
+        say("setup-status", "Could not reach patchbot.");
+        connect.disabled = false;
+      }
+    });
+  }
+
+  const recheck = document.getElementById("recheck");
+  if (recheck) {
+    recheck.addEventListener("click", async () => {
+      recheck.disabled = true;
+      say("recheck-status", "Checking…");
+      try {
+        const response = await fetch("/api/github/status", { headers: headers({}) });
+        const body = await response.json().catch(() => null);
+        if (!response.ok || !body) {
+          say("recheck-status", failure(body, response.status));
+        } else if (!body.connected) {
+          say("recheck-status", "Not connected yet.");
+        } else if (body.installations_error) {
+          say("recheck-status", "Connected as " + body.slug + ". " + body.installations_error);
+        } else if (!body.installations || body.installations.length === 0) {
+          say("recheck-status", "Connected as " + body.slug + ", but not installed on any account yet. Use the install link above.");
+        } else {
+          const where = body.installations.map((i) => i.account + " (" + i.repository_selection + " repositories)").join(", ");
+          say("recheck-status", "Connected as " + body.slug + ". Installed on: " + where +
+            (body.restart_required ? ". Restart patchbot to start accepting runs." : "."));
+        }
+      } catch {
+        say("recheck-status", "Could not reach patchbot.");
+      }
+      recheck.disabled = false;
+    });
+  }
+})();
+zsh:1: no matches found: internal/github/key*
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-lmRUNWxu' (errno=Operation not permitted)
+diff --git a/internal/cli/doctor.go b/internal/cli/doctor.go
+index f560c03..5be9012 100644
+--- a/internal/cli/doctor.go
++++ b/internal/cli/doctor.go
+@@ -118,7 +118,16 @@ func (a *App) runDoctor(args []string) int {
+ 	var app *github.App
+ 	switch {
+ 	case cfg.GitHub.App():
+-		app = doctorAppKey(cfg, a.RunnerOptions, r, add)
++		if cfg.GitHub.AppID == 0 {
++			if stored, found, err := store.ReadGitHubApp(ctx, cfg.DatabasePath()); err == nil && found {
++				cfg.GitHub.AppID = stored.AppID
++			}
++		}
++		if cfg.GitHub.AppID == 0 {
++			add("WARN", "GitHub App", "not connected, open /setup/github (the server starts in setup mode and refuses runs until then)")
++		} else {
++			app = doctorAppKey(cfg, a.RunnerOptions, r, add)
++		}
+ 		if strings.TrimSpace(token) != "" {
+ 			add("WARN", "GitHub credential", "GITHUB_TOKEN is set but ignored in app mode (there is no PAT fallback); unset it")
+ 		}
+@@ -247,7 +256,9 @@ func (a *App) doctorOnline(ctx context.Context, cfg *config.Config, token string
+ 		}
+ 	}
+ 	if cfg.GitHub.App() {
+-		doctorAppOnline(ctx, cfg, app, add)
++		if cfg.GitHub.AppID > 0 {
++			doctorAppOnline(ctx, cfg, app, add)
++		}
+ 		return
+ 	}
+ 	client := a.RunnerOptions.GitHub
+diff --git a/internal/runner/runner.go b/internal/runner/runner.go
+index 75bae94..c023403 100644
+--- a/internal/runner/runner.go
++++ b/internal/runner/runner.go
+@@ -92,6 +92,8 @@ type Runner struct {
+ 	mu       sync.Mutex
+ 	active   map[int64]context.CancelFunc
+ 	controls map[int64]*sync.Mutex
++	// notConnected is set at startup in app mode when no App exists yet.
++	notConnected bool
+ }
+ 
+ type runLimits struct {
+@@ -229,6 +231,9 @@ func (r *Runner) provider(name string) (llm.Provider, llm.Pricing, error) {
+ }
+ 
+ func (r *Runner) prepare(req Request) (store.Run, error) {
++	if r.notConnected {
++		return store.Run{}, ErrGitHubNotConnected
++	}
+ 	req.Repo = strings.ToLower(strings.TrimSpace(req.Repo))
+ 	if !repoPattern.MatchString(req.Repo) || req.Issue <= 0 {
+ 		return store.Run{}, errors.New("require --repo owner/name and a positive --issue")
+diff --git a/internal/server/api.go b/internal/server/api.go
+index b6d3833..828d627 100644
+--- a/internal/server/api.go
++++ b/internal/server/api.go
+@@ -13,6 +13,7 @@ import (
+ 	"strings"
+ 
+ 	"github.com/aryanpappu/patchbot/internal/config"
++	"github.com/aryanpappu/patchbot/internal/github"
+ 	"github.com/aryanpappu/patchbot/internal/llm"
+ 	"github.com/aryanpappu/patchbot/internal/runner"
+ 	"github.com/aryanpappu/patchbot/internal/store"
+@@ -38,6 +39,10 @@ func (s *Server) routes() http.Handler {
+ 		mux.HandleFunc("/api/runs/{id}/"+action, s.action)
+ 	}
+ 	s.memoryRoutes(mux)
++	mux.HandleFunc("/setup/github", s.githubSetupPage)
++	mux.HandleFunc(github.CallbackPath, s.githubSetupCallback)
++	mux.HandleFunc("/api/github/setup/start", s.githubSetupStart)
++	mux.HandleFunc("/api/github/status", s.githubStatus)
+ 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { s.writeError(w, 404, "not_found", "resource not found") })
+ 	return mux
+ }
+diff --git a/internal/server/json.go b/internal/server/json.go
+index aaf95ee..ac018ea 100644
+--- a/internal/server/json.go
++++ b/internal/server/json.go
+@@ -72,6 +72,8 @@ func (s *Server) respondError(w http.ResponseWriter, err error) {
+ 		s.writeError(w, http.StatusConflict, "active_run_exists", "an active run already exists for this issue")
+ 	case errors.Is(err, store.ErrConflict), errors.Is(err, agent.ErrApprovalDenied):
+ 		s.writeError(w, http.StatusConflict, "conflict", "action is not valid for the current run or specification")
++	case errors.Is(err, runner.ErrGitHubNotConnected):
++		s.writeError(w, http.StatusConflict, "github_not_connected", err.Error())
+ 	case errors.Is(err, errShuttingDown):
+ 		s.writeError(w, http.StatusServiceUnavailable, "unavailable", "server is shutting down")
+ 	case errors.Is(err, llm.ErrUnknownProvider):
+package config
+
+import (
+	"errors"
+	"fmt"
+	"math"
+	"net"
+	"net/url"
+	"path"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+
+	"github.com/aryanpappu/patchbot/internal/execx"
+	"github.com/aryanpappu/patchbot/internal/secret"
+)
+
+var (
+	// Upper case only: it is the convention, and it keeps most pasted keys
+	// from passing as a variable name and being printed back.
+	envNameRE      = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,63}$`)
+	providerNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+	loginRE        = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9]|-[A-Za-z0-9]){0,38}$`)
+	repoRE         = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9]|-[A-Za-z0-9]){0,38}/[A-Za-z0-9._-]{1,100}$`)
+	commandIDRE    = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+)
+
+// shellMeta are the characters a shell gives meaning to. argv is run without
+// a shell, so one of these in the program name is a mistake or an attempt to
+// smuggle in a shell command line.
+const shellMeta = " \t\r\n|&;<>()$`\\\"'*?[]{}~!#=%^"
+
+// Validate checks the values of a loaded configuration and returns every
+// problem it finds, joined with errors.Join. Messages never contain a secret.
+//
+// A message may quote a bad value to help the user find it. Every message is
+// therefore redacted with the secrets the config holds: a key exported under
+// the wrong variable name would otherwise be printed as, say, a log level.
+func (c *Config) Validate() error {
+	v := validator{redactor: c.Redactor()}
+	c.validateDefaults(&v)
+	c.validateLimits(&v)
+	c.validateFixed(&v)
+	c.validateExecutor(&v)
+	c.validateGitHub(&v)
+	w := c.Webhook
+	v.check(envNameRE.MatchString(w.SecretEnv), "webhook.secret_env: must name an environment variable")
+	v.check(strings.HasPrefix(w.Path, "/") && w.Path != "/" && path.Clean(w.Path) == w.Path && !strings.ContainsAny(w.Path, "{} ?#\\"), "webhook.path: must be a clean literal path starting with /")
+	v.check(!w.Enabled || w.Secret.IsSet(), "webhook.secret_env: enabled webhooks require a secret")
+	for label, mode := range w.TriggerLabels {
+		v.check(strings.TrimSpace(label) != "" && len(label) <= 100, "webhook.trigger_labels: invalid label")
+		v.check(slices.Contains([]string{ModeFix, ModeRefine, ModeInvestigate}, mode), "webhook.trigger_labels: invalid mode")
+	}
+	for _, name := range sortedKeys(c.Providers) {
+		c.validateProvider(&v, name, c.Providers[name])
+	}
+	for _, name := range sortedKeys(c.Repos) {
+		validateRepo(&v, name, c.Repos[name])
+	}
+	return errors.Join(v.errs...)
+}
+
+// validateGitHub checks [github] statically. The key file's type, mode and
+// owner are checked when it is loaded (startup and doctor), never printed.
+func (c *Config) validateGitHub(v *validator) {
+	g := c.GitHub
+	if g.Auth != GitHubAuthPAT && g.Auth != GitHubAuthApp {
+		v.addf(`github.auth: must be "pat" or "app"`)
+		return
+	}
+	v.validateSetup(g)
+	if !g.App() {
+		return
+	}
+	// app_id 0 is setup mode: the ID is read from the database after "Connect GitHub".
+	v.check(g.AppID >= 0, "github.app_id: must be the numeric GitHub App ID, or 0 until GitHub is connected from the dashboard")
+	v.check(g.InstallationID >= 0, "github.installation_id: must be 0 (resolve per repository) or a positive ID")
+	keyPath := g.PrivateKeyFile
+	if keyPath == "" || !filepath.IsAbs(keyPath) || filepath.Clean(keyPath) != keyPath || strings.ContainsRune(keyPath, 0) {
+		v.addf("github.private_key_file: app mode requires a clean absolute path")
+		return
+	}
+	if data := c.DataDir(); data != "" && filepath.IsAbs(data) {
+		if rel, err := filepath.Rel(filepath.Clean(data), keyPath); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+			v.addf("github.private_key_file: must not be inside the data directory or workspaces")
+		}
+	}
+}
+
+var setupAppNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 _-]{0,33}$`)
+
+// validateSetup checks the optional "Connect GitHub" settings.
+func (v *validator) validateSetup(g GitHub) {
+	if g.SetupAppName != "" {
+		v.check(setupAppNameRE.MatchString(g.SetupAppName), "github.setup_app_name: use 1-34 letters, digits, spaces, '-' or '_'")
+	}
+	if g.SetupPublicURL == "" {
+		return
+	}
+	u, err := url.Parse(g.SetupPublicURL)
+	loopback := err == nil && (u.Hostname() == "localhost" || net.ParseIP(u.Hostname()).IsLoopback())
+	ok := err == nil && u.Host != "" && u.User == nil && u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" && u.Opaque == "" &&
+		(u.Path == "" || u.Path == "/") && (u.Scheme == "https" || (u.Scheme == "http" && loopback))
+	v.check(ok, "github.setup_public_url: must be an origin such as https://patchbot.example.org (http only for localhost), without path, query or credentials")
+}
+
+type validator struct {
+	errs     []error
+	redactor *secret.Redactor
+}
+
+func (v *validator) addf(format string, args ...any) {
+	v.errs = append(v.errs, errors.New(v.redactor.Redact(fmt.Sprintf(format, args...))))
+}
+
+// check adds the message when ok is false.
+func (v *validator) check(ok bool, format string, args ...any) {
+	if !ok {
+		v.addf(format, args...)
+	}
+}
+
+func (c *Config) validateDefaults(v *validator) {
+	d := c.Defaults
+	v.check(slices.Contains([]string{ModeFix, ModeRefine, ModeInvestigate}, d.Mode),
+		"defaults.mode: %q is not one of fix, refine, investigate", d.Mode)
+
+	if len(d.Approvers) == 0 {
+		v.addf("defaults.approvers: list at least one GitHub login; coding starts only after one of them approves the spec")
+	}
+	for _, login := range d.Approvers {
+		v.check(loginRE.MatchString(login), "defaults.approvers: %q is not a GitHub login", login)
+	}
+
+	_, ok := c.Providers[d.Provider]
+	switch {
+	case d.Provider == "":
+		v.addf("defaults.provider: not set")
+	case !ok:
+		v.addf("defaults.provider: no [providers.%s] table; configured providers: %s",
+			d.Provider, orNone(sortedKeys(c.Providers)))
+	default:
+		for _, stage := range []string{"refine", "code"} {
+			if c.Model(stage) == "" {
+				v.addf("no model for the %s stage: set defaults.%s_model or providers.%s.default_model "+
+					"(`patchbot models --provider %s` lists the choices)", stage, stage, d.Provider, d.Provider)
+			}
+		}
+	}
+
+	if !validMoney(d.MaxCostUSD) || d.MaxCostUSD <= 0 {
+		v.addf("defaults.max_cost_usd: must be greater than 0")
+	} else if validMoney(c.Limits.HardMaxCostUSD) && d.MaxCostUSD > c.Limits.HardMaxCostUSD {
+		v.addf("defaults.max_cost_usd (%v) is above limits.hard_max_cost_usd (%v)",
+			d.MaxCostUSD, c.Limits.HardMaxCostUSD)
+	}
+}
+
+func (c *Config) validateLimits(v *validator) {
+	l := c.Limits
+	if err := execx.ValidateTrustedPath(l.TrustedPath, c.DataDir()); err != nil {
+		v.addf("limits.trusted_path: %s", err)
+	}
+	v.check(validMoney(l.HardMaxCostUSD) && l.HardMaxCostUSD > 0, "limits.hard_max_cost_usd: must be greater than 0")
+	for _, f := range []struct {
+		key   string
+		value int64
+	}{
+		{"limits.max_turns", int64(l.MaxTurns)},
+		{"limits.refine_max_turns", int64(l.RefineMaxTurns)},
+		{"limits.max_output_tokens", int64(l.MaxOutputTokens)},
+		{"limits.max_total_tokens", l.MaxTotalTokens},
+		{"limits.max_test_attempts", int64(l.MaxTestAttempts)},
+		{"limits.run_timeout", int64(l.RunTimeout)},
+		{"limits.cmd_timeout", int64(l.CmdTimeout)},
+		{"limits.test_timeout", int64(l.TestTimeout)},
+		{"limits.cmd_output_bytes", int64(l.CmdOutputBytes)},
+		{"limits.cmd_store_bytes", int64(l.CmdStoreBytes)},
+		{"approval.poll_interval", int64(c.Approval.PollInterval)},
+		{"approval.ttl", int64(c.Approval.TTL)},
+		{"webhook.label_poll_interval", int64(c.Webhook.LabelPollInterval)},
+		{"approval.max_revisions", int64(c.Approval.MaxRevisions)},
+		{"server.max_concurrent_runs", int64(c.Server.MaxConcurrentRuns)},
+		{"server.max_queued_runs", int64(c.Server.MaxQueuedRuns)},
+	} {
+		v.check(f.value > 0, "%s: must be greater than 0", f.key)
+	}
+	rv := c.Review
+	v.check(rv.MaxRepairs == 0 || rv.MaxRepairs == 1, "review.max_repairs: must be 0 or 1")
+	v.check(rv.MaxTurns > 0, "review.max_turns: must be greater than 0")
+	v.check(rv.ReserveFraction >= 0 && rv.ReserveFraction <= 0.5, "review.reserve_fraction: must be between 0 and 0.5")
+	v.check(rv.Model == "" || validModelID(rv.Model), "review.model: %q is not a valid model ID", rv.Model)
+	v.check(l.CmdOutputBytes <= l.CmdStoreBytes || l.CmdStoreBytes <= 0,
+		"limits.cmd_output_bytes (%d) is above limits.cmd_store_bytes (%d)", l.CmdOutputBytes, l.CmdStoreBytes)
+}
+
+func (c *Config) validateFixed(v *validator) {
+	v.check(strings.TrimSpace(c.Approval.LocalActor) != "", "approval.local_actor: not set")
+	v.check(slices.Contains([]string{"debug", "info", "warn", "error"}, c.Log.Level),
+		"log.level: %q is not one of debug, info, warn, error", c.Log.Level)
+	v.check(slices.Contains([]string{"text", "json"}, c.Log.Format),
+		"log.format: %q is not one of text, json", c.Log.Format)
+	v.check(slices.Contains([]string{"cdn", "local"}, c.Server.VueSrc),
+		"server.vue_src: %q is not one of cdn, local", c.Server.VueSrc)
+	if host, port, err := net.SplitHostPort(c.Server.Addr); err != nil || host == "" || port == "" {
+		v.addf("server.addr: %q is not host:port", c.Server.Addr)
+	}
+	v.check(strings.TrimSpace(c.Data.Dir) != "", "data.dir: not set")
+	m := c.Memory
+	v.check(m.MaxEntries >= 1 && m.MaxEntries <= 100, "memory.max_entries: must be between 1 and 100")
+	v.check(m.MaxBytes >= 256 && m.MaxBytes <= 65536, "memory.max_bytes: must be between 256 and 65536")
+	v.check(m.MaxPending >= 1 && m.MaxPending <= 1000, "memory.max_pending: must be between 1 and 1000")
+	v.check(m.ObservationTTL > 0, "memory.observation_ttl: must be greater than 0")
+}
+
+func (c *Config) validateExecutor(v *validator) {
+	e := c.Executor
+	v.check(slices.Contains([]string{ExecutorLocal, ExecutorContainer}, e.Kind),
+		"executor.kind: %q is not one of local, container", e.Kind)
+	if !e.Container() {
+		return
+	}
+	v.check(slices.Contains([]string{execx.RuntimePodman, execx.RuntimeDocker}, e.Runtime),
+		"executor.runtime: %q is not one of podman, docker", e.Runtime)
+	if e.Image == "" {
+		v.addf("executor.image: required for kind container; pin it by digest (name@sha256:...)")
+	} else if err := execx.ValidateImage(e.Image); err != nil {
+		v.addf("executor.image: %s", err)
+	}
+	if err := execx.ValidateSize(e.Memory); err != nil {
+		v.addf("executor.memory: %s", err)
+	}
+	if err := execx.ValidateSize(e.TmpfsSize); err != nil {
+		v.addf("executor.tmpfs_size: %s", err)
+	}
+	if err := execx.ValidateCPUs(e.CPUs); err != nil {
+		v.addf("executor.cpus: %s", err)
+	}
+	v.check(e.PidsLimit > 0, "executor.pids_limit: must be greater than 0")
+	v.check(e.WorkspaceMaxBytes > 0, "executor.workspace_max_bytes: must be greater than 0")
+	v.check(e.Network == "none", "executor.network: %q is not allowed; only \"none\" is supported", e.Network)
+	if err := execx.ValidateUser(e.User); err != nil {
+		v.addf("executor.user: %s", err)
+	}
+	v.check(e.UserNS == "" || (e.UserNS == "keep-id" && e.Runtime == execx.RuntimePodman),
+		"executor.userns: %q must be empty or \"keep-id\" with runtime podman", e.UserNS)
+	if err := execx.ValidateContainerPath(e.Path); err != nil {
+		v.addf("executor.path: %s", err)
+	}
+}
+
+func (c *Config) validateProvider(v *validator, name string, p *Provider) {
+	at := "providers." + name
+	v.check(providerNameRE.MatchString(name),
+		"%s: a provider name uses lower-case letters, digits, - and _", at)
+	v.check(slices.Contains([]string{KindAnthropic, KindGemini, KindOpenAI}, p.Kind),
+		"%s.kind: %q is not one of anthropic, gemini, openai", at, p.Kind)
+
+	if p.APIKeyEnv != "" && !envNameRE.MatchString(p.APIKeyEnv) {
+		// The value is not echoed: the usual cause is a key pasted here.
+		v.addf("%s.api_key_env: must be the name of an environment variable (upper-case letters, digits "+
+			"and _), not the key itself", at)
+	}
+	if p.BaseURL != "" {
+		u, err := url.Parse(p.BaseURL)
+		switch {
+		case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "":
+			v.addf("%s.base_url: must be an http or https URL", at)
+		case u.User != nil:
+			v.addf("%s.base_url: must not contain a user name or password", at)
+		case u.RawQuery != "" || u.Fragment != "":
+			v.addf("%s.base_url: must not contain a query or fragment", at)
+		}
+	}
+	if p.Kind == KindOpenAI && p.BaseURL == "" {
+		v.addf("%s.base_url: required for kind openai (for example https://api.openai.com/v1)", at)
+	}
+
+	for _, model := range p.Models {
+		v.check(validModelID(model), "%s.models: %q is not a model ID", at, model)
+	}
+	if p.DefaultModel != "" {
+		v.check(validModelID(p.DefaultModel), "%s.default_model: %q is not a model ID", at, p.DefaultModel)
+	}
+	if p.PriceFree && len(p.Prices) > 0 {
+		v.addf("%s: price_free = true and a prices table contradict each other; keep one", at)
+	}
+	for _, model := range sortedKeys(p.Prices) {
+		price := p.Prices[model]
+		pat := fmt.Sprintf("%s.prices.%s", at, model)
+		v.check(validModelID(model), "%s: %q is not a model ID", pat, model)
+		for _, rate := range []struct {
+			name  string
+			value *float64
+		}{{"input", price.Input}, {"output", price.Output}} {
+			switch {
+			case rate.value == nil:
+				v.addf("%s.%s: missing; a price needs both input and output, and a rate that is "+
+					"really free must be written as 0", pat, rate.name)
+			case !validMoney(*rate.value):
+				v.addf("%s.%s: must be 0 or more", pat, rate.name)
+			}
+		}
+		v.check(price.CacheRead == nil || validMoney(*price.CacheRead), "%s.cache_read: must be 0 or more", pat)
+		v.check(price.CacheWrite == nil || validMoney(*price.CacheWrite), "%s.cache_write: must be 0 or more", pat)
+	}
+}
+
+func validateRepo(v *validator, name string, r *Repo) {
+	at := fmt.Sprintf("repos.%q", name)
+	_, repo, _ := strings.Cut(name, "/")
+	if !repoRE.MatchString(name) || repo == "." || repo == ".." {
+		v.addf("%s: a repository key looks like \"owner/name\"", at)
+	}
+	for _, id := range sortedKeys(r.Commands) {
+		argv := r.Commands[id]
+		cat := fmt.Sprintf("%s.commands.%s", at, id)
+		v.check(commandIDRE.MatchString(id),
+			"%s: a command ID uses lower-case letters, digits, - and _, and starts with a letter", cat)
+		switch {
+		case len(argv) == 0:
+			v.addf("%s: must be a non-empty argv array such as [\"go\", \"test\", \"./...\"]", cat)
+			continue
+		case argv[0] == "":
+			v.addf("%s: the program name is empty", cat)
+		case strings.HasPrefix(argv[0], "-"):
+			v.addf("%s: the program name %q starts with a dash", cat, argv[0])
+		case strings.ContainsAny(argv[0], shellMeta) || strings.ContainsFunc(argv[0], isControl):
+			v.addf("%s: the program name %q contains a shell metacharacter; commands run without a shell, "+
+				"so give the program and each argument as separate array items", cat, argv[0])
+		}
+		for i, arg := range argv {
+			v.check(!strings.ContainsRune(arg, 0), "%s: argument %d contains a NUL byte", cat, i)
+		}
+	}
+	if r.TestCommand != "" {
+		if _, ok := r.Commands[r.TestCommand]; !ok {
+			v.addf("%s.test_command: no command %q in commands (have: %s)",
+				at, r.TestCommand, orNone(sortedKeys(r.Commands)))
+		}
+	}
+	for _, path := range r.Protected {
+		v.check(validProtectedPath(path),
+			"%s.protected: %q must be a relative path inside the repository, with no \"..\"", at, path)
+	}
+}
+
+// Warnings returns problems that do not stop patchbot from starting: a model
+// with no price, an API key variable that is not set, and the like. A warning
+// names the environment variable and never its value.
+func (c *Config) Warnings() []string {
+	var out []string
+	redactor := c.Redactor()
+	warnf := func(format string, args ...any) {
+		out = append(out, redactor.Redact(fmt.Sprintf(format, args...)))
+	}
+
+	for _, name := range sortedKeys(c.Providers) {
+		p := c.Providers[name]
+		switch {
+		case p.APIKeyEnv == "" && p.Kind != KindOpenAI:
+			warnf("provider %q: api_key_env is not set, so requests carry no API key", name)
+		case p.APIKey.IsSet() && len(p.APIKey.Reveal()) < secret.MinValueLen:
+			warnf("provider %q: credential in %s is shorter than %d characters and cannot be masked; use a longer credential", name, p.APIKeyEnv, secret.MinValueLen)
+		case p.APIKeyEnv != "" && envNameRE.MatchString(p.APIKeyEnv) && !p.APIKey.IsSet():
+			warnf("provider %q: environment variable %s is not set; the provider cannot be used until it is",
+				name, p.APIKeyEnv)
+		}
+		if p.PriceFree {
+			continue
+		}
+		for _, model := range c.providerModels(name) {
+			price, ok := p.Prices[model]
+			switch {
+			case !ok:
+				warnf("provider %q: model %q has no price, so its cost is unknown and only the token limit applies; "+
+					"add [providers.%s.prices.%q] or set price_free = true", name, model, name, model)
+			case price.Checked.IsZero():
+				warnf("provider %q: the price of model %q has no checked date", name, model)
+			}
+		}
+	}
+
+	if len(c.Repos) == 0 {
+		warnf(`no [repos."owner/name"] table: no run can start until a repository is listed`)
+	}
+	for _, name := range sortedKeys(c.Repos) {
+		if _, ok := c.Repos[name].TestCommandID(); !ok {
+			warnf("repo %q: no test command, so its pull requests will be drafts marked unverified", name)
+		}
+	}
+	if host, _, err := net.SplitHostPort(c.Server.Addr); err == nil && !isLoopback(host) {
+		warnf("server.addr %q is not a loopback address; patchbot serve will require PATCHBOT_UI_TOKEN", c.Server.Addr)
+	}
+	return out
+}
+
+// providerModels returns the models a provider is expected to run: its list,
+// its default and, for the default provider, the two stage models.
+func (c *Config) providerModels(name string) []string {
+	p := c.Providers[name]
+	models := slices.Clone(p.Models)
+	add := func(model string) {
+		if model != "" && !slices.Contains(models, model) {
+			models = append(models, model)
+		}
+	}
+	add(p.DefaultModel)
+	if name == c.Defaults.Provider {
+		add(c.Defaults.RefineModel)
+		add(c.Defaults.CodeModel)
+	}
+	return models
+}
+
+func validMoney(f float64) bool {
+	return f >= 0 && !math.IsInf(f, 0) && !math.IsNaN(f)
+}
+
+func validModelID(id string) bool {
+	return id != "" && len(id) <= 200 && !strings.ContainsFunc(id, func(r rune) bool {
+		return isControl(r) || r == ' '
+	})
+}
+
+func validProtectedPath(path string) bool {
+	if path == "" || strings.HasPrefix(path, "/") || strings.ContainsRune(path, 0) || strings.Contains(path, `\`) {
+		return false
+	}
+	for seg := range strings.SplitSeq(strings.TrimSuffix(path, "/"), "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
+
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func orNone(items []string) string {
+	if len(items) == 0 {
+		return "none"
+	}
+	return strings.Join(items, ", ")
+}
+
+exec
+/bin/zsh -lc "rg -n 'func CheckAppKeyFile|func LoadAppPrivateKey|migrations|schema_version' internal/github internal/store; cat internal/github/appkey.go; cat internal/store/migrate.go; sed -n '1,170p' internal/runner/auth.go; rg -n 'symlink|directory|state|attacker|migration' internal/github/setup_test.go internal/server/githubsetup_test.go SECURITY.md docs/M28-REPORT.md" in /Users/pappumishra/Documents/selfproject/patchbot-m28-connect-github
+ succeeded in 0ms:
+internal/store/review_test.go:30:	migrations, err := loadMigrations()
+internal/store/review_test.go:34:	if _, err := db.ExecContext(t.Context(), `CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, checksum TEXT NOT NULL, applied_at INTEGER NOT NULL) STRICT`); err != nil {
+internal/store/review_test.go:38:	for _, m := range migrations {
+internal/store/review_test.go:43:		if err := s.applyMigration(t.Context(), m, int64(len(migrations))); err != nil {
+internal/store/review_test.go:63:	if err := s.applyMigration(t.Context(), review, int64(len(migrations))); err != nil {
+internal/store/inspect.go:14:// applying migrations. Opening a store for normal use remains the migration step.
+internal/store/inspect.go:26:	rows, err := db.QueryContext(ctx, "SELECT version,name,checksum FROM schema_migrations ORDER BY version")
+internal/store/inspect.go:31:	entries, err := migrationFiles.ReadDir("migrations")
+internal/store/inspect.go:45:		body, err := migrationFiles.ReadFile("migrations/" + entries[count].Name())
+internal/store/inspect.go:58:		return count, errors.New("database has pending migrations; normal startup applies them")
+internal/store/inspect_test.go:12:		{"pending", "DELETE FROM schema_migrations WHERE version=2"},
+internal/store/inspect_test.go:13:		{"gap", "DELETE FROM schema_migrations WHERE version=1"},
+internal/store/inspect_test.go:14:		{"checksum", "UPDATE schema_migrations SET checksum='changed' WHERE version=1"},
+internal/store/inspect_test.go:15:		{"ahead", "UPDATE schema_migrations SET version=99 WHERE version=2"},
+internal/store/inspect_test.go:35:			files, _ := migrationFiles.ReadDir("migrations")
+internal/store/migrate.go:17://go:embed migrations/*.sql
+internal/store/migrate.go:26:	entries, err := fs.ReadDir(migrationFiles, "migrations")
+internal/store/migrate.go:30:	migrations := make([]migration, 0, len(entries))
+internal/store/migrate.go:35:		if !ok || parseErr != nil || version != int64(len(migrations)+1) {
+internal/store/migrate.go:38:		body, readErr := migrationFiles.ReadFile("migrations/" + name)
+internal/store/migrate.go:42:		migrations = append(migrations, migration{version, name, fmt.Sprintf("%x", sha256.Sum256(body)), string(body)})
+internal/store/migrate.go:44:	return migrations, nil
+internal/store/migrate.go:48:	migrations, err := loadMigrations()
+internal/store/migrate.go:52:	_, err = s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+internal/store/migrate.go:61:	for _, m := range migrations {
+internal/store/migrate.go:62:		if err := s.applyMigration(ctx, m, int64(len(migrations))); err != nil {
+internal/store/migrate.go:128:		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(version),0) FROM schema_migrations`).Scan(&maxVersion); err != nil {
+internal/store/migrate.go:135:		err := tx.QueryRowContext(ctx, `SELECT name, checksum FROM schema_migrations WHERE version=?`, m.version).Scan(&name, &checksum)
+internal/store/migrate.go:164:		_, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES(?,?,?,?)`,
+internal/store/README.md:2:`Open` creates a 0600 on-disk file, applies embedded migrations, and configures
+internal/github/appkey.go:34:func LoadAppPrivateKey(path string, excludedRoots ...string) (*rsa.PrivateKey, error) {
+internal/github/appkey.go:64:func CheckAppKeyFile(path string, excludedRoots ...string) error {
+internal/store/records_test.go:230:	files, err := migrationFiles.ReadDir("migrations")
+internal/store/records_test.go:243:	if err := s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM schema_migrations WHERE version=?`, next).Scan(&ledger); err != nil {
+internal/store/sqlite_test.go:82:	if err := s.db.QueryRowContext(t.Context(), `SELECT version,name,checksum,applied_at FROM schema_migrations WHERE version=1`).Scan(&version, &name, &checksum, &applied); err != nil {
+internal/store/sqlite_test.go:85:	body, err := migrationFiles.ReadFile("migrations/0001_init.sql")
+internal/store/sqlite_test.go:111:	if err := second.db.QueryRowContext(t.Context(), `SELECT applied_at FROM schema_migrations WHERE version=1`).Scan(&reapplied); err != nil {
+internal/store/sqlite_test.go:121:	if _, err := s.db.ExecContext(t.Context(), `UPDATE schema_migrations SET checksum='tampered'`); err != nil {
+internal/store/sqlite_test.go:138:	if _, err := s.db.ExecContext(t.Context(), `INSERT INTO schema_migrations VALUES(999,'0999_future.sql','future',1)`); err != nil {
+internal/store/sqlite.go:31:// connection through the DSN, and applies embedded migrations before returning.
+package github
+
+import (
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const (
+	maxKeyFileBytes = 64 << 10
+	minKeyBits      = 2048
+	// jwtBackdate absorbs clock drift between this host and GitHub.
+	jwtBackdate = 60 * time.Second
+	// jwtLifetime keeps exp under GitHub's 10 minute maximum, measured from now.
+	jwtLifetime = 9 * time.Minute
+)
+
+// LoadAppPrivateKey reads and parses a GitHub App private key file once. The
+// file must be an absolute path to a regular file (no symlink), mode 0600 or
+// stricter, owned by the current user, and not inside any excluded root (the
+// data directory and its workspaces). Errors never contain key material.
+func LoadAppPrivateKey(path string, excludedRoots ...string) (*rsa.PrivateKey, error) {
+	if err := CheckAppKeyFile(path, excludedRoots...); err != nil {
+		return nil, err
+	}
+	file, err := openNoFollow(path)
+	if err != nil {
+		return nil, errors.New("private_key_file: cannot open")
+	}
+	defer func() { _ = file.Close() }()
+	opened, err := file.Stat()
+	if err != nil {
+		return nil, errors.New("private_key_file: cannot stat")
+	}
+	linked, err := os.Lstat(path)
+	if err != nil || !os.SameFile(opened, linked) {
+		return nil, errors.New("private_key_file: changed while opening")
+	}
+	if err := checkKeyInfo(opened); err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxKeyFileBytes+1))
+	if err != nil || len(data) > maxKeyFileBytes {
+		return nil, errors.New("private_key_file: cannot read or larger than 64 KiB")
+	}
+	defer clear(data)
+	return ParseAppPrivateKey(data)
+}
+
+// CheckAppKeyFile reports whether the key file is safely placed without
+// reading it. Doctor uses it; LoadAppPrivateKey repeats it on the open file.
+func CheckAppKeyFile(path string, excludedRoots ...string) error {
+	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsRune(path, 0) {
+		return errors.New("private_key_file: must be a clean absolute path")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return errors.New("private_key_file: not found or not accessible")
+	}
+	if err := checkKeyInfo(info); err != nil {
+		return err
+	}
+	resolvedDir, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return errors.New("private_key_file: cannot resolve its directory")
+	}
+	resolved := filepath.Join(resolvedDir, filepath.Base(path))
+	for _, root := range excludedRoots {
+		if root == "" {
+			continue
+		}
+		candidates := []string{filepath.Clean(root)}
+		if resolvedRoot, err := filepath.EvalSymlinks(root); err == nil {
+			candidates = append(candidates, resolvedRoot)
+		}
+		for _, candidate := range candidates {
+			for _, p := range []string{path, resolved} {
+				if within(candidate, p) {
+					return errors.New("private_key_file: must not be inside the data directory or workspaces")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func within(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+func checkKeyInfo(info os.FileInfo) error {
+	if !info.Mode().IsRegular() {
+		return errors.New("private_key_file: must be a regular file, not a symlink or device")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return errors.New("private_key_file: mode must be 0600 or stricter")
+	}
+	return keyOwner(info)
+}
+
+// ParseAppPrivateKey accepts a PKCS#1 ("RSA PRIVATE KEY") or PKCS#8
+// ("PRIVATE KEY") PEM block holding an RSA key of at least 2048 bits.
+func ParseAppPrivateKey(data []byte) (*rsa.PrivateKey, error) {
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, errors.New("private_key_file: no PEM block")
+	}
+	defer clear(block.Bytes)
+	var key *rsa.PrivateKey
+	switch block.Type {
+	case "RSA PRIVATE KEY":
+		parsed, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, errors.New("private_key_file: invalid PKCS#1 RSA key")
+		}
+		key = parsed
+	case "PRIVATE KEY":
+		parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, errors.New("private_key_file: invalid PKCS#8 key")
+		}
+		rsaKey, ok := parsed.(*rsa.PrivateKey)
+		if !ok {
+			return nil, errors.New("private_key_file: PKCS#8 key is not RSA")
+		}
+		key = rsaKey
+	default:
+		return nil, errors.New("private_key_file: unsupported PEM block type")
+	}
+	if key.N.BitLen() < minKeyBits {
+		return nil, errors.New("private_key_file: RSA key must be at least 2048 bits")
+	}
+	if err := key.Validate(); err != nil {
+		return nil, errors.New("private_key_file: RSA key failed validation")
+	}
+	return key, nil
+}
+
+// SignAppJWT builds a GitHub App JWT: RS256, iat = now-60s, exp = now+9m,
+// iss = app ID. It uses only the standard library.
+func SignAppJWT(key *rsa.PrivateKey, appID int64, now time.Time) (string, error) {
+	if key == nil || appID <= 0 {
+		return "", errors.New("app JWT requires a key and a positive app ID")
+	}
+	header, _ := json.Marshal(map[string]string{"alg": "RS256", "typ": "JWT"})
+	claims, err := json.Marshal(struct {
+		IAT int64  `json:"iat"`
+		EXP int64  `json:"exp"`
+		ISS string `json:"iss"`
+	}{now.Add(-jwtBackdate).Unix(), now.Add(jwtLifetime).Unix(), strconv.FormatInt(appID, 10)})
+	if err != nil {
+		return "", errors.New("cannot encode app JWT claims")
+	}
+	enc := base64.RawURLEncoding
+	signing := enc.EncodeToString(header) + "." + enc.EncodeToString(claims)
+	digest := sha256.Sum256([]byte(signing))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
+	if err != nil {
+		return "", errors.New("cannot sign app JWT")
+	}
+	return signing + "." + enc.EncodeToString(signature), nil
+}
+package store
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"database/sql/driver"
+	"embed"
+	"errors"
+	"fmt"
+	"io/fs"
+	"strconv"
+	"strings"
+	"time"
+)
+
+//go:embed migrations/*.sql
+var migrationFiles embed.FS
+
+type migration struct {
+	version             int64
+	name, checksum, sql string
+}
+
+func loadMigrations() ([]migration, error) {
+	entries, err := fs.ReadDir(migrationFiles, "migrations")
+	if err != nil {
+		return nil, err
+	}
+	migrations := make([]migration, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		prefix, _, ok := strings.Cut(name, "_")
+		version, parseErr := strconv.ParseInt(prefix, 10, 64)
+		if !ok || parseErr != nil || version != int64(len(migrations)+1) {
+			return nil, fmt.Errorf("invalid migration filename %q", name)
+		}
+		body, readErr := migrationFiles.ReadFile("migrations/" + name)
+		if readErr != nil {
+			return nil, readErr
+		}
+		migrations = append(migrations, migration{version, name, fmt.Sprintf("%x", sha256.Sum256(body)), string(body)})
+	}
+	return migrations, nil
+}
+
+func (s *SQLite) migrate(ctx context.Context) error {
+	migrations, err := loadMigrations()
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+		version INTEGER PRIMARY KEY CHECK (version > 0), name TEXT NOT NULL,
+		checksum TEXT NOT NULL, applied_at INTEGER NOT NULL CHECK (applied_at >= 0)
+	) STRICT`)
+	if err != nil {
+		return fmt.Errorf("create migration ledger: %w", err)
+	}
+	// Each transaction re-reads the ledger while holding the immediate write
+	// lock, so separate processes can safely open the same fresh database.
+	for _, m := range migrations {
+		if err := s.applyMigration(ctx, m, int64(len(migrations))); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// foreignKeysOff marks a migration that rebuilds a referenced table. SQLite
+// ignores PRAGMA foreign_keys inside a transaction and DROP TABLE would
+// otherwise cascade into child rows, so the migrator switches enforcement off
+// on its single connection, applies the migration in a transaction, verifies
+// foreign_key_check before commit and always switches enforcement back on.
+const foreignKeysOff = "-- patchbot:foreign_keys=off"
+
+// needsForeignKeysOff reads the marker from the first line, tolerating a BOM,
+// CR line endings and surrounding whitespace. A table rebuild without the
+// marker would cascade deletes, so DROP TABLE without it is refused.
+func needsForeignKeysOff(m migration) (bool, error) {
+	first, _, _ := strings.Cut(strings.TrimPrefix(m.sql, "\uFEFF"), "\n")
+	if strings.TrimSpace(first) == foreignKeysOff {
+		return true, nil
+	}
+	if strings.Contains(strings.ToUpper(m.sql), "DROP TABLE") {
+		return false, fmt.Errorf("migration %s drops a table without %s", m.name, foreignKeysOff)
+	}
+	return false, nil
+}
+
+func (s *SQLite) applyMigration(ctx context.Context, m migration, latest int64) error {
+	off, err := needsForeignKeysOff(m)
+	if err != nil {
+		return err
+	}
+	if !off {
+		return s.withTx(ctx, func(tx *eventTx) error { return applyMigrationTx(ctx, tx, m, latest, false) })
+	}
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+		return err
+	}
+	applyErr := func() error {
+		tx, err := conn.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }()
+		if err := applyMigrationTx(ctx, &eventTx{Tx: tx}, m, latest, true); err != nil {
+			return mapError(err)
+		}
+		return tx.Commit()
+	}()
+	_, restoreErr := conn.ExecContext(context.WithoutCancel(ctx), `PRAGMA foreign_keys=ON`)
+	if restoreErr != nil {
+		// Never return a pooled connection without enforcement.
+		_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+	}
+	return errors.Join(applyErr, restoreErr)
+}
+
+func applyMigrationTx(ctx context.Context, tx *eventTx, m migration, latest int64, checkKeys bool) error {
+	{
+		var maxVersion int64
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(version),0) FROM schema_migrations`).Scan(&maxVersion); err != nil {
+			return err
+		}
+		if maxVersion > latest {
+			return fmt.Errorf("database migration %d is newer than supported version %d", maxVersion, latest)
+		}
+		var name, checksum string
+		err := tx.QueryRowContext(ctx, `SELECT name, checksum FROM schema_migrations WHERE version=?`, m.version).Scan(&name, &checksum)
+		if err == nil {
+			if name != m.name || checksum != m.checksum {
+				return fmt.Errorf("migration %d (%s) name or checksum changed", m.version, m.name)
+			}
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if maxVersion != m.version-1 {
+			return fmt.Errorf("migration ledger has a gap before version %d", m.version)
+		}
+		if _, err := tx.ExecContext(ctx, m.sql); err != nil {
+			return fmt.Errorf("apply migration %s: %w", m.name, err)
+		}
+		if checkKeys {
+			rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
+			if err != nil {
+				return err
+			}
+			violation := rows.Next()
+			if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+				return err
+			}
+			if violation {
+				return fmt.Errorf("apply migration %s: foreign key check failed", m.name)
+			}
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES(?,?,?,?)`,
+			m.version, m.name, m.checksum, time.Now().UTC().UnixMilli())
+		return err
+	}
+}
+package runner
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"os"
+	"path/filepath"
+
+	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/github"
+	"github.com/aryanpappu/patchbot/internal/gitx"
+	"github.com/aryanpappu/patchbot/internal/secret"
+)
+
+// setupGitHub selects the per-repository credential source and the REST
+// client. PAT mode keeps the old behaviour (one token for every repository).
+// App mode loads the private key once, resolves the bot identity and commit
+// author, and fails startup on any error: there is no fallback to a PAT.
+func (r *Runner) setupGitHub(ctx context.Context) error {
+	opts := &r.opts
+	if opts.RepoTokens == nil && r.cfg.GitHub.App() && r.cfg.GitHub.AppID == 0 {
+		// Setup mode: the App ID comes from the "Connect GitHub" flow. Without
+		// one the server still starts, but every credential request fails closed
+		// (never a PAT) and new runs are refused with ErrGitHubNotConnected.
+		app, found, err := r.db.GitHubApp(ctx)
+		if err != nil {
+			return errors.New("could not read the connected GitHub App")
+		}
+		if found {
+			r.cfg.GitHub.AppID = app.AppID
+		} else {
+			r.notConnected = true
+			opts.RepoTokens = notConnectedTokens{}
+		}
+	}
+	if opts.RepoTokens == nil && r.cfg.GitHub.App() {
+		app, identity, err := NewGitHubApp(ctx, r.cfg, opts.GitHubAPI, opts.GitHubHTTP, r.registerToken)
+		if err != nil {
+			return err
+		}
+		opts.RepoTokens = app
+		opts.BotLogin = identity.Login
+		opts.CommitAuthor = gitx.Author{Name: identity.Login, Email: identity.CommitEmail()}
+	}
+	if opts.RepoTokens == nil {
+		if opts.Tokens == nil {
+			opts.Tokens = Token{Value: secret.New(os.Getenv("GITHUB_TOKEN"))}
+		}
+		if token, err := opts.Tokens.Token(ctx); err == nil {
+			r.redactor.AddSecrets(secret.New(token))
+			r.redactor.Add(github.GitHeaderForm(token))
+		}
+		opts.RepoTokens = github.StaticRepoTokens{Source: opts.Tokens}
+	}
+	r.tokens = opts.RepoTokens
+	r.gh = opts.GitHub
+	if r.gh == nil {
+		var err error
+		if r.cfg.GitHub.App() {
+			r.gh, err = github.NewWithRepoTokens(opts.GitHubHTTP, opts.GitHubAPI, opts.RepoTokens, nil)
+		} else {
+			r.gh, err = github.New(opts.GitHubHTTP, opts.GitHubAPI, opts.Tokens)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ErrGitHubNotConnected refuses new runs until the Connect GitHub flow ran.
+var ErrGitHubNotConnected = errors.New("GitHub is not connected yet: open /setup/github in the dashboard and connect GitHub first")
+
+// notConnectedTokens fails every credential request in setup mode.
+type notConnectedTokens struct{}
+
+func (notConnectedTokens) RepoToken(context.Context, github.RepoRef) (string, error) {
+	return "", ErrGitHubNotConnected
+}
+
+// GitHubConnected reports whether the runner has GitHub credentials. It is
+// false only in app mode before the Connect GitHub flow created the App.
+func (r *Runner) GitHubConnected() bool { return !r.notConnected }
+
+// registerToken masks a minted token, and its git header form, in every
+// redactor that output can pass through: the runner's own and the caller's
+// (CLI or server). It runs before the token is used anywhere.
+func (r *Runner) registerToken(token string) {
+	for _, redactor := range []*secret.Redactor{r.redactor, r.opts.Redactor} {
+		if redactor != nil {
+			redactor.Add(token, github.GitHeaderForm(token))
+		}
+	}
+}
+
+// NewGitHubApp builds the App token source from [github] and resolves the bot
+// identity. onMint receives every minted token before it is used.
+func NewGitHubApp(ctx context.Context, cfg *config.Config, baseURL string, client *http.Client, onMint func(string)) (*github.App, github.AppIdentity, error) {
+	g := cfg.GitHub
+	key, err := github.LoadAppPrivateKey(g.PrivateKeyFile, cfg.DataDir(), filepath.Join(cfg.DataDir(), "workspaces"))
+	if err != nil {
+		return nil, github.AppIdentity{}, err
+	}
+	app, err := github.NewApp(github.AppOptions{AppID: g.AppID, Key: key, InstallationID: g.InstallationID,
+		BaseURL: baseURL, HTTPClient: client, OnMint: onMint})
+	if err != nil {
+		return nil, github.AppIdentity{}, err
+	}
+	identity, err := app.Identity(ctx)
+	if err != nil {
+		return nil, github.AppIdentity{}, errors.Join(errors.New("GitHub App identity check failed; refusing to start (no PAT fallback)"), err)
+	}
+	return app, identity, nil
+}
+
+// githubCredentialError never quotes a token source's error text.
+func githubCredentialError(err error) error {
+	var mint *github.MintError
+	if errors.As(err, &mint) {
+		return mint
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return errors.New("GitHub credential unavailable; check GITHUB_TOKEN or the [github] App settings")
+}
+internal/github/setup_test.go:48:	// A symlink (even dangling) at the path is refused, not followed.
+internal/github/setup_test.go:54:		t.Fatalf("symlink: %v", err)
+internal/github/setup_test.go:64:	// An excluded root (the data directory) is refused and nothing is left.
+SECURITY.md:27:Trusted PATH entries must exist and resolve to directories. Every directory
+SECURITY.md:28:from `/` to the entry, including unresolved symlink locations, must be owned by
+SECURITY.md:67:symlinks refused, never inside the data directory, workspaces or backups) and
+SECURITY.md:77:shell (like the other pages); the manifest and a 32-byte random `state` are
+SECURITY.md:78:issued only by the bearer-protected `POST /api/github/setup/start`. The state
+SECURITY.md:82:carry a bearer header, that one route is authenticated by the state alone; an
+SECURITY.md:83:attacker who cannot obtain a state cannot make patchbot adopt their App. The
+SECURITY.md:88:existing file, symlink or dangling link is refused, so a key is never replaced.
+SECURITY.md:89:The key directory must pre-exist; the check runs before the single-use code is
+docs/M28-REPORT.md:25:    key path, mints a 32-byte random state (kept only as a SHA-256 digest, max
+docs/M28-REPORT.md:27:    returns the `https://github.com/settings/apps/new?state=...` action and the
+docs/M28-REPORT.md:31:    cannot send it); the state is the credential. Validates and consumes the
+docs/M28-REPORT.md:32:    state, preflights the key path (before the code is spent), exchanges the
+docs/M28-REPORT.md:43:  directory, `0600`, fsync, then `os.Link` to the final path (fails if anything,
+docs/M28-REPORT.md:44:  including a dangling symlink, is there), temp removed, then the M27 placement
+docs/M28-REPORT.md:46:  service user because the server process creates it. The directory is never
+docs/M28-REPORT.md:48:- **Store**: migration `0009_github_app.sql` (single row: app_id, slug,
+docs/M28-REPORT.md:71:name; state mismatch/empty/malformed/expired/replayed rejected without calling
+docs/M28-REPORT.md:72:GitHub; state consumed on a failed exchange; success writes a 0600 key with the
+docs/M28-REPORT.md:76:status 401, shell and callback reachable, callback relies on state); missing key
+docs/M28-REPORT.md:77:directory; runs refused before connection (409, no run row); status endpoint
+docs/M28-REPORT.md:79:(key writer, symlink/dangling/relative/excluded-root cases, conversion
+internal/server/githubsetup_test.go:187:// start asks for a manifest and returns the state and decoded response.
+internal/server/githubsetup_test.go:188:func (f *setupFixture) start() (state string, manifest string) {
+internal/server/githubsetup_test.go:202:	state = u.Query().Get("state")
+internal/server/githubsetup_test.go:203:	if len(state) != 43 { // 32 random bytes, base64url without padding
+internal/server/githubsetup_test.go:204:		f.t.Fatalf("state %q is not 32 random bytes", state)
+internal/server/githubsetup_test.go:206:	return state, out.Manifest
+internal/server/githubsetup_test.go:209:func (f *setupFixture) callback(code, state string) *httptest.ResponseRecorder {
+internal/server/githubsetup_test.go:210:	return f.do("GET", "/setup/github/callback?code="+url.QueryEscape(code)+"&state="+url.QueryEscape(state), false)
+internal/server/githubsetup_test.go:248:			t.Fatalf("state %q: %d", bad, w.Code)
+internal/server/githubsetup_test.go:257:		t.Fatal("GitHub was called for an invalid state")
+internal/server/githubsetup_test.go:262:		t.Fatalf("valid state: %d %s", w.Code, w.Body.String())
+internal/server/githubsetup_test.go:274:	state, _ := f.start()
+internal/server/githubsetup_test.go:275:	w := f.callback("bad-code", state)
+internal/server/githubsetup_test.go:285:	if w := f.callback("good-code", state); w.Code != 400 {
+internal/server/githubsetup_test.go:286:		t.Fatalf("reused state: %d", w.Code)
+internal/server/githubsetup_test.go:295:	state, _ := f.start()
+internal/server/githubsetup_test.go:296:	w := f.callback("good-code", state)
+internal/server/githubsetup_test.go:366:	state, _ := f.start()
+internal/server/githubsetup_test.go:371:	if w := f.callback("good-code", state); w.Code != 409 {
+internal/server/githubsetup_test.go:418:	// The data-free shell is reachable; the callback relies on its state.
+internal/server/githubsetup_test.go:423:		t.Fatalf("callback with unknown state: %d", w.Code)
+internal/server/githubsetup_test.go:459:	state, _ := f.start()
+internal/server/githubsetup_test.go:460:	if w := f.callback("good-code", state); w.Code != 200 {
+internal/server/githubsetup_test.go:494:	state, _ := f.start()
+internal/server/githubsetup_test.go:495:	if w := f.callback("good-code", state); w.Code != 200 {
+
+codex
+The callback rejects unknown, expired, and reused state before exchanging the code. The exchange target comes from server configuration, and redirects are refused. I’m checking the remaining filesystem and migration edge cases.
+exec
+/bin/zsh -lc "cat internal/github/setup_test.go; sed -n '65,105p' SECURITY.md; git diff development...HEAD -- internal/config/config.go internal/store/store.go; rg -n 'func .*request|StatusCode|response|MintError' internal/github/client.go internal/github/app.go; rg --files internal/store/migrations; rg --files -g AGENTS.md /Users/pappumishra/Documents/selfproject 2>/dev/null" in /Users/pappumishra/Documents/selfproject/patchbot-m28-connect-github
+ succeeded in 215ms:
+//go:build unix
+
+package github
+
+import (
+	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/aryanpappu/patchbot/internal/testhttp"
+)
+
+func setupPEM(t *testing.T) []byte {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+}
+
+func TestWriteNewKeyFile(t *testing.T) {
+	keyPEM := setupPEM(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "k.pem")
+	if err := WriteNewKeyFile(path, keyPEM); err != nil {
+		t.Fatal(err)
+	}
+	info, _ := os.Lstat(path)
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", info.Mode())
+	}
+	if _, err := LoadAppPrivateKey(path); err != nil {
+		t.Fatalf("written key does not load: %v", err)
+	}
+	if err := WriteNewKeyFile(path, keyPEM); !errors.Is(err, ErrKeyFileExists) {
+		t.Fatalf("overwrite: %v", err)
+	}
+	// A symlink (even dangling) at the path is refused, not followed.
+	link := filepath.Join(dir, "link.pem")
+	if err := os.Symlink(filepath.Join(dir, "nowhere"), link); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteNewKeyFile(link, keyPEM); !errors.Is(err, ErrKeyFileExists) {
+		t.Fatalf("symlink: %v", err)
+	}
+	for _, bad := range []string{"relative.pem", filepath.Join(dir, "missing", "k.pem"), dir + "/a/../b.pem"} {
+		if err := WriteNewKeyFile(bad, keyPEM); err == nil {
+			t.Fatalf("accepted %q", bad)
+		}
+	}
+	if err := WriteNewKeyFile(filepath.Join(dir, "junk.pem"), []byte("not a key")); err == nil {
+		t.Fatal("accepted a non-key")
+	}
+	// An excluded root (the data directory) is refused and nothing is left.
+	inside := filepath.Join(dir, "inside.pem")
+	if err := WriteNewKeyFile(inside, keyPEM, dir); err == nil {
+		t.Fatal("key inside an excluded root accepted")
+	}
+	if _, err := os.Lstat(inside); err == nil {
+		t.Fatal("refused key left on disk")
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".patchbot-") {
+			t.Fatalf("temp file left: %s", e.Name())
+		}
+	}
+}
+
+func TestConvertManifest(t *testing.T) {
+	keyPEM := setupPEM(t)
+	var gotPath, gotMethod string
+	respond := func(status int, body []byte) *http.Client {
+		server := testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath, gotMethod = r.URL.Path, r.Method
+			if r.Header.Get("Authorization") != "" {
+				t.Error("conversion must be unauthenticated")
+			}
+			w.WriteHeader(status)
+			_, _ = w.Write(body)
+		}))
+		t.Cleanup(server.Close)
+		client := server.Client()
+		client.Transport = rewrite{base: client.Transport, url: server.URL}
+		return client
+	}
+	good, _ := json.Marshal(map[string]any{"id": 5, "slug": "patchbot-ab12cd", "pem": string(keyPEM), "client_secret": "S", "webhook_secret": "W"})
+	conv, err := ConvertManifest(t.Context(), respond(201, good), "", "abc123")
+	if err != nil || conv.ID != 5 || conv.Slug != "patchbot-ab12cd" || !bytes.Equal(conv.PEM, keyPEM) {
+		t.Fatalf("%+v %v", conv, err)
+	}
+	if gotMethod != "POST" || gotPath != "/app-manifests/abc123/conversions" {
+		t.Fatalf("%s %s", gotMethod, gotPath)
+	}
+	for name, tc := range map[string]struct {
+		status int
+		body   []byte
+		code   string
+	}{
+		"not found":     {404, []byte(`{"message":"SECRET-ECHO"}`), "abc123"},
+		"oversized":     {201, append([]byte(`{"pem":"`), bytes.Repeat([]byte("A"), maxConversionBody)...), "abc123"},
+		"bad json":      {201, []byte(`{SECRET-ECHO`), "abc123"},
+		"no key":        {201, []byte(`{"id":5,"slug":"x","pem":"SECRET-ECHO"}`), "abc123"},
+		"bad slug":      {201, []byte(`{"id":5,"slug":"../x","pem":"SECRET-ECHO"}`), "abc123"},
+		"path in code":  {201, good, "../x"},
+		"empty code":    {201, good, ""},
+		"zero id":       {201, []byte(`{"id":0,"slug":"x"}`), "abc123"},
+		"redirect-like": {302, []byte(`SECRET-ECHO`), "abc123"},
+	} {
+		_, err := ConvertManifest(t.Context(), respond(tc.status, tc.body), "", tc.code)
+		if err == nil || strings.Contains(err.Error(), "SECRET-ECHO") || strings.Contains(err.Error(), "abc123") {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+}
+
+// rewrite sends requests for api.github.com to the test server.
+type rewrite struct {
+	base http.RoundTripper
+	url  string
+}
+
+func (r rewrite) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.URL.Scheme, clone.URL.Host = "http", strings.TrimPrefix(r.url, "http://")
+	if strings.HasPrefix(r.url, "https://") {
+		clone.URL.Scheme, clone.URL.Host = "https", strings.TrimPrefix(r.url, "https://")
+	}
+	return r.base.RoundTrip(clone)
+}
+
+func TestNewManifestPermissionsMatchRunPermissions(t *testing.T) {
+	m := NewManifest("https://patchbot.example.org/", "n")
+	if m.RedirectURL != "https://patchbot.example.org/setup/github/callback" || m.URL != "https://patchbot.example.org" || m.Public || m.HookAttributes.Active {
+		t.Fatalf("%+v", m)
+	}
+	if len(m.DefaultPermissions) != len(RunPermissions) {
+		t.Fatal("permission sets differ")
+	}
+	for k, v := range RunPermissions {
+		if m.DefaultPermissions[k] != v {
+			t.Fatalf("%s", k)
+		}
+	}
+	m.DefaultPermissions["contents"] = "read"
+	if RunPermissions["contents"] != "write" {
+		t.Fatal("manifest aliases RunPermissions")
+	}
+}
+that can mint tokens for every repository the App is installed on. patchbot
+keeps it in a file readable only by the service user (0600, owner checked,
+symlinks refused, never inside the data directory, workspaces or backups) and
+parses it once into memory. This is not a boundary against root, against other
+processes running as the patchbot user, or against debuggers and core dumps of
+the patchbot process. Install the App only on the repositories patchbot needs,
+run repository code with the container executor so it does not run as a process
+that can read the key, and rotate the key after any suspected host compromise
+(outstanding installation tokens stay valid until they expire, at most 1 hour,
+unless the installation is suspended).
+
+Connect GitHub (App manifest flow, M28): `GET /setup/github` is a data-free
+shell (like the other pages); the manifest and a 32-byte random `state` are
+issued only by the bearer-protected `POST /api/github/setup/start`. The state
+is kept as a SHA-256 digest in server memory, expires after 10 minutes, works
+once, is compared in constant time, and is consumed even when the exchange fails.
+Because GitHub redirects the browser to `/setup/github/callback`, which cannot
+carry a bearer header, that one route is authenticated by the state alone; an
+attacker who cannot obtain a state cannot make patchbot adopt their App. The
+code exchange is a bounded (64 KiB), 20-second, no-redirect, unauthenticated
+call; its response and the code are never logged or echoed, and errors are fixed
+strings. The key is written atomically (exclusive temp file, `0600`, then a
+hard link that fails if the path exists), owned by the service user, and an
+existing file, symlink or dangling link is refused, so a key is never replaced.
+The key directory must pre-exist; the check runs before the single-use code is
+spent so a key cannot be lost after the App was created. The database stores
+only the App ID and slug. `client_secret` and `webhook_secret` are discarded
+(the App is created with the webhook inactive). The setup page relaxes only
+`form-action` to `https://github.com`. Setup is disabled once connected, and a
+public, unauthenticated visitor can learn only whether GitHub is connected.
+
+In scope: file-tool jail escapes, command-policy bypass, leaks through logs,
+SSE, artifacts, errors or PR text, unsafe git publication, browser protection
+bypass and code execution without valid spec approval. Prompt injection that
+crosses these enforced boundaries is in scope.
+
+Out of scope: containing arbitrary repository code, a compromised host or
+operator account, malicious trusted binaries, intentional credential exfiltration
+by tests, children that escape process groups, denial of service by host code,
+multi-user authorization and secure public deployment. Redaction cannot identify
+every secret or arbitrary encoding. The Unix binary starts
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-OMtMImNH' (errno=Operation not permitted)
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 45b93d0..719c208 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -185,6 +185,13 @@ type GitHub struct {
+ 	PrivateKeyFile string `toml:"private_key_file"`
+ 	// InstallationID is optional; 0 resolves each repository's installation.
+ 	InstallationID int64 `toml:"installation_id"`
++	// SetupPublicURL is the externally reachable origin of this server (for
++	// example https://patchbot.example.org). The "Connect GitHub" setup flow
++	// builds the App manifest and its redirect URL from it. Empty disables setup.
++	SetupPublicURL string `toml:"setup_public_url"`
++	// SetupAppName is the name requested for the App. Empty picks
++	// "patchbot-" plus six random characters (App names are globally unique).
++	SetupAppName string `toml:"setup_app_name"`
+ }
+ 
+ // App reports whether GitHub App authentication is configured.
+diff --git a/internal/store/store.go b/internal/store/store.go
+index c16d7a8..a687660 100644
+--- a/internal/store/store.go
++++ b/internal/store/store.go
+@@ -336,6 +336,11 @@ type Store interface {
+ 	// IsPostedComment reports whether patchbot recorded posting this comment.
+ 	IsPostedComment(ctx context.Context, commentID int64) (bool, error)
+ 
++	// GitHubApp returns the App created by the Connect GitHub flow, if any.
++	GitHubApp(context.Context) (GitHubApp, bool, error)
++	// SaveGitHubApp records it once; a second call returns ErrConflict.
++	SaveGitHubApp(context.Context, GitHubApp) error
++
+ 	RecordAction(context.Context, Action) (Action, error)
+ 	ListActions(ctx context.Context, runID int64) ([]Action, error)
+ 	SaveArtifact(context.Context, Artifact) error
+rg: internal/github/client.go: No such file or directory (os error 2)
+internal/github/app.go:35:// MintError is a credential-free failure to obtain an App credential. Kind is
+internal/github/app.go:38:type MintError struct {
+internal/github/app.go:44:func (e *MintError) Error() string { return "GitHub App authentication " + e.Kind + ": " + e.msg }
+internal/github/app.go:309:		return Installation{}, &MintError{Kind: "denied", msg: "installation response has no ID"}
+internal/github/app.go:356:// verifyScope fails closed unless the response states exactly the requested
+internal/github/app.go:361:		return &MintError{Kind: "denied", msg: "token response does not state its permissions"}
+internal/github/app.go:365:			return &MintError{Kind: "denied", msg: "token lacks permission " + name + ":" + level}
+internal/github/app.go:370:			return &MintError{Kind: "denied", msg: "token carries unrequested permission " + name}
+internal/github/app.go:374:		return &MintError{Kind: "denied", msg: "token is not limited to exactly the requested repository"}
+internal/github/app.go:395:		return mintedToken{}, &MintError{Kind: "unavailable", msg: "invalid installation token response"}
+internal/github/app.go:401:		return mintedToken{}, &MintError{Kind: "unavailable", msg: "installation token already expired"}
+internal/github/app.go:433:				return &MintError{Kind: "rate_limited", Reset: limited.Reset, msg: "GitHub rate limit; retry after the reset"}
+internal/github/app.go:436:		case errors.As(err, &api) && (api.StatusCode == http.StatusUnauthorized || api.StatusCode == http.StatusForbidden ||
+internal/github/app.go:437:			api.StatusCode == http.StatusNotFound || api.StatusCode == http.StatusUnprocessableEntity):
+internal/github/app.go:438:			return &MintError{Kind: "denied", msg: fmt.Sprintf("GitHub refused the App request (HTTP %d); check the installation, its repositories and permissions", api.StatusCode)}
+internal/github/app.go:439:		case errors.As(err, &api) && api.StatusCode < 500:
+internal/github/app.go:440:			return &MintError{Kind: "unavailable", msg: fmt.Sprintf("unexpected GitHub response (HTTP %d)", api.StatusCode)}
+internal/github/app.go:443:				return &MintError{Kind: "unavailable", msg: "GitHub App API unreachable"}
+internal/store/migrations/0005_webhooks.sql
+internal/store/migrations/0006_webhook_attempts.sql
+internal/store/migrations/0004_review.sql
+internal/store/migrations/0009_github_app.sql
+internal/store/migrations/0007_posted_comments.sql
+internal/store/migrations/0002_run_generation.sql
+internal/store/migrations/0003_memory.sql
+internal/store/migrations/0008_reserved_m23.sql
+internal/store/migrations/0001_init.sql
+/Users/pappumishra/Documents/selfproject/stock/AGENTS.md
+/Users/pappumishra/Documents/selfproject/job-agent/AGENTS.md
+
+codex
+No actionable findings in `git diff development...HEAD` across the requested security and migration areas.
+
+Static review only; tests were not run in the read-only environment.
+tokens used
+37,974
+No actionable findings in `git diff development...HEAD` across the requested security and migration areas.
+
+Static review only; tests were not run in the read-only environment.
