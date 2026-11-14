@@ -26,3 +26,5 @@ no new CDN libraries, inline SVG icons, SSE for live updates.
 ## Done when
 All flows above work in Chrome against the Mumbai deploy; web tests updated; CSP/SRI tests green;
 Codex review of the XSS surface (model output, diffs and logs rendered as text, never HTML); make ci green.
+
+Design rules: follow `.claude/rules/frontend.md` (loaded automatically when editing internal/web).
