@@ -95,3 +95,36 @@ func TestVendoredVueMatchesIntegrity(t *testing.T) {
 		t.Fatalf("embedded Vue SRI: got %s, want %s", actual, VueIntegrity)
 	}
 }
+
+// The request form renders user text only through value bindings and text
+// nodes, and links only through the validated link() helper.
+func TestWriteRequestFormUsesSafeSinks(t *testing.T) {
+	data, err := files.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(data)
+	start := strings.Index(js, "function requestForm()")
+	end := strings.Index(js, "function listView()")
+	if start < 0 || end < start {
+		t.Fatal("requestForm not found")
+	}
+	form := js[start:end]
+	for _, want := range []string{`input(draft, "title"`, `area(draft, "body"`, "link(made.html_url", `"Create issue"`} {
+		if !strings.Contains(form, want) {
+			t.Errorf("request form lacks %q", want)
+		}
+	}
+	for _, bad := range []string{"innerHTML", "v-html", "href:", "template:"} {
+		if strings.Contains(form, bad) {
+			t.Errorf("request form uses %q", bad)
+		}
+	}
+	// The created-issue link must come from the server's https URL only through link().
+	if !strings.Contains(js, `["http:", "https:"].includes(parsed.protocol)`) {
+		t.Fatal("link helper protocol check missing")
+	}
+	if !strings.Contains(js, "/api/issues") || !strings.Contains(js, "idempotency_key") {
+		t.Fatal("form must post to /api/issues with an idempotency key")
+	}
+}

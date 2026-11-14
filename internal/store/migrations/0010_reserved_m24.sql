@@ -1,0 +1,3 @@
+-- Reserved for M24 (dashboard-managed repositories) so migration numbering stays
+-- contiguous while M26 is developed on its own branch. Intentionally empty.
+-- At merge, drop this file in favour of M24's real 0010 migration.

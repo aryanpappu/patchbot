@@ -8,6 +8,7 @@ a { color: #246bc2; text-underline-offset: .2em; overflow-wrap: anywhere; }
 button, input, select, textarea { font: inherit; padding: .55rem; border: 1px solid var(--edge); border-radius: .3rem; max-width: 100%; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .55; }
+button[aria-pressed="true"] { border-color: var(--accent); border-width: 2px; font-weight: 700; }
 :focus-visible { outline: 3px solid #bd7b00; outline-offset: 3px; }
 .field { display: flex; flex-direction: column; gap: .25rem; margin: .8rem 0; flex: 1 1 13rem; min-width: 0; }
 .field > span, legend { font-weight: 600; }

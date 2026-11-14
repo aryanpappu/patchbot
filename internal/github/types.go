@@ -89,6 +89,7 @@ type Label struct {
 // Issue includes the current issue text used to invalidate stale approvals.
 type Issue struct {
 	Number            int       `json:"number"`
+	NodeID            string    `json:"node_id"`
 	Title             string    `json:"title"`
 	Body              string    `json:"body"`
 	State             string    `json:"state"`

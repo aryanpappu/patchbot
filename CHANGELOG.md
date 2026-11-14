@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add "Create issue from the dashboard" (M26): `POST /api/issues` opens a GitHub
+  issue (with a visible "created via the patchbot dashboard by <actor>" footer
+  and a hidden `patchbot:issue-created` marker) and can start the refine run
+  through the same path as `POST /api/runs`. A client idempotency key makes
+  retries safe, including after a crash mid-request. `/runs/new` gets a "Write a
+  new request" mode. Migration 0011 (`dashboard_issues`); the approval gate is
+  unchanged.
 - Add "Connect GitHub" (M28): create the GitHub App from the dashboard with the
   App manifest flow (`[github] setup_public_url`), the key is written straight
   to a 0600 file and only the App ID and slug are stored. Without an App the

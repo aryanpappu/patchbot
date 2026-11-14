@@ -32,7 +32,7 @@ type accessFixture struct {
 	key *rsa.PrivateKey
 }
 
-func newAccessFixture(t *testing.T, p *fake.Provider) *accessFixture {
+func newAccessFixture(t *testing.T, p *fake.Provider, adjust ...func(*Options)) *accessFixture {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -47,7 +47,12 @@ func newAccessFixture(t *testing.T, p *fake.Provider) *accessFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := newFixtureConfig(t, p, func(o *Options) { o.Access = verifier }, func(c *config.Config) {
+	f := newFixtureConfig(t, p, func(o *Options) {
+		o.Access = verifier
+		for _, a := range adjust {
+			a(o)
+		}
+	}, func(c *config.Config) {
 		c.Server.Auth = config.ServerAuth{Mode: config.AuthCloudflareAccess, TeamDomain: accessTeam, Audience: accessAud, AllowedEmails: []string{accessOwner}}
 	})
 	return &accessFixture{f, key}

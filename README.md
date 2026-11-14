@@ -251,6 +251,13 @@ approved with review off stay unreviewed.
 
 - `/runs/new`: allowlisted repo, issue, mode, provider/model, optional refine
   model, budget and dry-run controls. Dry run starts checked.
+- `/runs/new` > **Write a new request**: repo, title and text. patchbot opens the
+  GitHub issue (as the bot or PAT user; the footer names you, and in Access mode
+  that is your login email, visible to anyone who can read the issue) and, with
+  "Start refine now", starts the run. Nothing changes in the repository until
+  you approve the specification. API: `POST /api/issues` with `repo`, `title`
+  (1-256 chars), `body` (up to 64 KiB), `start_run` and a client-generated
+  `idempotency_key`; resubmitting the same key returns the same issue and run.
 - `/runs`: filters, paging, status, cost, approval count and PR links, plus a
   repository memory panel to list, approve, reject, forget or add lessons.
 - `/runs/ID`: spec editor/history, approval controls, timeline, live events,

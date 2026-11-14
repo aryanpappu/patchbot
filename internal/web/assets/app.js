@@ -72,10 +72,13 @@
       const query = new URLSearchParams(location.search);
       const filters = reactive({ repo: query.get("repo") || "", issue: query.get("issue") || "", status: query.get("status") || "" });
       const form = reactive({ repo: "", issue: "", mode: "fix", budget: "2", dry: true, provider: "", model: "", separate: false, refine: "" });
+      // "Write a new request" mode: key is the idempotency key of the current
+      // attempt; it changes only when the content does, so a retry is safe.
+      const draft = reactive({ write: false, title: "", body: "", start: true, key: "", print: "", created: null });
       const memoryFilters = reactive({ repo: "", status: "pending" });
       const memoryForm = reactive({ repo: "", text: "" });
       let stopStream = null, refreshTimer = null, pollTimer = null, lastID = 0, modelRequest = 0;
-      let refreshing = null, disposed = false;
+      let refreshing = null, disposed = false, redirectTimer = null;
 
       function forgetToken() {
         token = "";
@@ -101,8 +104,9 @@
         }
         if (!response.ok) {
           let message = `Request failed (${response.status}).`;
-          try { const body = await response.json(); message = body.error?.message || message; } catch { /* Use status if the response is not JSON. */ }
-          throw new Error(message);
+          let failure = null;
+          try { failure = await response.json(); message = failure.error?.message || message; } catch { /* Use status if the response is not JSON. */ }
+          throw Object.assign(new Error(message), { body: failure });
         }
         return plain ? response.text() : response.json();
       }
@@ -333,6 +337,43 @@
           navigateRun(result.run);
         });
       }
+      const freshKey = () => {
+        if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+        return Array.from(window.crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
+      };
+      function submitIssue(event) {
+        event.preventDefault();
+        void work(async () => {
+          const budget = Number(form.budget);
+          if (!draft.title.trim()) throw new Error("Enter a title.");
+          if (draft.start && (!Number.isFinite(budget) || budget <= 0 || !Number.isSafeInteger(Math.round(budget * 1000000)))) {
+            throw new Error("Enter a positive budget.");
+          }
+          const payload = { repo: form.repo, title: draft.title, body: draft.body, start_run: draft.start };
+          if (draft.start) {
+            Object.assign(payload, { mode: form.mode, provider: form.provider, code_model: form.model,
+              refine_model: form.separate ? form.refine : form.model, max_cost_micros: Math.round(budget * 1000000), dry_run: form.dry });
+          }
+          // Same content keeps the key, so pressing the button again after a
+          // timeout cannot open a second issue.
+          const print = JSON.stringify(payload);
+          if (print !== draft.print || !draft.key) { draft.key = freshKey(); draft.print = print; }
+          let result;
+          try { result = await send("/api/issues", { ...payload, idempotency_key: draft.key }); }
+          catch (error) {
+            // The issue can exist even when starting its run failed.
+            if (error.body?.issue) draft.created = error.body.issue;
+            throw error;
+          }
+          draft.created = result.issue;
+          s.notice = result.issue.created ? "Issue created." : "Issue already created for this request.";
+          draft.title = ""; draft.body = ""; draft.key = ""; draft.print = "";
+          if (result.run) {
+            const target = result.run;
+            redirectTimer = setTimeout(() => navigateRun(target), 1500);
+          }
+        });
+      }
       function action(name, body = {}) {
         if (!can(name) || s.busy) return;
         void work(async () => {
@@ -378,7 +419,15 @@
         });
       }
       function newView() {
-        return [h("h1", "New run"), h("form", { class: "panel", onSubmit: start }, [
+        return [h("h1", "New run"),
+          h("div", { class: "actions", role: "group", "aria-label": "Request type" }, [
+            h("button", { type: "button", "aria-pressed": String(!draft.write), onClick: () => { draft.write = false; } }, "Existing issue"),
+            h("button", { type: "button", "aria-pressed": String(draft.write), onClick: () => { draft.write = true; } }, "Write a new request")
+          ]),
+          draft.write ? requestForm() : existingForm()];
+      }
+      function existingForm() {
+        return h("form", { class: "panel", onSubmit: start }, [
           field("Repository", select(form, "repo", s.repos.map(repo => [repo, repo]))),
           field("Issue number", input(form, "issue", { type: "number", min: 1, step: 1, required: true })),
           field("Mode", select(form, "mode", ["fix", "refine", "investigate"].map(mode => [mode, mode]))),
@@ -386,7 +435,25 @@
           field("Run budget (USD)", input(form, "budget", { type: "number", min: "0.000001", step: "0.000001", required: true })),
           h("label", { class: "check" }, [h("input", { type: "checkbox", checked: form.dry, onChange: e => { form.dry = e.target.checked; } }), "Dry run — produce artifacts without publishing"]),
           h("button", { type: "submit", disabled: s.busy || !s.repos.length || !form.provider }, "Start run")
-        ])];
+        ]);
+      }
+      function requestForm() {
+        const made = draft.created;
+        return h("form", { class: "panel", onSubmit: submitIssue }, [
+          h("p", "patchbot opens a GitHub issue with this text and, if chosen, starts the refine step. Nothing changes in the repository until you approve the specification."),
+          field("Repository", select(form, "repo", s.repos.map(repo => [repo, repo]))),
+          field("Title", input(draft, "title", { required: true, maxlength: 256 })),
+          field("Request", area(draft, "body", { rows: 8, maxlength: 65536 })),
+          h("label", { class: "check" }, [h("input", { type: "checkbox", checked: draft.start, onChange: e => { draft.start = e.target.checked; } }), "Start refine now"]),
+          ...(draft.start ? [
+            field("Mode", select(form, "mode", ["fix", "refine"].map(mode => [mode, mode]))),
+            ...modelFields(true),
+            field("Run budget (USD)", input(form, "budget", { type: "number", min: "0.000001", step: "0.000001", required: true })),
+            h("label", { class: "check" }, [h("input", { type: "checkbox", checked: form.dry, onChange: e => { form.dry = e.target.checked; } }), "Dry run — produce artifacts without publishing"])
+          ] : []),
+          h("button", { type: "submit", disabled: s.busy || !s.repos.length || (draft.start && !form.provider) }, "Create issue"),
+          made ? h("p", { role: "status" }, [`Created ${made.repo} #${made.number}: `, link(made.html_url, "open on GitHub")]) : null
+        ]);
       }
       function listView() {
         return [h("h1", "Runs"), h("p", { class: "badge" }, `Awaiting approval: ${s.awaiting == null ? "loading" : s.awaiting}`),
@@ -524,7 +591,7 @@
       onUnmounted(() => {
         disposed = true;
         if (stopStream) stopStream.abort();
-        clearInterval(pollTimer); clearTimeout(refreshTimer);
+        clearInterval(pollTimer); clearTimeout(refreshTimer); clearTimeout(redirectTimer);
       });
       return () => h("div", [
         s.error ? h("p", { class: "error", role: "alert" }, s.error) : null,
