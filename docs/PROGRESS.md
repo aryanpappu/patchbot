@@ -29,6 +29,7 @@ for local checks, audit fixes and external validation limits.
 | M20 Repository memory | Done |
 | M21 Opt-in reviewer | Done (off by default) |
 | M22 Webhook and label ingress | Done (off by default), review fixes merged |
+| M23 Login-based dashboard | Done (Cloudflare Access JWT; token mode default) |
 
 ## Known limitations
 

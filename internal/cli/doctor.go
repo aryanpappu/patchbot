@@ -15,6 +15,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/aryanpappu/patchbot/internal/cfaccess"
 	"github.com/aryanpappu/patchbot/internal/config"
 	"github.com/aryanpappu/patchbot/internal/execx"
 	"github.com/aryanpappu/patchbot/internal/github"
@@ -142,6 +143,7 @@ func (a *App) runDoctor(args []string) int {
 			}
 		}
 		doctorStorage(ctx, cfg, add)
+		a.doctorAccess(ctx, cfg, *online, add)
 		if rootErr == nil {
 			excluded := []string{filepath.Join(cfg.DataDir(), "workspaces"), opts.Dir}
 			doctorExecutor(ctx, cfg, root, r, lookup, add, excluded...)
@@ -422,4 +424,30 @@ func doctorAppOnline(ctx context.Context, cfg *config.Config, app *github.App, a
 		}
 		add("PASS", check, fmt.Sprintf("installation %d; contents/issues/pull_requests write, metadata read; token minted", info.ID))
 	}
+}
+
+// doctorAccess checks the Cloudflare Access settings and, online, that the
+// team JWKS is reachable and holds RSA keys. Config validity is already
+// enforced by Validate; this reports the mode and the live key set.
+func (a *App) doctorAccess(ctx context.Context, cfg *config.Config, online bool, add func(string, string, string)) {
+	auth := cfg.Server.Auth
+	if auth.Mode != config.AuthCloudflareAccess {
+		return
+	}
+	add("PASS", "server auth", fmt.Sprintf("cloudflare_access: team %s, %d allowed email(s)", auth.TeamDomain, len(auth.AllowedEmails)))
+	if os.Getenv("PATCHBOT_UI_TOKEN") != "" {
+		add("WARN", "server auth", "PATCHBOT_UI_TOKEN is set but ignored in cloudflare_access mode")
+	}
+	if !online {
+		return
+	}
+	verifier, err := cfaccess.New(cfaccess.Config{TeamDomain: auth.TeamDomain, Audience: auth.Audience, AllowedEmails: auth.AllowedEmails, CertsURL: a.AccessCertsURL})
+	if err == nil {
+		var n int
+		if n, err = verifier.Check(ctx); err == nil {
+			add("PASS", "access JWKS", fmt.Sprintf("%d RSA signing key(s) at https://%s/cdn-cgi/access/certs", n, auth.TeamDomain))
+			return
+		}
+	}
+	add("FAIL", "access JWKS", "could not fetch usable RSA keys from the team certs URL; check team_domain and network")
 }

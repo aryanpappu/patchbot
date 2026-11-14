@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add Cloudflare Access login (`[server.auth] mode = "cloudflare_access"`, M23):
+  verifies the `Cf-Access-Jwt-Assertion` JWT (RS256, team JWKS, issuer, audience,
+  allowed emails), records the verified email as the actor of UI/API decisions,
+  adds `GET /api/session` and a "Signed in as" header, and extends `doctor`.
+  Token mode is unchanged and remains the default.
+
 - Add GitHub App authentication (`[github] auth = "app"`, M27): per-run
   installation tokens narrowed to one repository ID and four permissions,
   refreshed per git network operation, bot identity `<slug>[bot]` for comments

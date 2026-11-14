@@ -52,6 +52,9 @@ max_concurrent_runs = 2
 max_queued_runs = 16
 vue_src = "cdn"
 
+[server.auth]
+mode = "token"
+
 [data]
 dir = "~/.patchbot"
 

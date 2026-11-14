@@ -54,7 +54,9 @@ type App struct {
 	// Providers injects optional transports and test providers.
 	Providers providers.Options
 	// RunnerOptions injects local git remotes, GitHub and fake LLMs in tests.
-	RunnerOptions  runner.Options
+	RunnerOptions runner.Options
+	// AccessCertsURL overrides the Cloudflare Access JWKS URL in doctor tests.
+	AccessCertsURL string
 	outputRedactor *secret.Redactor
 }
 

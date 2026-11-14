@@ -27,6 +27,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/runs/new", s.page)
 	mux.HandleFunc("/runs/{id}", s.page)
 	mux.HandleFunc("/assets/{name}", s.asset)
+	mux.HandleFunc("/api/session", s.session)
 	mux.HandleFunc("/api/providers", s.providers)
 	mux.HandleFunc("/api/providers/{id}/models", s.providerModels)
 	mux.HandleFunc("/api/runs", s.runs)
@@ -360,7 +361,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 		}
 		switch action {
 		case "approve":
-			err = s.runner.ApproveAndExecute(r.Context(), id, s.cfg.Approval.LocalActor)
+			err = s.runner.ApproveAndExecute(r.Context(), id, s.actor(r))
 			status = http.StatusAccepted
 		case "reject":
 			err = s.runner.Reject(r.Context(), id)

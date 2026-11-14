@@ -41,7 +41,20 @@ lifecycle. Escaped descendants remain outside this guarantee.
 The web server defaults to loopback. Other binds require `PATCHBOT_UI_TOKEN`.
 Bearer auth protects data routes when enabled. Host validation, Go cross-origin
 mutation checks, CSP, SRI and plain-text rendering protect the browser. Local
-CLI/UI decisions use a configured actor name; there is no user login.
+CLI decisions use a configured actor name.
+
+With `[server.auth] mode = "cloudflare_access"` (M23) the UI/API no longer use
+the bearer token. Every request except the three fixed static asset paths must
+carry `Cf-Access-Jwt-Assertion`; patchbot verifies the RS256 signature against
+the team JWKS (`https://<team_domain>/cdn-cgi/access/certs`, keys cached by
+`kid`, one refresh per minute on an unknown `kid`), `iss`, `aud`, `exp`/`nbf`/
+`iat` (60 s skew) and that the `email` claim is in `allowed_emails`. Only RS256
+is accepted (`none` and HMAC tokens are rejected). Failures return a generic
+401/403 and the token is never logged or echoed. The verified email is the
+recorded actor on the ui channel. The Access JWT is the sole credential in this
+mode: keep the listener on loopback behind the tunnel, and rely on the Access
+policy to limit who can sign in (`allowed_emails` is a second check). The webhook path keeps its own
+HMAC check and needs a Cloudflare Access bypass policy so GitHub can reach it.
 
 GitHub approval identity: comments by the token owner (`/user`) are patchbot's
 own and normally never count. With a single-user PAT the owner may also be an

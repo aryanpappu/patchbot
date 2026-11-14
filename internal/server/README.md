@@ -103,6 +103,23 @@ The included Vue asset is checked against the shared SHA-384 pin by an offline t
   `approval.local_actor`, channel `ui` and the time. Memory routes use the same
   bearer auth, host checks and cross-origin protection as run routes.
 
+## Authentication modes
+
+`[server.auth] mode` is `token` (default: `PATCHBOT_UI_TOKEN` bearer, loopback
+may run without one) or `cloudflare_access`. In Access mode the bearer token is
+ignored and every request except `GET /assets/app.js`, `/assets/app.css` and
+`/assets/vue.global.prod.js` (and the HMAC-checked webhook path) must carry a
+valid `Cf-Access-Jwt-Assertion` for an allowed email (`internal/cfaccess`).
+Missing or invalid tokens return 401, a valid token for a disallowed email
+returns 403; API errors use the usual JSON envelope with a generic message and
+pages get a plain-text `401 Unauthorized`. The verified email becomes the actor
+of approve, revise, reject, cancel, retry, spec edit, run start and memory
+decisions (ui channel). Host and cross-origin checks still apply.
+
+`GET /api/session` returns `{"email": "<verified email or empty>", "mode":
+"token" | "cloudflare_access"}`. The page header shows "Signed in as <email>"
+in Access mode, which has no token form.
+
 ## Work and stream ownership
 
 The manager defaults to two running jobs (`server.max_concurrent_runs`) and

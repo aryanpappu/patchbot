@@ -187,12 +187,40 @@ func (c *Config) validateFixed(v *validator) {
 	if host, port, err := net.SplitHostPort(c.Server.Addr); err != nil || host == "" || port == "" {
 		v.addf("server.addr: %q is not host:port", c.Server.Addr)
 	}
+	c.validateServerAuth(v)
 	v.check(strings.TrimSpace(c.Data.Dir) != "", "data.dir: not set")
 	m := c.Memory
 	v.check(m.MaxEntries >= 1 && m.MaxEntries <= 100, "memory.max_entries: must be between 1 and 100")
 	v.check(m.MaxBytes >= 256 && m.MaxBytes <= 65536, "memory.max_bytes: must be between 256 and 65536")
 	v.check(m.MaxPending >= 1 && m.MaxPending <= 1000, "memory.max_pending: must be between 1 and 1000")
 	v.check(m.ObservationTTL > 0, "memory.observation_ttl: must be greater than 0")
+}
+
+var (
+	teamDomainPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.cloudflareaccess\.com$`)
+	audiencePattern   = regexp.MustCompile(`^[A-Za-z0-9._-]{16,128}$`)
+	emailPattern      = regexp.MustCompile(`^[^\s@<>",;:*\\]{1,64}@[A-Za-z0-9.-]{1,255}$`)
+)
+
+func (c *Config) validateServerAuth(v *validator) {
+	a := c.Server.Auth
+	switch a.Mode {
+	case AuthToken:
+		v.check(a.TeamDomain == "" && a.Audience == "" && len(a.AllowedEmails) == 0,
+			"server.auth: team_domain, audience and allowed_emails apply only to mode %q", AuthCloudflareAccess)
+	case AuthCloudflareAccess:
+		v.check(teamDomainPattern.MatchString(a.TeamDomain),
+			"server.auth.team_domain: must be a <team>.cloudflareaccess.com host name without scheme or path")
+		v.check(audiencePattern.MatchString(a.Audience),
+			"server.auth.audience: must be the Access application AUD tag")
+		v.check(len(a.AllowedEmails) > 0, "server.auth.allowed_emails: list at least one email")
+		for _, email := range a.AllowedEmails {
+			v.check(emailPattern.MatchString(email) && strings.Count(email, "@") == 1,
+				"server.auth.allowed_emails: %q is not a plain email address", email)
+		}
+	default:
+		v.addf("server.auth.mode: %q is not one of %s, %s", a.Mode, AuthToken, AuthCloudflareAccess)
+	}
 }
 
 func (c *Config) validateExecutor(v *validator) {
@@ -371,7 +399,7 @@ func (c *Config) Warnings() []string {
 			warnf("repo %q: no test command, so its pull requests will be drafts marked unverified", name)
 		}
 	}
-	if host, _, err := net.SplitHostPort(c.Server.Addr); err == nil && !isLoopback(host) {
+	if host, _, err := net.SplitHostPort(c.Server.Addr); err == nil && !isLoopback(host) && c.Server.Auth.Mode != AuthCloudflareAccess {
 		warnf("server.addr %q is not a loopback address; patchbot serve will require PATCHBOT_UI_TOKEN", c.Server.Addr)
 	}
 	return out

@@ -158,7 +158,7 @@ func (r *Runner) approveDecision(ctx context.Context, id int64, actor, channel s
 
 // Revise records notes, invalidates the previous decision and reruns refinement.
 func (r *Runner) Revise(ctx context.Context, id int64, notes string) error {
-	return r.revise(ctx, id, notes, r.cfg.Approval.LocalActor, r.actionChannel(), nil)
+	return r.revise(ctx, id, notes, r.actorFor(ctx), r.actionChannel(), nil)
 }
 
 func (r *Runner) revise(ctx context.Context, id int64, notes, actor, channel string, expected *store.Spec) error {
@@ -250,7 +250,7 @@ func (r *Runner) EditSpec(ctx context.Context, id int64, draft tools.SpecDraft) 
 	}
 	spec, err := r.db.EditSpec(ctx, store.SpecEdit{
 		Spec: store.Spec{RunID: id, BodyMD: draft.Markdown(), Hash: draft.Hash(), IssueHash: agent.IssueHash(issue.Title, issue.Body), Source: "ui_edit", CreatedAt: r.now()},
-		From: run.Status, To: status, Generation: run.Generation, PriorVersion: prior.Version, PriorHash: prior.Hash, Actor: r.redactor.Redact(r.cfg.Approval.LocalActor),
+		From: run.Status, To: status, Generation: run.Generation, PriorVersion: prior.Version, PriorHash: prior.Hash, Actor: r.redactor.Redact(r.actorFor(ctx)),
 	})
 	if err != nil {
 		return spec, err
@@ -275,7 +275,7 @@ func (r *Runner) Reject(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	return r.db.DecideRun(ctx, run.Status, store.StatusRejected, store.Approval{RunID: id, SpecVersion: spec.Version, SpecHash: spec.Hash, Decision: "reject", Actor: r.redactor.Redact(r.cfg.Approval.LocalActor), Channel: r.actionChannel(), CreatedAt: r.now()}, run.Generation)
+	return r.db.DecideRun(ctx, run.Status, store.StatusRejected, store.Approval{RunID: id, SpecVersion: spec.Version, SpecHash: spec.Hash, Decision: "reject", Actor: r.redactor.Redact(r.actorFor(ctx)), Channel: r.actionChannel(), CreatedAt: r.now()}, run.Generation)
 }
 
 // Cancel stops local work immediately and CASes the persisted active status.
@@ -289,7 +289,7 @@ func (r *Runner) Cancel(ctx context.Context, id int64) error {
 	}
 	// Audit the operator intent before waking a worker that can win the terminal
 	// transition. Idempotent cancels are actions too, and CAS retries are not.
-	if err := r.action(ctx, id, "cancel", r.cfg.Approval.LocalActor, r.actionChannel(), nil); err != nil {
+	if err := r.action(ctx, id, "cancel", r.actorFor(ctx), r.actionChannel(), nil); err != nil {
 		return err
 	}
 	r.mu.Lock()
@@ -440,7 +440,7 @@ func (r *Runner) Retry(ctx context.Context, id int64, provider, model string) (s
 	}
 	run, err = r.start(ctx, run, reuse)
 	if run.ID != 0 {
-		err = errors.Join(err, r.action(context.WithoutCancel(ctx), run.ID, "retry", r.cfg.Approval.LocalActor, r.actionChannel(), map[string]int64{"retry_of": id}))
+		err = errors.Join(err, r.action(context.WithoutCancel(ctx), run.ID, "retry", r.actorFor(ctx), r.actionChannel(), map[string]int64{"retry_of": id}))
 	}
 	return run, err
 }

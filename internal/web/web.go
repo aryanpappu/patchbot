@@ -33,6 +33,8 @@ type State struct {
 	AuthRequired bool            `json:"auth_required"`
 	Initial      json.RawMessage `json:"initial,omitempty"`
 	Preview      string          `json:"preview,omitempty"`
+	// Email is the verified Cloudflare Access login, shown in the header.
+	Email string `json:"email,omitempty"`
 }
 
 // Render writes a page shell. State remains an ordinary Go value so html/template
