@@ -92,6 +92,8 @@ type Runner struct {
 	mu       sync.Mutex
 	active   map[int64]context.CancelFunc
 	controls map[int64]*sync.Mutex
+	// notConnected is set at startup in app mode when no App exists yet.
+	notConnected bool
 }
 
 type runLimits struct {
@@ -229,6 +231,9 @@ func (r *Runner) provider(name string) (llm.Provider, llm.Pricing, error) {
 }
 
 func (r *Runner) prepare(req Request) (store.Run, error) {
+	if r.notConnected {
+		return store.Run{}, ErrGitHubNotConnected
+	}
 	req.Repo = strings.ToLower(strings.TrimSpace(req.Repo))
 	if !repoPattern.MatchString(req.Repo) || req.Issue <= 0 {
 		return store.Run{}, errors.New("require --repo owner/name and a positive --issue")

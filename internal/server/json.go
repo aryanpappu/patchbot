@@ -72,6 +72,8 @@ func (s *Server) respondError(w http.ResponseWriter, err error) {
 		s.writeError(w, http.StatusConflict, "active_run_exists", "an active run already exists for this issue")
 	case errors.Is(err, store.ErrConflict), errors.Is(err, agent.ErrApprovalDenied):
 		s.writeError(w, http.StatusConflict, "conflict", "action is not valid for the current run or specification")
+	case errors.Is(err, runner.ErrGitHubNotConnected):
+		s.writeError(w, http.StatusConflict, "github_not_connected", err.Error())
 	case errors.Is(err, errShuttingDown):
 		s.writeError(w, http.StatusServiceUnavailable, "unavailable", "server is shutting down")
 	case errors.Is(err, llm.ErrUnknownProvider):

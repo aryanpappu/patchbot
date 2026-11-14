@@ -312,6 +312,61 @@ small pilot. For a shared host, use a GitHub App: each run gets a 1-hour token
 that can touch only that run's repository, and comments come from a distinct
 `<slug>[bot]` identity, so the owner's own `/approve` counts normally.
 
+### Connect GitHub (recommended)
+
+The dashboard creates the App for you through GitHub's App manifest flow. You
+never see or copy the private key: GitHub hands it to patchbot, which writes it
+straight to a `0600` file.
+
+1. Prepare the key directory once, owned by the service user and outside the
+   data directory (patchbot never creates it and never overwrites an existing
+   key):
+
+   ```sh
+   sudo install -d -o patchbot -g patchbot -m 0700 /srv/patchbot
+   ```
+
+2. Configure; there is no `app_id` yet and no key file:
+
+   ```toml
+   [github]
+   auth = "app"
+   private_key_file = "/srv/patchbot/github-app.pem"
+   setup_public_url = "https://patchbot.example.org"   # where GitHub can redirect your browser
+   # setup_app_name = "my-patchbot"   # optional; default patchbot-<6 random chars>
+   ```
+
+   `setup_public_url` is the origin you open the dashboard on (an https URL, or
+   http for localhost). Behind a reverse proxy or tunnel, forward a `Host` that
+   patchbot accepts (the same requirement as for the dashboard itself).
+
+3. Start `patchbot serve`. Without an App it starts in setup mode: the dashboard
+   works, but new runs are refused with "GitHub is not connected yet", and
+   `patchbot doctor` reports "not connected, open /setup/github".
+4. Open `/setup/github` (sign in on the Runs page first when `PATCHBOT_UI_TOKEN`
+   is set), click **Connect GitHub**, review the App on GitHub (private, no
+   webhook, no events, only contents/issues/pull requests write and metadata
+   read) and confirm. GitHub sends your browser back to
+   `/setup/github/callback`; patchbot exchanges the one-time code, writes the
+   key, and records only the App ID and slug in its database.
+5. Click the **Install** link on the result page and choose **Only select
+   repositories**: the ones listed under `[repos]`. Use **Re-check status** to
+   see the installations (`GET /api/github/status`).
+6. Restart patchbot (`systemctl restart patchbot`) so it starts using the App,
+   then run `patchbot doctor --online`.
+
+Setup is available only until GitHub is connected: it refuses to run if
+`app_id` is set, the database already has an App, or the key file exists. To
+start over, delete the App on GitHub, then remove the key file and the
+`github_app` row deliberately. The client secret and webhook secret that GitHub
+returns are discarded, not stored; if you later enable a webhook on the App,
+set a new webhook secret in the App settings and in `[webhook]`.
+
+### Manual setup (alternative)
+
+Use this to reuse an existing App or when the server is not reachable from your
+browser by a stable URL.
+
 1. GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App**.
    Any name (its slug becomes the bot login, for example `patchbot[bot]`).
    Homepage URL: anything. **Webhook: not needed** — untick "Active" (you can

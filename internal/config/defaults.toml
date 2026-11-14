@@ -81,6 +81,8 @@ auth = "pat"                 # "pat" (GITHUB_TOKEN) or "app" (GitHub App)
 app_id = 0                   # app mode: numeric App ID
 private_key_file = ""        # app mode: absolute path, mode 0600, outside data dir
 installation_id = 0          # app mode: 0 resolves the installation per repository
+setup_public_url = ""        # "Connect GitHub" setup: public origin, e.g. https://patchbot.example.org
+setup_app_name = ""          # "Connect GitHub" setup: App name; empty = patchbot-<random>
 
 [providers.anthropic]
 kind = "anthropic"

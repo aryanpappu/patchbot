@@ -185,6 +185,13 @@ type GitHub struct {
 	PrivateKeyFile string `toml:"private_key_file"`
 	// InstallationID is optional; 0 resolves each repository's installation.
 	InstallationID int64 `toml:"installation_id"`
+	// SetupPublicURL is the externally reachable origin of this server (for
+	// example https://patchbot.example.org). The "Connect GitHub" setup flow
+	// builds the App manifest and its redirect URL from it. Empty disables setup.
+	SetupPublicURL string `toml:"setup_public_url"`
+	// SetupAppName is the name requested for the App. Empty picks
+	// "patchbot-" plus six random characters (App names are globally unique).
+	SetupAppName string `toml:"setup_app_name"`
 }
 
 // App reports whether GitHub App authentication is configured.

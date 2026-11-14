@@ -336,6 +336,11 @@ type Store interface {
 	// IsPostedComment reports whether patchbot recorded posting this comment.
 	IsPostedComment(ctx context.Context, commentID int64) (bool, error)
 
+	// GitHubApp returns the App created by the Connect GitHub flow, if any.
+	GitHubApp(context.Context) (GitHubApp, bool, error)
+	// SaveGitHubApp records it once; a second call returns ErrConflict.
+	SaveGitHubApp(context.Context, GitHubApp) error
+
 	RecordAction(context.Context, Action) (Action, error)
 	ListActions(ctx context.Context, runID int64) ([]Action, error)
 	SaveArtifact(context.Context, Artifact) error

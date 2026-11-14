@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/github"
 	"github.com/aryanpappu/patchbot/internal/llm"
 	"github.com/aryanpappu/patchbot/internal/runner"
 	"github.com/aryanpappu/patchbot/internal/store"
@@ -38,6 +39,10 @@ func (s *Server) routes() http.Handler {
 		mux.HandleFunc("/api/runs/{id}/"+action, s.action)
 	}
 	s.memoryRoutes(mux)
+	mux.HandleFunc("/setup/github", s.githubSetupPage)
+	mux.HandleFunc(github.CallbackPath, s.githubSetupCallback)
+	mux.HandleFunc("/api/github/setup/start", s.githubSetupStart)
+	mux.HandleFunc("/api/github/status", s.githubStatus)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { s.writeError(w, 404, "not_found", "resource not found") })
 	return mux
 }

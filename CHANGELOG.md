@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add "Connect GitHub" (M28): create the GitHub App from the dashboard with the
+  App manifest flow (`[github] setup_public_url`), the key is written straight
+  to a 0600 file and only the App ID and slug are stored. Without an App the
+  server starts in setup mode and refuses runs; `doctor` reports it.
+
 - Add GitHub App authentication (`[github] auth = "app"`, M27): per-run
   installation tokens narrowed to one repository ID and four permissions,
   refreshed per git network operation, bot identity `<slug>[bot]` for comments

@@ -118,7 +118,16 @@ func (a *App) runDoctor(args []string) int {
 	var app *github.App
 	switch {
 	case cfg.GitHub.App():
-		app = doctorAppKey(cfg, a.RunnerOptions, r, add)
+		if cfg.GitHub.AppID == 0 {
+			if stored, found, err := store.ReadGitHubApp(ctx, cfg.DatabasePath()); err == nil && found {
+				cfg.GitHub.AppID = stored.AppID
+			}
+		}
+		if cfg.GitHub.AppID == 0 {
+			add("WARN", "GitHub App", "not connected, open /setup/github (the server starts in setup mode and refuses runs until then)")
+		} else {
+			app = doctorAppKey(cfg, a.RunnerOptions, r, add)
+		}
 		if strings.TrimSpace(token) != "" {
 			add("WARN", "GitHub credential", "GITHUB_TOKEN is set but ignored in app mode (there is no PAT fallback); unset it")
 		}
@@ -247,7 +256,9 @@ func (a *App) doctorOnline(ctx context.Context, cfg *config.Config, token string
 		}
 	}
 	if cfg.GitHub.App() {
-		doctorAppOnline(ctx, cfg, app, add)
+		if cfg.GitHub.AppID > 0 {
+			doctorAppOnline(ctx, cfg, app, add)
+		}
 		return
 	}
 	client := a.RunnerOptions.GitHub
