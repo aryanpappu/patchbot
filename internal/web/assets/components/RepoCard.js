@@ -1,6 +1,6 @@
 // One allowlisted repository. Config-file repositories are read-only. Commands,
 // paths and audit values are text nodes.
-import { button, chip as _chip, block } from "../ui.js";
+import { block, button } from "../ui.js";
 
 const { h } = window.Vue;
 
