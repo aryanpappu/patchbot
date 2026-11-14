@@ -62,6 +62,9 @@ type fakeApp struct {
 	delay       time.Duration
 	userAuth    string
 	rejectAll   bool
+	// mutateRun / mutateLookup rewrite a successful run-token / ID-lookup
+	// mint response (scope verification tests).
+	mutateRun, mutateLookup func(map[string]any)
 }
 
 type mintRecord struct {
@@ -178,8 +181,15 @@ func (f *fakeApp) serve(w http.ResponseWriter, req *http.Request) {
 			}
 			f.minted[token] = id
 		}
-		reply(201, map[string]any{"token": token, "expires_at": time.Now().Add(lifetime).UTC().Format(time.RFC3339),
-			"permissions": in.Permissions, "repositories": repos})
+		resp := map[string]any{"token": token, "expires_at": time.Now().Add(lifetime).UTC().Format(time.RFC3339),
+			"permissions": in.Permissions, "repositories": repos}
+		if len(in.RepositoryIDs) > 0 && f.mutateRun != nil {
+			f.mutateRun(resp)
+		}
+		if len(in.Repositories) > 0 && f.mutateLookup != nil {
+			f.mutateLookup(resp)
+		}
+		reply(201, resp)
 	case strings.HasPrefix(path, "/repos/"):
 		token := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
 		full := strings.Join(strings.SplitN(strings.TrimPrefix(path, "/repos/"), "/", 3)[:2], "/")
@@ -631,5 +641,93 @@ func TestMintedTokenNotInErrors(t *testing.T) {
 	jwt, _ := echoed.Load().(string)
 	if jwt == "" || strings.Contains(err.Error(), jwt) || strings.Contains(err.Error(), strings.Split(jwt, ".")[2]) {
 		t.Fatalf("error quotes the JWT: %v", err)
+	}
+}
+
+// TestMintedScopeMustBeVerified: a mint response whose permissions or
+// repositories are missing, null, empty or different from the request fails
+// closed and is never cached, for both the run token and the ID lookup token.
+func TestMintedScopeMustBeVerified(t *testing.T) {
+	t.Parallel()
+	run := map[string]string{"contents": "write", "issues": "write", "pull_requests": "write", "metadata": "read"}
+	with := func(extra map[string]string) map[string]string {
+		out := map[string]string{}
+		for k, v := range run {
+			out[k] = v
+		}
+		for k, v := range extra {
+			if v == "" {
+				delete(out, k)
+			} else {
+				out[k] = v
+			}
+		}
+		return out
+	}
+	runCases := map[string]func(map[string]any){
+		"missing permissions":  func(r map[string]any) { delete(r, "permissions") },
+		"null permissions":     func(r map[string]any) { r["permissions"] = nil },
+		"empty permissions":    func(r map[string]any) { r["permissions"] = map[string]string{} },
+		"extra permission":     func(r map[string]any) { r["permissions"] = with(map[string]string{"administration": "write"}) },
+		"wrong level":          func(r map[string]any) { r["permissions"] = with(map[string]string{"metadata": "write"}) },
+		"missing permission":   func(r map[string]any) { r["permissions"] = with(map[string]string{"issues": ""}) },
+		"missing repositories": func(r map[string]any) { delete(r, "repositories") },
+		"null repositories":    func(r map[string]any) { r["repositories"] = nil },
+		"empty repositories":   func(r map[string]any) { r["repositories"] = []any{} },
+		"extra repository": func(r map[string]any) {
+			r["repositories"] = append(r["repositories"].([]map[string]any), map[string]any{"id": 202, "full_name": "owner/other"})
+		},
+		"wrong repository": func(r map[string]any) { r["repositories"] = []map[string]any{{"id": 202, "full_name": "owner/other"}} },
+	}
+	lookupCases := map[string]func(map[string]any){
+		"missing permissions":  func(r map[string]any) { delete(r, "permissions") },
+		"null permissions":     func(r map[string]any) { r["permissions"] = nil },
+		"extra permission":     func(r map[string]any) { r["permissions"] = map[string]string{"metadata": "read", "contents": "read"} },
+		"wrong level":          func(r map[string]any) { r["permissions"] = map[string]string{"metadata": "write"} },
+		"missing repositories": func(r map[string]any) { delete(r, "repositories") },
+		"null repositories":    func(r map[string]any) { r["repositories"] = nil },
+		"empty repositories":   func(r map[string]any) { r["repositories"] = []any{} },
+		"extra repository": func(r map[string]any) {
+			r["repositories"] = append(r["repositories"].([]map[string]any), map[string]any{"id": 202, "full_name": "owner/other"})
+		},
+		"wrong repository":   func(r map[string]any) { r["repositories"] = []map[string]any{{"id": 202, "full_name": "owner/other"}} },
+		"zero repository id": func(r map[string]any) { r["repositories"] = []map[string]any{{"id": 0, "full_name": "owner/repo"}} },
+	}
+	check := func(t *testing.T, fake *fakeApp, app *App) {
+		t.Helper()
+		token, err := app.RepoToken(t.Context(), repoA)
+		var mint *MintError
+		if token != "" || !errors.As(err, &mint) || mint.Kind != "denied" || strings.Contains(err.Error(), "ghs_") {
+			t.Fatalf("unverified scope accepted: token=%q err=%v", token, err)
+		}
+		// Not cached: the next call mints again and still fails closed.
+		fake.mu.Lock()
+		before := len(fake.mints)
+		fake.mu.Unlock()
+		if token, err := app.RepoToken(t.Context(), repoA); token != "" || err == nil {
+			t.Fatal("rejected token was cached")
+		}
+		fake.mu.Lock()
+		after := len(fake.mints)
+		fake.mu.Unlock()
+		if after <= before {
+			t.Fatal("second call did not re-mint; a rejected result was cached")
+		}
+	}
+	for name, mutate := range runCases {
+		t.Run("run/"+name, func(t *testing.T) {
+			t.Parallel()
+			fake, server := newFakeApp(t)
+			fake.mutateRun = mutate
+			check(t, fake, newTestApp(t, server, AppOptions{}))
+		})
+	}
+	for name, mutate := range lookupCases {
+		t.Run("lookup/"+name, func(t *testing.T) {
+			t.Parallel()
+			fake, server := newFakeApp(t)
+			fake.mutateLookup = mutate
+			check(t, fake, newTestApp(t, server, AppOptions{}))
+		})
 	}
 }

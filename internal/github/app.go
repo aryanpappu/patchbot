@@ -193,12 +193,10 @@ func (a *App) RepoToken(ctx context.Context, repo RepoRef) (string, error) {
 		if token, ok := a.cached(key); ok {
 			return token, nil
 		}
-		minted, err := a.mint(ctx, installation, map[string]any{"repository_ids": []int64{repoID}, "permissions": RunPermissions}, RunPermissions)
+		minted, err := a.mint(ctx, installation, map[string]any{"repository_ids": []int64{repoID}, "permissions": RunPermissions}, RunPermissions,
+			func(r mintedRepo) bool { return r.ID == repoID })
 		if err != nil {
 			return nil, err
-		}
-		if len(minted.Repositories) > 0 && (len(minted.Repositories) != 1 || minted.Repositories[0].ID != repoID) {
-			return nil, &MintError{Kind: "denied", msg: "minted token is not limited to the requested repository"}
 		}
 		a.mu.Lock()
 		a.tokens[key] = cachedToken{token: minted.Token, expires: minted.ExpiresAt}
@@ -326,19 +324,12 @@ func (a *App) repositoryID(ctx context.Context, installation int64, repo RepoRef
 	}
 	value, err := a.share(ctx, fmt.Sprintf("repoid/%d/%s", installation, name), func(ctx context.Context) (any, error) {
 		perms := map[string]string{"metadata": "read"}
-		minted, err := a.mint(ctx, installation, map[string]any{"repositories": []string{repo.Name}, "permissions": perms}, perms)
+		minted, err := a.mint(ctx, installation, map[string]any{"repositories": []string{repo.Name}, "permissions": perms}, perms,
+			func(r mintedRepo) bool { return r.ID > 0 && strings.EqualFold(r.FullName, repo.Owner+"/"+repo.Name) })
 		if err != nil {
 			return nil, err
 		}
-		var id int64
-		for _, r := range minted.Repositories {
-			if strings.EqualFold(r.FullName, repo.Owner+"/"+repo.Name) {
-				id = r.ID
-			}
-		}
-		if len(minted.Repositories) != 1 || id <= 0 {
-			return nil, &MintError{Kind: "denied", msg: "installation does not cover the repository"}
-		}
+		id := minted.Repositories[0].ID
 		a.mu.Lock()
 		a.repoIDs[name] = id
 		a.mu.Unlock()
@@ -350,19 +341,44 @@ func (a *App) repositoryID(ctx context.Context, installation int64, repo RepoRef
 	return value.(int64), nil
 }
 
+type mintedRepo struct {
+	ID       int64  `json:"id"`
+	FullName string `json:"full_name"`
+}
+
 type mintedToken struct {
 	Token        string            `json:"token"`
 	ExpiresAt    time.Time         `json:"expires_at"`
 	Permissions  map[string]string `json:"permissions"`
-	Repositories []struct {
-		ID       int64  `json:"id"`
-		FullName string `json:"full_name"`
-	} `json:"repositories"`
+	Repositories []mintedRepo      `json:"repositories"`
 }
 
-// mint calls POST /app/installations/{id}/access_tokens. The token is passed
-// to OnMint before it is returned or cached.
-func (a *App) mint(ctx context.Context, installation int64, body map[string]any, want map[string]string) (mintedToken, error) {
+// verifyScope fails closed unless the response states exactly the requested
+// permissions and exactly one repository that matches. A missing, null or empty
+// field is unverified scope and is refused, never assumed.
+func verifyScope(out mintedToken, want map[string]string, repoMatches func(mintedRepo) bool) error {
+	if len(out.Permissions) == 0 {
+		return &MintError{Kind: "denied", msg: "token response does not state its permissions"}
+	}
+	for name, level := range want {
+		if out.Permissions[name] != level {
+			return &MintError{Kind: "denied", msg: "token lacks permission " + name + ":" + level}
+		}
+	}
+	for name := range out.Permissions {
+		if _, ok := want[name]; !ok {
+			return &MintError{Kind: "denied", msg: "token carries unrequested permission " + name}
+		}
+	}
+	if len(out.Repositories) != 1 || repoMatches == nil || !repoMatches(out.Repositories[0]) {
+		return &MintError{Kind: "denied", msg: "token is not limited to exactly the requested repository"}
+	}
+	return nil
+}
+
+// mint calls POST /app/installations/{id}/access_tokens and returns the token
+// only after verifyScope passes; a token that fails it is never cached.
+func (a *App) mint(ctx context.Context, installation int64, body map[string]any, want map[string]string, repoMatches func(mintedRepo) bool) (mintedToken, error) {
 	target := *a.jwtClient.baseURL
 	target.Path = strings.TrimRight(target.Path, "/") + "/app/installations/" + strconv.FormatInt(installation, 10) + "/access_tokens"
 	target.RawPath = ""
@@ -384,17 +400,8 @@ func (a *App) mint(ctx context.Context, installation int64, body map[string]any,
 	if !out.ExpiresAt.After(a.clock()) {
 		return mintedToken{}, &MintError{Kind: "unavailable", msg: "installation token already expired"}
 	}
-	if out.Permissions != nil {
-		for name, level := range want {
-			if out.Permissions[name] != level {
-				return mintedToken{}, &MintError{Kind: "denied", msg: "installation lacks permission " + name + ":" + level}
-			}
-		}
-		for name := range out.Permissions {
-			if _, ok := want[name]; !ok {
-				return mintedToken{}, &MintError{Kind: "denied", msg: "token carries unrequested permission " + name}
-			}
-		}
+	if err := verifyScope(out, want, repoMatches); err != nil {
+		return mintedToken{}, err
 	}
 	return out, nil
 }

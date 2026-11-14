@@ -22,8 +22,12 @@ of `docs/planning/auth/codex-round1.md`. No new Go dependencies.
   `exp = now+9m`, `iss = app_id`.
 - **Installation tokens** (`internal/github/app.go`, `github.App`). Run tokens
   are minted with `repository_ids: [id]` and exactly contents/issues/
-  pull_requests write plus metadata read; the response's permissions and
-  repository list are verified. The immutable repository ID is resolved once
+  pull_requests write plus metadata read. Before any token is cached or
+  returned, the response must state exactly the requested permissions and
+  exactly one repository matching the request (ID for run tokens, full name
+  for the ID lookup); a missing, null or empty field, an extra or wrong-level
+  permission, or an extra or wrong repository fails closed as `denied` and is
+  not cached (Codex security review finding, fixed in a follow-up commit). The immutable repository ID is resolved once
   per process with a metadata-only token narrowed by repository name. Tokens are
   cached per (installation, repo ID, permission set), concurrent mints are
   single-flighted (the mint runs on a detached, 2-minute-bounded context; each
@@ -71,7 +75,9 @@ of `docs/planning/auth/codex-round1.md`. No new Go dependencies.
   fails closed even when a PAT source is present; rate limit waits on
   Retry-After, refuses long resets, and stops on cancellation; bot identity and
   commit email; `[bot]` comments never eligible while owner approval is; JWTs
-  are not quoted in errors.
+  are not quoted in errors; scope verification rejects missing, null, empty,
+  extra-permission, wrong-level, missing-permission, extra-repo and wrong-repo
+  responses for both run and ID-lookup tokens, without caching them.
 - `internal/gitx/auth_remote_test.go`: the HTTPS `git http-backend` remote
   rotates its accepted token after clone; push succeeds because each remote
   operation asks `TokenFunc`; a failing `TokenFunc` fails closed without quoting
