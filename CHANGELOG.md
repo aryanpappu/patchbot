@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Redesign the dashboard (M29): `app.js` is split into native ES modules
+  (`main.js`, `components/*`, `composables/use*`, `ui.js`, `format.js`) served from
+  a fixed asset list (shared by token mode and Cloudflare Access mode, no
+  wildcards); CSP and the pinned Vue SRI are unchanged. New "Waiting for you"
+  inbox landing page, run phase stepper with plain-language failure reason, run
+  tabs (Spec, Live log, Changes), budget meters, sidebar navigation with badge
+  counts and `(n) patchbot` tab title, light/dark themes, confirm dialogs for
+  Reject/Cancel/Forget/Remove, toasts, empty/loading/error states and keyboard
+  shortcuts. New pages `/memory`; `/` now opens the inbox. No API changes.
 - Add "Create issue from the dashboard" (M26): `POST /api/issues` opens a GitHub
   issue (with a visible "created from the patchbot dashboard" footer, no
   requester email, and a hidden `patchbot:issue-created` marker) and can start the refine run

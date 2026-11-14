@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // VueVersion pins the global production build used in both delivery modes.
@@ -61,10 +62,51 @@ func CSP(local bool) string {
 	return "default-src 'none'; script-src " + scripts + "; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 }
 
+// assetNames is the complete, fixed list of files served under /assets/. Nothing
+// is matched by prefix or wildcard: a file is public only if it is named here,
+// and a test asserts the list equals the embedded asset tree (minus the
+// vendored Vue build, which is added conditionally by Asset).
+var assetNames = []string{
+	"main.js", "ui.js", "format.js", "setup.js", "app.css",
+	"components/ActionBar.js", "components/App.js", "components/BudgetMeters.js", "components/ChangesView.js",
+	"components/ConfirmDialog.js", "components/DiffView.js", "components/HelpDialog.js", "components/Inbox.js",
+	"components/LogStream.js", "components/MemoryView.js", "components/Modal.js", "components/ModelFields.js",
+	"components/NewRequest.js", "components/PhaseStepper.js", "components/RepoCard.js", "components/RepoEditor.js",
+	"components/RepoPage.js", "components/RunCard.js", "components/RunDetail.js", "components/RunList.js",
+	"components/Sidebar.js", "components/SpecEditor.js", "components/SpecView.js", "components/Tabs.js",
+	"components/Toast.js", "components/Unlock.js",
+	"composables/useApi.js", "composables/useBadges.js", "composables/useConfirm.js", "composables/useKeyboard.js",
+	"composables/useProviders.js", "composables/useRunStream.js", "composables/useSession.js", "composables/useTask.js",
+	"composables/useTheme.js", "composables/useToast.js",
+}
+
+const vueAsset = "vue.global.prod.js"
+
+var assetSet = func() map[string]bool {
+	set := map[string]bool{vueAsset: true}
+	for _, name := range assetNames {
+		set[name] = true
+	}
+	return set
+}()
+
+// AssetNames returns the fixed served asset list, excluding the vendored Vue.
+func AssetNames() []string { return append([]string(nil), assetNames...) }
+
+// AssetPath reports whether path is exactly one of the fixed, data-free asset
+// URLs. Access mode and token mode both use it for the unauthenticated GET list.
+func AssetPath(path string) bool {
+	name, ok := strings.CutPrefix(path, "/assets/")
+	return ok && assetSet[name]
+}
+
 // PublicPath identifies exact shell/asset GET paths that contain no private data.
 func PublicPath(path string) bool {
 	switch path {
-	case "/", "/runs", "/runs/new", "/repos", "/setup/github", "/assets/app.js", "/assets/app.css", "/assets/setup.js", "/assets/vue.global.prod.js":
+	case "/", "/runs", "/runs/new", "/repos", "/memory", "/setup/github":
+		return true
+	}
+	if AssetPath(path) {
 		return true
 	}
 	if len(path) > len("/runs/") && path[:len("/runs/")] == "/runs/" {
@@ -77,22 +119,14 @@ func PublicPath(path string) bool {
 // Asset serves only explicitly named embedded assets with fixed media types.
 func Asset(w http.ResponseWriter, r *http.Request, local bool) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	name, media := "", ""
-	switch r.URL.Path {
-	case "/assets/app.js":
-		name, media = "app.js", "text/javascript; charset=utf-8"
-	case "/assets/app.css":
-		name, media = "app.css", "text/css; charset=utf-8"
-	case "/assets/setup.js":
-		name, media = "setup.js", "text/javascript; charset=utf-8"
-	case "/assets/vue.global.prod.js":
-		if local {
-			name, media = "vue.global.prod.js", "text/javascript; charset=utf-8"
-		}
-	}
-	if name == "" {
+	name, ok := strings.CutPrefix(r.URL.Path, "/assets/")
+	if !ok || !assetSet[name] || (name == vueAsset && !local) {
 		http.NotFound(w, r)
 		return
+	}
+	media := "text/javascript; charset=utf-8"
+	if strings.HasSuffix(name, ".css") {
+		media = "text/css; charset=utf-8"
 	}
 	data, err := files.ReadFile("assets/" + name)
 	if err != nil {
@@ -100,5 +134,7 @@ func Asset(w http.ResponseWriter, r *http.Request, local bool) {
 		return
 	}
 	w.Header().Set("Content-Type", media)
-	_, _ = w.Write(data)
+	// data is an embedded file chosen only from the fixed assetNames list, with a
+	// fixed script/style media type and nosniff.
+	_, _ = w.Write(data) //nolint:gosec // G705: not user-controlled content
 }

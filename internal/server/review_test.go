@@ -21,7 +21,7 @@ func TestAPIReviewPhaseAndArtifacts(t *testing.T) {
 	run := f.responseRun(w)
 	f.waitFor(run.ID, store.StatusAwaitingApproval)
 	path := fmt.Sprintf("/api/runs/%d", run.ID)
-	requireStatus(t, f.request("POST", path+"/approve", `{}`), 202)
+	requireStatus(t, f.request("POST", path+"/approve", f.approveBody(t, run.ID)), 202)
 	done := f.waitFor(run.ID, store.StatusSucceeded)
 	if done.Outcome != "pr_opened" {
 		t.Fatalf("run: %+v", done)

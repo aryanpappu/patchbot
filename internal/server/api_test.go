@@ -39,7 +39,7 @@ func TestAPIStartApprovePR(t *testing.T) {
 	if detail.LatestSpec == nil || len(detail.Specs) != 1 || len(detail.Steps) == 0 {
 		t.Fatalf("incomplete detail: %s", w.Body.String())
 	}
-	requireStatus(t, f.request("POST", path+"/approve", `{}`), 202)
+	requireStatus(t, f.request("POST", path+"/approve", f.approveBody(t, run.ID)), 202)
 	done := f.waitFor(run.ID, store.StatusSucceeded)
 	if done.Outcome != "pr_opened" || done.PRDraft || done.PRURL == "" {
 		t.Fatalf("bad publication: %+v", done)
@@ -117,7 +117,7 @@ func TestReviseRejectRetry(t *testing.T) {
 		t.Fatalf("revision: %+v: %v", spec, err)
 	}
 	requireStatus(t, f.request("POST", path+"/reject", `{}`), 200)
-	requireStatus(t, f.request("POST", path+"/approve", `{}`), 409)
+	requireStatus(t, f.request("POST", path+"/approve", f.approveBody(t, run.ID)), 409)
 	w = f.request("POST", path+"/retry", `{"provider":"anthropic","model":"other"}`)
 	requireStatus(t, w, 202)
 	retry := f.responseRun(w)
@@ -125,7 +125,7 @@ func TestReviseRejectRetry(t *testing.T) {
 		t.Fatalf("retry: %+v", retry)
 	}
 	f.waitFor(retry.ID, store.StatusAwaitingApproval)
-	requireStatus(t, f.request("POST", fmt.Sprintf("/api/runs/%d/approve", retry.ID), ""), 202)
+	requireStatus(t, f.request("POST", fmt.Sprintf("/api/runs/%d/approve", retry.ID), f.approveBody(t, retry.ID)), 202)
 	f.waitFor(retry.ID, store.StatusSucceeded)
 	for _, id := range []int64{run.ID, retry.ID} {
 		actions, err := f.db.ListActions(t.Context(), id)
@@ -200,7 +200,7 @@ func TestAPIErrors(t *testing.T) {
 		{"POST", "/api/runs", `{"repo":"owner/repo","issue":1,"unknown":true}`, 400},
 		{"POST", "/api/runs", `{}`, 400}, {"POST", "/api/runs", `null`, 400}, {"POST", "/api/runs", `{} {}`, 400},
 		{"POST", "/api/runs", `{"repo":"` + strings.Repeat("x", maxBodyBytes) + `"}`, 413},
-		{"GET", path + "/approve", "", 405}, {"POST", path + "/approve", "{}", 409}, {"POST", path + "/cancel", "{}", 409},
+		{"GET", path + "/approve", "", 405}, {"POST", path + "/approve", `{"spec_version":1,"spec_hash":"x"}`, 409}, {"POST", path + "/cancel", "{}", 409},
 		{"POST", path + "/reject", "{}", 409}, {"POST", path + "/revise", `{"notes":""}`, 400},
 		{"POST", path + "/revise", `{"notes":"change"}`, 409}, {"POST", path + "/retry", `{"provider":"unknown"}`, 400},
 		{"POST", path + "/retry", `{"model":"\n"}`, 400}, {"POST", path + "/retry", `{"actor":"attacker"}`, 400},

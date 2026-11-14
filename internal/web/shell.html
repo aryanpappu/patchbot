@@ -3,18 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>patchbot · runs</title>
+  <title>patchbot</title>
   <link rel="stylesheet" href="/assets/app.css">
   <script type="application/json" id="state">{{.State}}</script>
   <script defer src="{{.Source}}" integrity="{{.Integrity}}" crossorigin="anonymous"></script>
-  <script defer src="/assets/app.js"></script>
+  <script type="module" src="/assets/main.js"></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
-  <header><a href="/runs">patchbot</a><nav aria-label="Main"><a href="/runs">Runs</a><a href="/runs/new">New run</a><a href="/repos">Repositories</a></nav>{{with .State.Email}}<span class="whoami">Signed in as {{.}}</span>{{end}}</header>
-  <main id="main" tabindex="-1">
-    <div id="app"><h1>patchbot</h1>{{with .State.Preview}}<pre class="output">{{.}}</pre>{{end}}<p role="status">Loading the run interface… If this remains visible, Vue could not load. Check the CDN connection and integrity pin, or run <code>make vendor-vue</code> and rebuild for local mode.</p></div>
-    <noscript>JavaScript is required for the run interface.</noscript>
-  </main>
+  <div id="app">
+    <main id="main" tabindex="-1" class="fallback">
+      <h1>patchbot</h1>
+      <nav aria-label="Main"><a href="/">Inbox</a> <a href="/runs">Runs</a> <a href="/runs/new">New request</a> <a href="/repos">Repositories</a> <a href="/memory">Memory</a> <a href="/setup/github">GitHub</a></nav>
+      {{with .State.Preview}}<pre class="output">{{.}}</pre>{{end}}
+      <p role="status">Loading the run interface… If this remains visible, Vue could not load. Check the CDN connection and integrity pin, or run <code>make vendor-vue</code> and rebuild for local mode.</p>
+      <noscript>JavaScript is required for the run interface.</noscript>
+    </main>
+  </div>
 </body>
 </html>

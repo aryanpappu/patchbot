@@ -218,7 +218,7 @@ func TestQueuedApprovedExecutionHasRecoverableHeartbeat(t *testing.T) {
 	<-entered
 	<-entered
 	run := f.seed(store.StatusAwaitingApproval)
-	requireStatus(t, f.request("POST", fmt.Sprintf("/api/runs/%d/approve", run.ID), `{}`), 202)
+	requireStatus(t, f.request("POST", fmt.Sprintf("/api/runs/%d/approve", run.ID), f.approveBody(t, run.ID)), 202)
 	current, err := f.db.GetRun(t.Context(), run.ID)
 	if err != nil {
 		t.Fatal(err)

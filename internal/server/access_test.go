@@ -19,6 +19,7 @@ import (
 	"github.com/aryanpappu/patchbot/internal/config"
 	"github.com/aryanpappu/patchbot/internal/llm/fake"
 	"github.com/aryanpappu/patchbot/internal/store"
+	"github.com/aryanpappu/patchbot/internal/web"
 )
 
 const (
@@ -97,7 +98,7 @@ func TestAccessApproveRecordsEmailAsActor(t *testing.T) {
 	requireStatus(t, w, 202)
 	run := a.responseRun(w)
 	a.waitFor(run.ID, store.StatusAwaitingApproval)
-	requireStatus(t, a.do("POST", fmt.Sprintf("/api/runs/%d/approve", run.ID), `{}`, jwt), 202)
+	requireStatus(t, a.do("POST", fmt.Sprintf("/api/runs/%d/approve", run.ID), a.approveBody(t, run.ID), jwt), 202)
 	a.waitFor(run.ID, store.StatusSucceeded)
 	approvals, err := a.db.ListApprovals(t.Context(), run.ID)
 	if err != nil || len(approvals) != 1 || approvals[0].Actor != accessOwner || approvals[0].Channel != "ui" {
@@ -179,8 +180,18 @@ func TestAccessPublicAssetsAndSession(t *testing.T) {
 	if w := a.do("GET", "/assets/app.css", "", ""); w.Code != 200 {
 		t.Fatalf("asset without JWT: %d", w.Code)
 	}
-	if w := a.do("GET", "/assets/other.js", "", ""); w.Code != 401 {
-		t.Fatalf("unlisted asset path must need a JWT: %d", w.Code)
+	for _, name := range web.AssetNames() {
+		if w := a.do("GET", "/assets/"+name, "", ""); w.Code != 200 {
+			t.Fatalf("listed asset %s without JWT: %d", name, w.Code)
+		}
+	}
+	for _, path := range []string{"/assets/other.js", "/assets/components/Nope.js", "/assets/components/", "/assets/app.js", "/", "/runs", "/memory", "/repos", "/api/runs", "/setup/github"} {
+		if w := a.do("GET", path, "", ""); w.Code != 401 {
+			t.Fatalf("%s without a JWT must be refused: %d", path, w.Code)
+		}
+	}
+	if w := a.do("POST", "/assets/main.js", "{}", ""); w.Code != 401 {
+		t.Fatalf("non-GET asset request must need a JWT: %d", w.Code)
 	}
 	jwt := a.token(nil)
 	w := a.do("GET", "/api/session", "", jwt)
@@ -190,7 +201,7 @@ func TestAccessPublicAssetsAndSession(t *testing.T) {
 		t.Fatalf("session %s", w.Body.String())
 	}
 	page := a.do("GET", "/runs", "", jwt)
-	if page.Code != 200 || !strings.Contains(page.Body.String(), "Signed in as "+accessOwner) || strings.Contains(page.Body.String(), `"auth_required":true`) {
+	if page.Code != 200 || stateFromPage(t, page.Body.String()).Email != accessOwner || strings.Contains(page.Body.String(), `"auth_required":true`) {
 		t.Fatalf("page %d: %s", page.Code, page.Body.String())
 	}
 }

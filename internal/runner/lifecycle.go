@@ -13,6 +13,10 @@ import (
 	"github.com/aryanpappu/patchbot/internal/tools"
 )
 
+// ErrSpecChanged means the caller approved a specification version or hash that
+// is no longer the latest. It wraps store.ErrConflict.
+var ErrSpecChanged = errors.New("the specification changed after it was shown; reload and review the latest version")
+
 var errCommentEdited = errors.New("GitHub spec comment was edited; use /revise or edit the spec in patchbot")
 
 func (r *Runner) gateOptions() agent.ApprovalOptions {
@@ -110,6 +114,14 @@ func (r *Runner) ApproveAndExecute(ctx context.Context, id int64, approver strin
 	return r.approve(ctx, id, approver, r.actionChannel(), nil, true)
 }
 
+// ApproveSpecAndExecute is ApproveAndExecute bound to the exact specification
+// the approver saw. The version/hash comparison runs under the run's control
+// lock, in the same critical section as the decision, and fails with
+// ErrSpecChanged when the latest spec differs.
+func (r *Runner) ApproveSpecAndExecute(ctx context.Context, id int64, approver string, version int64, hash string) error {
+	return r.approve(ctx, id, approver, r.actionChannel(), &store.Spec{Version: version, Hash: hash}, true)
+}
+
 func (r *Runner) approve(ctx context.Context, id int64, actor, channel string, expected *store.Spec, execute bool) error {
 	if !execute {
 		return r.approveDecision(ctx, id, actor, channel, expected, store.PhaseRefine)
@@ -145,7 +157,7 @@ func (r *Runner) approveDecision(ctx context.Context, id int64, actor, channel s
 		return err
 	}
 	if expected != nil && (spec.Version != expected.Version || spec.Hash != expected.Hash) {
-		return store.ErrConflict
+		return fmt.Errorf("%w: %w", ErrSpecChanged, store.ErrConflict)
 	}
 	if err := r.checkActionSpec(spec, "approve"); err != nil {
 		return err

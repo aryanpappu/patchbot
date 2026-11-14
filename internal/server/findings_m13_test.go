@@ -64,8 +64,11 @@ func TestQueuedJobsKeepOwnershipBeforeWork(t *testing.T) {
 			} else {
 				run = f.seed(store.StatusAwaitingApproval)
 				body := `{}`
-				if action == "revise" {
+				switch action {
+				case "revise":
 					body = `{"notes":"clarify"}`
+				case "approve":
+					body = f.approveBody(t, run.ID)
 				}
 				requireStatus(t, f.request("POST", fmt.Sprintf("/api/runs/%d/%s", run.ID, action), body), 202)
 			}
@@ -123,7 +126,7 @@ func TestReapprovalDispatchesAfterQueuedExpiry(t *testing.T) {
 	f.waitFor(run.ID, store.StatusAwaitingApproval)
 	release := holdWorkers(t, f.server.manager)
 	path := fmt.Sprintf("/api/runs/%d", run.ID)
-	requireStatus(t, f.request("POST", path+"/approve", `{}`), 202)
+	requireStatus(t, f.request("POST", path+"/approve", f.approveBody(t, run.ID)), 202)
 	offset.Store(int64(15 * 24 * time.Hour))
 	release()
 	parked := f.waitFor(run.ID, store.StatusAwaitingApproval)
@@ -135,7 +138,7 @@ func TestReapprovalDispatchesAfterQueuedExpiry(t *testing.T) {
 	release = holdWorkers(t, f.server.manager)
 	defer release()
 	offset.Store(0)
-	requireStatus(t, f.request("POST", path+"/approve", `{}`), 202)
+	requireStatus(t, f.request("POST", path+"/approve", f.approveBody(t, run.ID)), 202)
 	if !f.server.manager.busy(run.ID) {
 		t.Fatal("approval committed without dispatch")
 	}
@@ -195,7 +198,7 @@ func TestPendingQueueRejectsExcessWork(t *testing.T) {
 	}
 	waiting := f.seed(store.StatusAwaitingApproval)
 	for _, action := range []string{"approve", "revise"} {
-		body := `{}`
+		body := f.approveBody(t, waiting.ID)
 		if action == "revise" {
 			body = `{"notes":"clarify"}`
 		}

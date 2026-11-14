@@ -32,6 +32,7 @@ for local checks, audit fixes and external validation limits.
 | M23 Login-based dashboard | Done (Cloudflare Access JWT; token mode default) |
 | M26 Create issue from the dashboard | Done (`POST /api/issues`, migration 0011; approval gate unchanged) |
 | M24 Repository management | Done (dashboard add/edit/remove, audited, frozen per run; migration 0010) |
+| M29 Dashboard redesign | Done in code (ES modules, design system, inbox, run tabs, nav, dialogs, shortcuts); Chrome check on the Mumbai deploy pending |
 
 ## Known limitations
 
