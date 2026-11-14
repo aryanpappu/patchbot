@@ -51,3 +51,11 @@ Every milestone: `make ci` green, code-review pass, one conventional commit, mer
 Interim (2026-11-13): UI token removed on Mumbai at owner request. Port 8080 on loopback is limited by
 iptables (owner match) to root (cloudflared) and the patchbot user, so other local users and CyberPanel
 sites cannot reach the API; Cloudflare Access (owner only) is the only login.
+
+## Build order for M23-M28 (owner: "complete all phases", 2026-11-14)
+| Phase | Milestones | Migration numbers reserved |
+|---|---|---|
+| 1 (parallel) | M23 login via Cloudflare Access JWT; M25 per-repo image; M28 "Connect GitHub" App manifest flow | M23: 0008, M28: 0009, M25: none |
+| 2 (parallel, after phase 1 merged) | M24 repo management in dashboard; M26 create issue from dashboard | M24: 0010, M26: 0011 |
+| 3 | Codex security review per milestone, merge, make ci, deploy to Mumbai | |
+| 4 | M19 live pilot on pappumishra #9 + fault drills (owner clicks Connect GitHub once) | |
