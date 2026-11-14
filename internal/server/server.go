@@ -75,6 +75,8 @@ type Server struct {
 	// setup holds Connect GitHub states; setupMu serializes the callback.
 	setup   setupStates
 	setupMu sync.Mutex
+	// issueGrace overrides issuePendingGrace in tests when positive.
+	issueGrace time.Duration
 }
 
 // ValidateAddress refuses public or wildcard binds without a UI credential.

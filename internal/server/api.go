@@ -32,6 +32,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/providers", s.providers)
 	mux.HandleFunc("/api/providers/{id}/models", s.providerModels)
 	mux.HandleFunc("/api/runs", s.runs)
+	mux.HandleFunc("/api/issues", s.createIssue)
 	mux.HandleFunc("/api/runs/{id}", s.runDetail)
 	mux.HandleFunc("/api/runs/{id}/spec", s.editSpec)
 	mux.HandleFunc("/api/runs/{id}/events", s.events)
@@ -118,6 +119,8 @@ type startRequest struct {
 	CodeModel     string `json:"code_model"`
 	DryRun        bool   `json:"dry_run"`
 	MaxCostMicros int64  `json:"max_cost_micros"`
+	// IngressKey is set by the server only (never decoded from a request).
+	IngressKey string `json:"-"`
 }
 
 func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
@@ -133,21 +136,45 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.Repo = strings.ToLower(strings.TrimSpace(input.Repo))
-	if s.cfg.Repos[input.Repo] == nil || input.Issue <= 0 || (input.Mode != "" && input.Mode != config.ModeFix && input.Mode != config.ModeRefine && input.Mode != config.ModeInvestigate) || input.MaxCostMicros < 0 || !validModels(input.Model, input.RefineModel, input.CodeModel) {
-		s.writeError(w, 400, "invalid_request", "require an allowlisted repo, positive issue, valid mode, models and budget")
+	if !s.repoAllowed(input.Repo) || input.Issue <= 0 {
+		s.writeError(w, 400, "invalid_request", startInvalid)
 		return
 	}
-	if input.Provider != "" && s.cfg.Providers[input.Provider] == nil {
-		s.writeError(w, 400, "invalid_request", "unknown provider")
+	if message := s.validStartOptions(input); message != "" {
+		s.writeError(w, 400, "invalid_request", message)
 		return
 	}
-	run, err := s.runner.Start(r.Context(), runner.Request{Repo: input.Repo, Issue: input.Issue, Mode: input.Mode, Provider: input.Provider, Model: input.Model, RefineModel: input.RefineModel, CodeModel: input.CodeModel, DryRun: input.DryRun, MaxCostMicros: input.MaxCostMicros})
+	run, err := s.startRun(r.Context(), input)
 	if err != nil {
 		s.respondError(w, err)
 		return
 	}
 	w.Header().Set("Location", fmt.Sprintf("/api/runs/%d", run.ID))
 	s.writeJSON(w, http.StatusAccepted, map[string]any{"run": publicRun(run)})
+}
+
+const startInvalid = "require an allowlisted repo, positive issue, valid mode, models and budget"
+
+// repoAllowed is the single allowlist check for requests naming a repository.
+// repo must already be trimmed and lower-cased.
+func (s *Server) repoAllowed(repo string) bool { return s.cfg.Repos[repo] != nil }
+
+// validStartOptions checks everything in a start request except repo and
+// issue. It returns a client-safe message, or "" when the request is valid.
+func (s *Server) validStartOptions(input startRequest) string {
+	if (input.Mode != "" && input.Mode != config.ModeFix && input.Mode != config.ModeRefine && input.Mode != config.ModeInvestigate) || input.MaxCostMicros < 0 || !validModels(input.Model, input.RefineModel, input.CodeModel) {
+		return startInvalid
+	}
+	if input.Provider != "" && s.cfg.Providers[input.Provider] == nil {
+		return "unknown provider"
+	}
+	return ""
+}
+
+// startRun is the one place a dashboard request becomes a run. POST /api/runs
+// and POST /api/issues both use it, so lifecycle rules live only in the runner.
+func (s *Server) startRun(ctx context.Context, input startRequest) (store.Run, error) {
+	return s.runner.Start(ctx, runner.Request{IngressKey: input.IngressKey, Repo: input.Repo, Issue: input.Issue, Mode: input.Mode, Provider: input.Provider, Model: input.Model, RefineModel: input.RefineModel, CodeModel: input.CodeModel, DryRun: input.DryRun, MaxCostMicros: input.MaxCostMicros})
 }
 
 func validModels(models ...string) bool {
@@ -290,7 +317,13 @@ func (s *Server) detailData(ctx context.Context, id int64) (map[string]any, erro
 	if len(specs) > 0 {
 		latest = &specs[len(specs)-1]
 	}
-	return map[string]any{"run": publicRun(run), "capabilities": s.runner.ActionCapabilities(run, latest), "latest_spec": latest, "spec_versions": specs, "approvals": approvals, "steps": steps, "artifacts": publicArtifacts, "reviews": reviews}, nil
+	data := map[string]any{"run": publicRun(run), "capabilities": s.runner.ActionCapabilities(run, latest), "latest_spec": latest, "spec_versions": specs, "approvals": approvals, "steps": steps, "artifacts": publicArtifacts, "reviews": reviews}
+	// An issue opened from the dashboard is authored by the bot or PAT user; the
+	// requester is recorded here.
+	if issue, ok, err := s.db.DashboardIssueByNumber(ctx, run.Repo, run.IssueNumber); err == nil && ok {
+		data["dashboard_issue"] = map[string]any{"requested_by": issue.Actor, "created_at": issue.CreatedAt}
+	}
+	return data, nil
 }
 
 func (s *Server) editSpec(w http.ResponseWriter, r *http.Request) {

@@ -336,6 +336,17 @@ type Store interface {
 	// IsPostedComment reports whether patchbot recorded posting this comment.
 	IsPostedComment(ctx context.Context, commentID int64) (bool, error)
 
+	// Dashboard issues (M26): rows keyed by client idempotency key.
+	BeginDashboardIssue(context.Context, DashboardIssue) (DashboardIssue, bool, error)
+	DashboardIssue(ctx context.Context, key string) (DashboardIssue, error)
+	DashboardIssueByNumber(ctx context.Context, repo string, number int64) (DashboardIssue, bool, error)
+	ClaimPendingDashboardIssue(ctx context.Context, key string, staleBefore, now time.Time) (bool, error)
+	CompleteDashboardIssue(ctx context.Context, key string, number int64, nodeID, url string, now time.Time) error
+	SetDashboardIssueRun(ctx context.Context, key string, runID int64) error
+	DeletePendingDashboardIssue(ctx context.Context, key string) error
+	// RunByIngressKey finds the run started under a unique ingress key.
+	RunByIngressKey(ctx context.Context, key string) (Run, error)
+
 	// GitHubApp returns the App created by the Connect GitHub flow, if any.
 	GitHubApp(context.Context) (GitHubApp, bool, error)
 	// SaveGitHubApp records it once; a second call returns ErrConflict.

@@ -61,27 +61,33 @@ func (s *Server) writeError(w http.ResponseWriter, status int, kind, message str
 }
 
 func (s *Server) respondError(w http.ResponseWriter, err error) {
+	status, kind, message := errorEnvelope(err)
+	s.writeError(w, status, kind, message)
+}
+
+// errorEnvelope maps an internal error to a client-safe status, kind and message.
+func errorEnvelope(err error) (int, string, string) {
 	switch {
 	case errors.Is(err, errQueueFull):
-		s.writeError(w, http.StatusTooManyRequests, "queue_full", errQueueFull.Error())
+		return http.StatusTooManyRequests, "queue_full", errQueueFull.Error()
 	case errors.Is(err, runner.ErrInvalidRequest):
-		s.writeError(w, http.StatusBadRequest, "invalid_request", "invalid specification content or paths")
+		return http.StatusBadRequest, "invalid_request", "invalid specification content or paths"
 	case errors.Is(err, store.ErrNotFound):
-		s.writeError(w, http.StatusNotFound, "not_found", "run or resource not found")
+		return http.StatusNotFound, "not_found", "run or resource not found"
 	case errors.Is(err, store.ErrActiveRunExists):
-		s.writeError(w, http.StatusConflict, "active_run_exists", "an active run already exists for this issue")
+		return http.StatusConflict, "active_run_exists", "an active run already exists for this issue"
 	case errors.Is(err, store.ErrConflict), errors.Is(err, agent.ErrApprovalDenied):
-		s.writeError(w, http.StatusConflict, "conflict", "action is not valid for the current run or specification")
+		return http.StatusConflict, "conflict", "action is not valid for the current run or specification"
 	case errors.Is(err, runner.ErrGitHubNotConnected):
-		s.writeError(w, http.StatusConflict, "github_not_connected", err.Error())
+		return http.StatusConflict, "github_not_connected", err.Error()
 	case errors.Is(err, errShuttingDown):
-		s.writeError(w, http.StatusServiceUnavailable, "unavailable", "server is shutting down")
+		return http.StatusServiceUnavailable, "unavailable", "server is shutting down"
 	case errors.Is(err, llm.ErrUnknownProvider):
-		s.writeError(w, http.StatusBadRequest, "invalid_request", "unknown provider")
+		return http.StatusBadRequest, "invalid_request", "unknown provider"
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		s.writeError(w, http.StatusRequestTimeout, "timeout", "request timed out")
+		return http.StatusRequestTimeout, "timeout", "request timed out"
 	default:
-		s.writeError(w, http.StatusInternalServerError, "internal", "could not complete request")
+		return http.StatusInternalServerError, "internal", "could not complete request"
 	}
 }
 

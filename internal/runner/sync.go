@@ -41,19 +41,9 @@ func (r *Runner) SyncWaiting(ctx context.Context) error {
 }
 
 func (r *Runner) syncRun(ctx context.Context, run store.Run) error {
-	bot := r.opts.BotLogin
-	if bot == "" {
-		identity, ok := r.gh.(interface {
-			CurrentUser(context.Context) (string, error)
-		})
-		if !ok {
-			return errors.New("GitHub bot identity unavailable; comment sync disabled")
-		}
-		var err error
-		bot, err = identity.CurrentUser(ctx)
-		if err != nil {
-			return err
-		}
+	bot, err := r.BotLogin(ctx)
+	if err != nil {
+		return err
 	}
 	spec, err := r.db.LatestSpec(ctx, run.ID)
 	if err != nil {

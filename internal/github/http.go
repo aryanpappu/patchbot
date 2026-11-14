@@ -113,6 +113,10 @@ type responseMeta struct {
 	status int
 }
 
+// ErrCredentialUnavailable means no usable credential existed, so no request
+// was sent. Callers may treat the operation as not performed.
+var ErrCredentialUnavailable = errors.New("authentication token unavailable")
+
 // credential returns the token for one request: the repository's own token when
 // a repository source is configured, else the client-wide source.
 func (c *HTTPClient) credential(ctx context.Context, repo *RepoRef) (string, error) {
@@ -139,10 +143,10 @@ func (c *HTTPClient) credential(ctx context.Context, repo *RepoRef) (string, err
 		if errors.As(err, &mint) {
 			return "", mint
 		}
-		return "", errors.New("authentication token unavailable")
+		return "", ErrCredentialUnavailable
 	}
 	if token == "" || strings.ContainsAny(token, "\r\n") {
-		return "", errors.New("invalid authentication token")
+		return "", ErrCredentialUnavailable
 	}
 	return token, nil
 }

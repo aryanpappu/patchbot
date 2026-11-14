@@ -120,9 +120,21 @@ Times are UTC milliseconds; money is integer micro-USD. NULL means unknown.
 | `run_artifacts` | Redacted spec/report/diff/test/PR previews and private accounting artifacts |
 | `actions` | Local and GitHub lifecycle decisions |
 | `posted_comments` | IDs of GitHub comments patchbot posted (shared-identity approval guard) |
+| `dashboard_issues` | Issues opened from the dashboard: idempotency key, request hash, requester, pending/created state, issue number and node ID, linked run |
 | `memory_entries` | Per-repo typed observations and prose lessons, status, provenance and content hash |
 | `memory_actions` | Memory create/approve/reject/forget audit with actor, channel and time |
 | `schema_migrations` | Applied version, filename, checksum and time |
+
+Dashboard issues (`POST /api/issues`, M26) use the runner's GitHub client, so
+the author is the App bot or the PAT user and the requester is stored in
+`dashboard_issues`. A `pending` row is inserted before GitHub is called; the
+body ends with a visible footer and the hidden marker
+`<!-- patchbot:issue-created v1 key=KEY -->`. A retry with the same key returns
+the stored issue and run; a retry of a stale pending row first lists recent
+issues for an own-authored issue with the exact expected content and marker
+(ambiguity is an error) and only creates when a complete search finds none. The
+run then starts through `startRun`, the same function as `POST /api/runs`, and
+waits at the normal approval gate.
 
 Status changes use compare-and-set with a generation counter. Decisions and
 associated events/actions commit atomically. Public artifact downloads allow a
