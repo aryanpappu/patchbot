@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/github"
 	"github.com/aryanpappu/patchbot/internal/llm"
 	"github.com/aryanpappu/patchbot/internal/llm/providers"
 	"github.com/aryanpappu/patchbot/internal/runner"
@@ -66,6 +67,9 @@ type Server struct {
 	ingressWake     chan struct{}
 	// maxPending overrides maxPendingDeliveries in tests when positive.
 	maxPending int
+	// setup holds Connect GitHub states; setupMu serializes the callback.
+	setup   setupStates
+	setupMu sync.Mutex
 }
 
 // ValidateAddress refuses public or wildcard binds without a UI credential.
@@ -318,7 +322,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only data-free shells and their fixed assets are public. Browser navigation
 	// cannot attach a bearer header; every API and SSE request still requires it.
-	if s.authenticated && (r.Method != http.MethodGet || !web.PublicPath(r.URL.Path)) {
+	// The Connect GitHub callback is a browser redirect from GitHub and cannot
+	// carry the bearer header; its single-use random state is its credential.
+	callback := r.Method == http.MethodGet && r.URL.Path == github.CallbackPath
+	if s.authenticated && !callback && (r.Method != http.MethodGet || !web.PublicPath(r.URL.Path)) {
 		value, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		candidate := sha256.Sum256([]byte(value))
 		if !ok || subtle.ConstantTimeCompare(candidate[:], s.tokenHash[:]) != 1 {

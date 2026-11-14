@@ -19,6 +19,21 @@ import (
 // author, and fails startup on any error: there is no fallback to a PAT.
 func (r *Runner) setupGitHub(ctx context.Context) error {
 	opts := &r.opts
+	if opts.RepoTokens == nil && r.cfg.GitHub.App() && r.cfg.GitHub.AppID == 0 {
+		// Setup mode: the App ID comes from the "Connect GitHub" flow. Without
+		// one the server still starts, but every credential request fails closed
+		// (never a PAT) and new runs are refused with ErrGitHubNotConnected.
+		app, found, err := r.db.GitHubApp(ctx)
+		if err != nil {
+			return errors.New("could not read the connected GitHub App")
+		}
+		if found {
+			r.cfg.GitHub.AppID = app.AppID
+		} else {
+			r.notConnected = true
+			opts.RepoTokens = notConnectedTokens{}
+		}
+	}
 	if opts.RepoTokens == nil && r.cfg.GitHub.App() {
 		app, identity, err := NewGitHubApp(ctx, r.cfg, opts.GitHubAPI, opts.GitHubHTTP, r.registerToken)
 		if err != nil {
@@ -53,6 +68,20 @@ func (r *Runner) setupGitHub(ctx context.Context) error {
 	}
 	return nil
 }
+
+// ErrGitHubNotConnected refuses new runs until the Connect GitHub flow ran.
+var ErrGitHubNotConnected = errors.New("GitHub is not connected yet: open /setup/github in the dashboard and connect GitHub first")
+
+// notConnectedTokens fails every credential request in setup mode.
+type notConnectedTokens struct{}
+
+func (notConnectedTokens) RepoToken(context.Context, github.RepoRef) (string, error) {
+	return "", ErrGitHubNotConnected
+}
+
+// GitHubConnected reports whether the runner has GitHub credentials. It is
+// false only in app mode before the Connect GitHub flow created the App.
+func (r *Runner) GitHubConnected() bool { return !r.notConnected }
 
 // registerToken masks a minted token, and its git header form, in every
 // redactor that output can pass through: the runner's own and the caller's

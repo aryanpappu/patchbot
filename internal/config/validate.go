@@ -69,10 +69,12 @@ func (c *Config) validateGitHub(v *validator) {
 		v.addf(`github.auth: must be "pat" or "app"`)
 		return
 	}
+	v.validateSetup(g)
 	if !g.App() {
 		return
 	}
-	v.check(g.AppID > 0, "github.app_id: app mode requires the numeric GitHub App ID")
+	// app_id 0 is setup mode: the ID is read from the database after "Connect GitHub".
+	v.check(g.AppID >= 0, "github.app_id: must be the numeric GitHub App ID, or 0 until GitHub is connected from the dashboard")
 	v.check(g.InstallationID >= 0, "github.installation_id: must be 0 (resolve per repository) or a positive ID")
 	keyPath := g.PrivateKeyFile
 	if keyPath == "" || !filepath.IsAbs(keyPath) || filepath.Clean(keyPath) != keyPath || strings.ContainsRune(keyPath, 0) {
@@ -84,6 +86,23 @@ func (c *Config) validateGitHub(v *validator) {
 			v.addf("github.private_key_file: must not be inside the data directory or workspaces")
 		}
 	}
+}
+
+var setupAppNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 _-]{0,33}$`)
+
+// validateSetup checks the optional "Connect GitHub" settings.
+func (v *validator) validateSetup(g GitHub) {
+	if g.SetupAppName != "" {
+		v.check(setupAppNameRE.MatchString(g.SetupAppName), "github.setup_app_name: use 1-34 letters, digits, spaces, '-' or '_'")
+	}
+	if g.SetupPublicURL == "" {
+		return
+	}
+	u, err := url.Parse(g.SetupPublicURL)
+	loopback := err == nil && (u.Hostname() == "localhost" || net.ParseIP(u.Hostname()).IsLoopback())
+	ok := err == nil && u.Host != "" && u.User == nil && u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" && u.Opaque == "" &&
+		(u.Path == "" || u.Path == "/") && (u.Scheme == "https" || (u.Scheme == "http" && loopback))
+	v.check(ok, "github.setup_public_url: must be an origin such as https://patchbot.example.org (http only for localhost), without path, query or credentials")
 }
 
 type validator struct {

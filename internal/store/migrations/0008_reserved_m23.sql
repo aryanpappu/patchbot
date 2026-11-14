@@ -1,0 +1,2 @@
+-- Reserved for M23 so migration numbering stays contiguous across branches.
+-- Intentionally empty.

@@ -73,6 +73,26 @@ that can read the key, and rotate the key after any suspected host compromise
 (outstanding installation tokens stay valid until they expire, at most 1 hour,
 unless the installation is suspended).
 
+Connect GitHub (App manifest flow, M28): `GET /setup/github` is a data-free
+shell (like the other pages); the manifest and a 32-byte random `state` are
+issued only by the bearer-protected `POST /api/github/setup/start`. The state
+is kept as a SHA-256 digest in server memory, expires after 10 minutes, works
+once, is compared in constant time, and is consumed even when the exchange fails.
+Because GitHub redirects the browser to `/setup/github/callback`, which cannot
+carry a bearer header, that one route is authenticated by the state alone; an
+attacker who cannot obtain a state cannot make patchbot adopt their App. The
+code exchange is a bounded (64 KiB), 20-second, no-redirect, unauthenticated
+call; its response and the code are never logged or echoed, and errors are fixed
+strings. The key is written atomically (exclusive temp file, `0600`, then a
+hard link that fails if the path exists), owned by the service user, and an
+existing file, symlink or dangling link is refused, so a key is never replaced.
+The key directory must pre-exist; the check runs before the single-use code is
+spent so a key cannot be lost after the App was created. The database stores
+only the App ID and slug. `client_secret` and `webhook_secret` are discarded
+(the App is created with the webhook inactive). The setup page relaxes only
+`form-action` to `https://github.com`. Setup is disabled once connected, and a
+public, unauthenticated visitor can learn only whether GitHub is connected.
+
 In scope: file-tool jail escapes, command-policy bypass, leaks through logs,
 SSE, artifacts, errors or PR text, unsafe git publication, browser protection
 bypass and code execution without valid spec approval. Prompt injection that

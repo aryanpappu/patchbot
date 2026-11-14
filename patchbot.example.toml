@@ -114,6 +114,13 @@ auth = "pat"
 #                                    # stricter, owned by the patchbot user, and
 #                                    # outside [data] dir and workspaces
 # installation_id = 0                # optional; 0 looks it up per repository
+#
+# "Connect GitHub": leave app_id out (or 0), keep private_key_file, and set
+# setup_public_url. Start patchbot, open /setup/github, click Connect GitHub.
+# GitHub creates the App and patchbot stores the key (0600, no overwrite) and
+# the App ID itself. The key's directory must exist, owned by the service user.
+# setup_public_url = "https://patchbot.example.org"   # https, or http for localhost
+# setup_app_name = ""                # default patchbot-<6 random chars>
 
 [providers.anthropic]
 kind = "anthropic"                  # anthropic, gemini, openai

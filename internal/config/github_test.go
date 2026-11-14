@@ -15,6 +15,9 @@ func TestGitHubAuthValidation(t *testing.T) {
 		"[github]\nauth = \"pat\"\n",
 		"[github]\nauth = \"app\"\napp_id = 123\nprivate_key_file = \"/srv/patchbot/github-app.pem\"\n",
 		"[github]\nauth = \"app\"\napp_id = 123\nprivate_key_file = \"/srv/patchbot/github-app.pem\"\ninstallation_id = 9\n",
+		// app_id 0 is setup mode: Connect GitHub fills it from the database.
+		"[github]\nauth = \"app\"\nprivate_key_file = \"/srv/patchbot/github-app.pem\"\nsetup_public_url = \"https://patchbot.example.org\"\nsetup_app_name = \"my patchbot\"\n",
+		"[github]\nsetup_public_url = \"http://localhost:8080\"\n",
 	}
 	for _, extra := range ok {
 		if err := loadString(t, validBase+extra, nil).Validate(); err != nil {
@@ -22,8 +25,12 @@ func TestGitHubAuthValidation(t *testing.T) {
 		}
 	}
 	bad := map[string]string{
-		"[github]\nauth = \"oauth\"\n":                                                                    "github.auth",
-		"[github]\nauth = \"app\"\nprivate_key_file = \"/srv/patchbot/k.pem\"\n":                          "github.app_id",
+		"[github]\nauth = \"oauth\"\n": "github.auth",
+		"[github]\nauth = \"app\"\napp_id = -1\nprivate_key_file = \"/srv/patchbot/k.pem\"\n":             "github.app_id",
+		"[github]\nsetup_public_url = \"http://patchbot.example.org\"\n":                                  "github.setup_public_url",
+		"[github]\nsetup_public_url = \"https://patchbot.example.org/x?y=1\"\n":                           "github.setup_public_url",
+		"[github]\nsetup_public_url = \"https://u:p@patchbot.example.org\"\n":                             "github.setup_public_url",
+		"[github]\nsetup_app_name = \"bad<name>\"\n":                                                      "github.setup_app_name",
 		"[github]\nauth = \"app\"\napp_id = 1\n":                                                          "github.private_key_file",
 		"[github]\nauth = \"app\"\napp_id = 1\nprivate_key_file = \"key.pem\"\n":                          "github.private_key_file",
 		"[github]\nauth = \"app\"\napp_id = 1\nprivate_key_file = \"/srv/x.pem\"\ninstallation_id = -1\n": "github.installation_id",
