@@ -1,7 +1,7 @@
 # Embedded run interface
 
-`internal/server` serves `/` and `/runs` (run list), `/runs/new` (new run),
-and `/runs/{id}` (detail). The browser uses only the existing M13 JSON API,
+`internal/server` serves `/` (the "Waiting for you" inbox), `/runs` (run list),
+`/runs/new` (new request), `/repos`, `/memory`, and `/runs/{id}` (detail). The browser uses only the existing M13 JSON API,
 artifact downloads and SSE. No npm, build step, new Go dependency or external
 markdown renderer is involved. All assets and the Go html/template shell are
 embedded in the binary.
@@ -19,7 +19,7 @@ when reloading the detail page.
 Vue uses the global production build, pinned to 3.5.13. The app configures
 `[[ ]]` delimiters. Its handwritten render functions return text nodes and
 never invoke Vue's runtime template compiler, keeping CSP free of
-`unsafe-inline` and `unsafe-eval`. The only executable scripts are the app
+`unsafe-inline` and `unsafe-eval`. The only executable scripts are the app modules
 from self and Vue from `https://cdn.jsdelivr.net`; styles and fetches use self.
 Local mode permits only self for scripts. No inline event attributes are used.
 
@@ -58,6 +58,52 @@ current list filter. List requests keep filters with each opaque cursor. Older
 runs and First page provide forward cursor navigation. Forms have labels,
 status chips include text, focus is visible, output panels are keyboard
 scrollable, and layout wraps at phone width.
+
+## M29 structure and security
+
+The interface is native ES modules under `assets/`, loaded as
+`<script type="module" src="/assets/main.js">` from this origin after the pinned
+Vue global build (no bundler, no npm, no build step):
+
+- `main.js` creates the shared services once and mounts `components/App.js`.
+- `components/*.js` are render-function components (`Inbox`, `RunList`, `RunDetail`,
+  `SpecView`, `LogStream`, `ChangesView`/`DiffView`, `RepoPage`/`RepoCard`, `NewRequest`,
+  `MemoryView`, `Toast`, `ConfirmDialog`, `Modal`, `Sidebar`, ...).
+- `composables/use*.js` own state and effects: `useApi` (single fetch helper and the
+  token-mode bearer), `useSession` (`GET /api/session`), `useRunStream` (SSE with
+  `Last-Event-ID`), `useBadges`, `useKeyboard`, `useToast`, `useConfirm`, `useTheme`.
+- `ui.js` holds the primitives (`button`, `field`, `chip`, `panel`, `icon`, `meter`, `link`, `block`);
+  `format.js` holds pure helpers (status map, diff parsing, spec decoding, failure text).
+
+**Served files.** `web.assetNames` is the complete fixed list; `/assets/{name}`,
+`/assets/components/{name}` and `/assets/composables/{name}` match a file only if it is on
+that list (plus `vue.global.prod.js` in local mode). Token mode (`PublicPath`) and Access
+mode (`accessPublic`) both call `web.AssetPath`, so they cannot drift. A test asserts the
+list equals the embedded tree, every import resolves to a listed file, and unlisted paths
+(including `..` and directory paths) are not served. Everything else in Access mode needs
+the Cloudflare JWT.
+
+**XSS surface.** Model, issue, spec, diff, log, test, memory and repository text reach the
+DOM only as Vue text children (`block()`, `h(tag, text)`). Tests scan every module for
+`innerHTML`, `v-html`, `insertAdjacentHTML`, `template:`, `eval`, `new Function`,
+`document.write`, `DOMParser`, `srcdoc`, `javascript:`, HTML in template strings, `href`
+values that are not fixed paths, `runHref(id)` (integer IDs only) or the validated
+`link()` helper (http/https via `new URL()`), and any use of `localStorage` outside the
+theme toggle or `sessionStorage` outside `useApi`. The CSP is unchanged: no
+`unsafe-inline` or `unsafe-eval`, no inline styles (progress bars use `<progress>`).
+
+**Pages.** The inbox lists `awaiting_approval` and `needs_info` runs. Run detail shows a
+phase stepper (Refine, Approval, Code, Tests, Review, PR) derived from the API's
+status/phase, a plain-language failure reason, budget meters (tokens, cost, time; "unknown"
+when the API gives no value or limit), and Spec / Live log / Changes tabs. The sticky
+action bar shows Approve (with version and short hash), Revise, Reject, Cancel and Retry
+from the server's capabilities; Approve, Reject, Cancel, Forget and Remove repository
+use `ConfirmDialog` (focus trap, Escape, focus restore). The sidebar shows badge counts and
+the signed-in email (Access mode: `GET /api/session`), and the tab title is `(n) patchbot`.
+The theme toggle sets `data-theme` on `<html>` and remembers it in localStorage (try/catch).
+
+**Shortcuts** (ignored while typing or with a dialog open): `a` approve (opens the confirm
+dialog), `r` revise, `g i` inbox, `g r` runs, `g n` new request, `?` help.
 
 ## Vue vendoring
 

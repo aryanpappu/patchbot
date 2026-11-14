@@ -134,5 +134,7 @@ func Asset(w http.ResponseWriter, r *http.Request, local bool) {
 		return
 	}
 	w.Header().Set("Content-Type", media)
-	_, _ = w.Write(data)
+	// data is an embedded file chosen only from the fixed assetNames list, with a
+	// fixed script/style media type and nosniff.
+	_, _ = w.Write(data) //nolint:gosec // G705: not user-controlled content
 }
