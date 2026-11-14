@@ -59,3 +59,4 @@ sites cannot reach the API; Cloudflare Access (owner only) is the only login.
 | 2 (parallel, after phase 1 merged) | M24 repo management in dashboard; M26 create issue from dashboard | M24: 0010, M26: 0011 |
 | 3 | Codex security review per milestone, merge, make ci, deploy to Mumbai | |
 | 4 | M19 live pilot on pappumishra #9 + fault drills (owner clicks Connect GitHub once) | |
+| 5 | M29 dashboard redesign (see M29-dashboard-redesign.md) | none expected |
