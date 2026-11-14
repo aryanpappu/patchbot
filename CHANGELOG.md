@@ -3,8 +3,8 @@
 ## Unreleased
 
 - Add "Create issue from the dashboard" (M26): `POST /api/issues` opens a GitHub
-  issue (with a visible "created via the patchbot dashboard by <actor>" footer
-  and a hidden `patchbot:issue-created` marker) and can start the refine run
+  issue (with a visible "created from the patchbot dashboard" footer, no
+  requester email, and a hidden `patchbot:issue-created` marker) and can start the refine run
   through the same path as `POST /api/runs`. A client idempotency key makes
   retries safe, including after a crash mid-request. `/runs/new` gets a "Write a
   new request" mode. Migration 0011 (`dashboard_issues`); the approval gate is

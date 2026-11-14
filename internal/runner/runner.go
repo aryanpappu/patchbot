@@ -70,7 +70,8 @@ type Options struct {
 
 // Request fixes provider/model and limits for the lifetime of a new run.
 type Request struct {
-	// IngressKey is supplied only by automatic label reconciliation.
+	// IngressKey makes a start idempotent: label reconciliation and dashboard
+	// issues supply it, and a second start with the same key is ErrConflict.
 	IngressKey             string
 	Repo                   string
 	Issue                  int64

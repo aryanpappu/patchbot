@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"errors"
 
 	"github.com/aryanpappu/patchbot/internal/github"
@@ -22,4 +23,19 @@ func (r *Runner) IssueWriter() (github.IssueWriter, error) {
 		return nil, ErrIssueCreationUnsupported
 	}
 	return writer, nil
+}
+
+// BotLogin is the GitHub login patchbot's own writes carry: "<slug>[bot]" in
+// App mode, the token owner's login in PAT mode. It fails closed when unknown.
+func (r *Runner) BotLogin(ctx context.Context) (string, error) {
+	if r.opts.BotLogin != "" {
+		return r.opts.BotLogin, nil
+	}
+	identity, ok := r.gh.(interface {
+		CurrentUser(context.Context) (string, error)
+	})
+	if !ok {
+		return "", errors.New("GitHub bot identity unavailable; comment sync disabled")
+	}
+	return identity.CurrentUser(ctx)
 }

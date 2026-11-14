@@ -27,8 +27,10 @@ GitHub only.
   `ErrGitHubNotConnected` in setup mode). Title and body are mention-neutralized
   like all other patchbot text. `Issue` now decodes `node_id`.
 - **Attribution.** GitHub shows the bot or PAT user as author. The body ends with
-  `---`, a visible line "Created from the patchbot dashboard by `<actor>`" and the
-  hidden `<!-- patchbot:issue-created v1 key=KEY -->`. The actor, issue number and
+  `---`, a visible line "Created from the patchbot dashboard." (no actor or email:
+  the issue is public) and the hidden
+  `<!-- patchbot:issue-created v1 key=KEY h=HASH16 -->`, where HASH16 is a prefix of
+  the request hash. The actor, issue number and
   node ID are stored in `dashboard_issues`; `GET /api/runs/ID` adds
   `dashboard_issue.requested_by`. patchbot never trusts an issue by its author,
   and comment commands keep the existing marker/`posted_comments` rules (the
@@ -45,7 +47,12 @@ GitHub only.
   3. A pending row younger than 2 minutes means another request may still be in
      flight: `409 issue_creation_in_progress`. An older one is atomically claimed
      by one retry, which lists recent issues (any state, up to 300) for the exact
-     marker at the end of a body. Found: the row is completed, nothing is created.
+     marker. A candidate counts only if its author is patchbot's own login
+     (`<slug>[bot]` in App mode, the `/user` login in PAT mode, via
+     `Runner.BotLogin`) and its title and body equal exactly what this request
+     produces, marker included; a copied marker in someone else's issue is
+     ignored. Two or more matches is `issue_state_unknown`. One match: the row is
+     completed, nothing is created.
      A complete search that finds nothing: the issue is created. A failed or
      truncated search: `502 issue_state_unknown` ("may have been created, check
      the repo"), never a blind create.
@@ -57,9 +64,11 @@ GitHub only.
 - **Run start.** `start_run` calls `Server.startRun`, extracted from the
   `POST /api/runs` handler together with `validStartOptions`; there is no second
   lifecycle path. The run is created with channel `ui` and the dashboard actor,
-  lands in `awaiting_approval` and is never approved. A retry resumes at the run
-  step (adopting an existing run for that brand-new issue instead of starting a
-  second). If the run cannot start the response carries both the error and the
+  lands in `awaiting_approval` and is never approved. The run is created under the
+  unique ingress key `dashboard-issue:<key>` (the existing `runs.ingress_key`
+  mechanism). A concurrent or later retry gets `ErrConflict` from the store,
+  fetches the existing run by that key and links it; a link failure is returned,
+  not ignored. This holds even if the first run already finished. If the run cannot start the response carries both the error and the
   `issue`, and the same key resumes.
 - **Errors** (fixed messages; GitHub bodies and tokens never relayed):
   `github_not_connected` 409; `github_permission_denied` 403 (GitHub 401/403/404
@@ -94,8 +103,8 @@ in `internal/web`. No tokens appear in any response (the fixture asserts it).
 - **Migration 0010 placeholder.** M24 owns 0010. At merge, delete
   `0010_reserved_m24.sql` and keep M24's real file; 0011 follows unchanged.
   Also swap `repoAllowed` for M24's registry lookup.
-- **Actor email is public.** In Access mode the footer shows the login email in
-  the issue, readable by anyone who can read the repository.
+- The actor email is never written to GitHub; it lives in `dashboard_issues`,
+  `approvals`/`actions` and the run detail only.
 - **Marker search window** is 300 issues updated since shortly before the pending
   row; in a very busy repo it reports `issue_state_unknown` instead of guessing.
 - **Eventual consistency.** The marker search uses the issues list (not the

@@ -43,7 +43,7 @@ func (g *issueGitHub) CreateIssue(_ context.Context, repo github.RepoRef, in git
 		return github.Issue{}, g.createErr
 	}
 	n := len(g.issues) + 1
-	issue := github.Issue{Number: n, NodeID: "I_node" + strconv.Itoa(n), Title: in.Title, Body: in.Body, State: "open",
+	issue := github.Issue{Number: n, Author: "patchbot", NodeID: "I_node" + strconv.Itoa(n), Title: in.Title, Body: in.Body, State: "open",
 		HTMLURL: "https://github.com/" + repo.Owner + "/" + repo.Name + "/issues/" + strconv.Itoa(n)}
 	g.issues = append(g.issues, issue)
 	if g.lostReply {
@@ -148,9 +148,9 @@ func TestCreateIssueWritesMarkerFooterAndRecordsActor(t *testing.T) {
 		t.Fatalf("issues created: %d", g.count())
 	}
 	issue := g.issues[0]
-	marker := "<!-- patchbot:issue-created v1 key=" + goodKey + " -->"
+	marker := issueMarker(goodKey, row0Hash(t, f))
 	if issue.Title != "Add dark mode" || !strings.HasPrefix(issue.Body, "Please add a dark theme.") || !strings.HasSuffix(issue.Body, marker) ||
-		!strings.Contains(issue.Body, "Created from the patchbot dashboard by `operator`") {
+		!strings.Contains(issue.Body, "Created from the patchbot dashboard.") || strings.Contains(issue.Body, "operator") || strings.Contains(issue.Body, "`") {
 		t.Fatalf("issue content: %q", issue.Body)
 	}
 	row, err := f.db.DashboardIssue(t.Context(), goodKey)
@@ -489,7 +489,7 @@ func TestCreateIssueAccessModeRecordsEmail(t *testing.T) {
 	w := a.do("POST", "/api/issues", issueJSON(t, map[string]any{"start_run": true, "mode": "refine", "dry_run": true}), jwt)
 	requireStatus(t, w, http.StatusCreated)
 	out := decodeIssue(t, w)
-	if out.Issue.RequestedBy != accessOwner || !strings.Contains(g.issues[0].Body, "`"+accessOwner+"`") {
+	if out.Issue.RequestedBy != accessOwner || strings.Contains(g.issues[0].Body, "@") || strings.Contains(g.issues[0].Body, "example.com") {
 		t.Fatalf("actor not recorded: %s / %q", w.Body.String(), g.issues[0].Body)
 	}
 	row, _ := a.db.DashboardIssue(t.Context(), goodKey)
@@ -526,5 +526,131 @@ func TestCreateIssueHostileTextIsInertData(t *testing.T) {
 	page := f.request("GET", "/runs/new", "")
 	if strings.Contains(page.Body.String(), "alert(1)") {
 		t.Fatal("issue text reached the page shell")
+	}
+}
+
+func row0Hash(t *testing.T, f *fixture) string {
+	t.Helper()
+	row, err := f.db.DashboardIssue(t.Context(), goodKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return row.RequestHash
+}
+
+func baseRequest() issueRequest {
+	return issueRequest{Repo: "owner/repo", Title: "Add dark mode", Body: "Please add a dark theme.", IdempotencyKey: goodKey}
+}
+
+func TestRecoveryIgnoresCopiedMarkerFromAnotherAuthor(t *testing.T) {
+	f, g := newIssueFixture(t, nil)
+	g.lostReply = true
+	requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, nil)), http.StatusBadGateway)
+	g.lostReply = false
+	real := g.issues[0]
+	// An outsider opens a newer issue carrying a copy of the same body and marker.
+	g.issues = append(g.issues, github.Issue{Number: 2, Author: "mallory", Title: real.Title, Body: real.Body, State: "open"})
+	f.server.issueGrace = time.Millisecond
+	time.Sleep(5 * time.Millisecond)
+	w := f.request("POST", "/api/issues", issueJSON(t, nil))
+	requireStatus(t, w, http.StatusOK)
+	if out := decodeIssue(t, w); out.Issue.Number != 1 {
+		t.Fatalf("linked the wrong issue: %s", w.Body.String())
+	}
+}
+
+func TestRecoveryNeverLinksForeignIssueAndOtherRequestMarkers(t *testing.T) {
+	f, g := newIssueFixture(t, nil)
+	g.createErr = &github.APIError{StatusCode: 502}
+	requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, nil)), http.StatusBadGateway)
+	g.createErr = nil
+	in := baseRequest()
+	row, _ := f.db.DashboardIssue(t.Context(), goodKey)
+	body := issueBody(in.Body, goodKey, row.RequestHash)
+	other := issueBody(in.Body, goodKey, strings.Repeat("f", 64)) // marker of a different request
+	g.issues = append(g.issues,
+		github.Issue{Number: 1, Author: "mallory", Title: in.Title, Body: body, State: "open"},
+		github.Issue{Number: 2, Author: "patchbot", Title: in.Title, Body: other, State: "open"},
+		github.Issue{Number: 3, Author: "patchbot", Title: "edited title", Body: body, State: "open"})
+	f.server.issueGrace = time.Millisecond
+	time.Sleep(5 * time.Millisecond)
+	w := f.request("POST", "/api/issues", issueJSON(t, nil))
+	requireStatus(t, w, http.StatusCreated)
+	if out := decodeIssue(t, w); out.Issue.Number != 4 || g.attempts != 2 {
+		t.Fatalf("expected a fresh issue 4: %s", w.Body.String())
+	}
+}
+
+func TestRecoveryAmbiguousMatchesAreUnknown(t *testing.T) {
+	f, g := newIssueFixture(t, nil)
+	g.lostReply = true
+	requireStatus(t, f.request("POST", "/api/issues", issueJSON(t, nil)), http.StatusBadGateway)
+	g.lostReply = false
+	dup := g.issues[0]
+	dup.Number = 2
+	g.issues = append(g.issues, dup)
+	f.server.issueGrace = time.Millisecond
+	time.Sleep(5 * time.Millisecond)
+	w := f.request("POST", "/api/issues", issueJSON(t, nil))
+	requireStatus(t, w, http.StatusBadGateway)
+	if decodeIssue(t, w).Error.Kind != "issue_state_unknown" || g.attempts != 1 {
+		t.Fatalf("ambiguity must not create or pick: attempts=%d %s", g.attempts, w.Body.String())
+	}
+	if row, _ := f.db.DashboardIssue(t.Context(), goodKey); !row.Pending {
+		t.Fatal("row must stay pending")
+	}
+}
+
+func TestConcurrentStartRunRetriesReturnOneRun(t *testing.T) {
+	f, _ := newIssueFixture(t, fake.New("anthropic", specStep()))
+	f.withRepo()
+	req := issueJSON(t, map[string]any{"start_run": true, "mode": "refine", "dry_run": true})
+	// Create the issue first so only the run step races.
+	g0 := decodeIssue(t, f.request("POST", "/api/issues", issueJSON(t, nil)))
+	_ = g0
+	// Same key but start_run differs: refused, so use a fresh key for the race.
+	req = issueJSON(t, map[string]any{"start_run": true, "mode": "refine", "dry_run": true, "idempotency_key": "race-key-123456"})
+	var wg sync.WaitGroup
+	ids := make(chan int64, 8)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w := f.request("POST", "/api/issues", req)
+			if w.Code == 200 || w.Code == 201 {
+				if out := decodeIssue(t, w); out.Run != nil {
+					ids <- out.Run.ID
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(ids)
+	var first int64
+	n := 0
+	for id := range ids {
+		n++
+		if first == 0 {
+			first = id
+		}
+		if id != first {
+			t.Fatalf("different runs returned: %d and %d", first, id)
+		}
+	}
+	if n == 0 {
+		t.Fatal("no request returned the run")
+	}
+	f.waitFor(first, store.StatusAwaitingApproval)
+	// A later retry, after the run reached its gate, still returns that run.
+	w := f.request("POST", "/api/issues", req)
+	if out := decodeIssue(t, w); out.Run == nil || out.Run.ID != first {
+		t.Fatalf("late retry: %s", w.Body.String())
+	}
+	page, _ := f.db.ListRuns(t.Context(), store.RunFilter{Repo: "owner/repo", IssueNumber: 2, Limit: 10})
+	if len(page.Runs) != 1 {
+		t.Fatalf("runs for the issue: %d", len(page.Runs))
+	}
+	if run, err := f.db.RunByIngressKey(t.Context(), "dashboard-issue:race-key-123456"); err != nil || run.ID != first {
+		t.Fatalf("ingress key: %+v %v", run, err)
 	}
 }

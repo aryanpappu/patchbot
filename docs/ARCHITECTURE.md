@@ -131,7 +131,8 @@ the author is the App bot or the PAT user and the requester is stored in
 body ends with a visible footer and the hidden marker
 `<!-- patchbot:issue-created v1 key=KEY -->`. A retry with the same key returns
 the stored issue and run; a retry of a stale pending row first lists recent
-issues for the marker and only creates when a complete search finds none. The
+issues for an own-authored issue with the exact expected content and marker
+(ambiguity is an error) and only creates when a complete search finds none. The
 run then starts through `startRun`, the same function as `POST /api/runs`, and
 waits at the normal approval gate.
 

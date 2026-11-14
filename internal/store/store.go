@@ -344,6 +344,8 @@ type Store interface {
 	CompleteDashboardIssue(ctx context.Context, key string, number int64, nodeID, url string, now time.Time) error
 	SetDashboardIssueRun(ctx context.Context, key string, runID int64) error
 	DeletePendingDashboardIssue(ctx context.Context, key string) error
+	// RunByIngressKey finds the run started under a unique ingress key.
+	RunByIngressKey(ctx context.Context, key string) (Run, error)
 
 	// GitHubApp returns the App created by the Connect GitHub flow, if any.
 	GitHubApp(context.Context) (GitHubApp, bool, error)

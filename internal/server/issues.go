@@ -116,22 +116,17 @@ func (s *Server) normalizeIssue(in *issueRequest) string {
 	return ""
 }
 
-func issueMarker(key string) string { return "<!-- patchbot:issue-created v1 key=" + key + " -->" }
+// issueMarker binds the key to the request content, so a copy of a marker from
+// a different request cannot match.
+func issueMarker(key, hash string) string {
+	return "<!-- patchbot:issue-created v1 key=" + key + " h=" + hash[:16] + " -->"
+}
 
-// issueBody is the user's text, a visible footer naming the dashboard actor
-// (GitHub shows only the bot or PAT user) and the hidden marker that lets a
-// retry find the issue after a crash.
-func issueBody(body, actor, key string) string {
-	clean := strings.Map(func(r rune) rune {
-		if r == '`' || unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, actor)
-	if len(clean) > 200 {
-		clean = clean[:200]
-	}
-	footer := "---\n_Created from the patchbot dashboard by `" + clean + "`. Nothing runs until the specification is approved._\n" + issueMarker(key)
+// issueBody is the user's text, a visible footer and the hidden marker that lets
+// a retry find the issue after a crash. The footer deliberately omits the actor:
+// the issue is public and the requester's login email stays in SQLite.
+func issueBody(body, key, hash string) string {
+	footer := "---\n_Created from the patchbot dashboard. Nothing runs until the specification is approved._\n" + issueMarker(key, hash)
 	if body == "" {
 		return footer
 	}
@@ -272,7 +267,7 @@ func (s *Server) ensureIssue(ctx context.Context, writer github.IssueWriter, row
 		if !claimed {
 			return fail(apiError{http.StatusConflict, "issue_creation_in_progress", "a request with this idempotency key is still in progress; retry in a minute"})
 		}
-		found, err := s.findIssueByMarker(ctx, writer, repo, row)
+		found, err := s.findIssueByMarker(ctx, writer, repo, row, in)
 		if err != nil {
 			return fail(errIssueUnknown)
 		}
@@ -280,7 +275,7 @@ func (s *Server) ensureIssue(ctx context.Context, writer github.IssueWriter, row
 			return s.completeIssue(ctx, row, *found, false)
 		}
 	}
-	issue, err := writer.CreateIssue(ctx, repo, github.NewIssue{Title: in.Title, Body: issueBody(in.Body, row.Actor, row.IdempotencyKey)})
+	issue, err := writer.CreateIssue(ctx, repo, github.NewIssue{Title: in.Title, Body: issueBody(in.Body, row.IdempotencyKey, row.RequestHash)})
 	if err != nil {
 		if notCreated(err) {
 			// Nothing was created, so the same key may be submitted again.
@@ -303,24 +298,39 @@ func (s *Server) completeIssue(ctx context.Context, row store.DashboardIssue, is
 	return row, created, nil
 }
 
-// findIssueByMarker lists recent issues of any state looking for this key's
-// marker at the end of a body. A search that cannot cover every candidate is an
-// error, never "not found".
-func (s *Server) findIssueByMarker(ctx context.Context, writer github.IssueWriter, repo github.RepoRef, row store.DashboardIssue) (*github.Issue, error) {
-	marker := issueMarker(row.IdempotencyKey)
+// findIssueByMarker lists recent issues of any state looking for the one this
+// request created. A candidate must be authored by patchbot's own identity and
+// have exactly the title and body this request produces (marker included), so
+// copying the public marker into someone else's issue cannot hijack recovery.
+// Several matches, or a search that cannot cover every candidate, is an error,
+// never a guess.
+func (s *Server) findIssueByMarker(ctx context.Context, writer github.IssueWriter, repo github.RepoRef, row store.DashboardIssue, in issueRequest) (*github.Issue, error) {
+	bot, err := s.runner.BotLogin(ctx)
+	if err != nil || bot == "" {
+		return nil, errors.New("bot identity unknown")
+	}
+	wantTitle := github.NeutralizeMentions(in.Title)
+	wantBody := github.NeutralizeMentions(issueBody(in.Body, row.IdempotencyKey, row.RequestHash))
 	since := row.CreatedAt.Add(-time.Minute)
+	var found *github.Issue
 	for page := 1; page <= issueSearchPages; page++ {
 		issues, err := writer.ListIssuesSince(ctx, repo, since, page)
 		if err != nil {
 			return nil, err
 		}
 		for i := range issues {
-			if !issues[i].IsPullRequest && strings.HasSuffix(strings.TrimSpace(issues[i].Body), marker) {
-				return &issues[i], nil
+			c := &issues[i]
+			if c.IsPullRequest || !strings.EqualFold(c.Author, bot) || c.Title != wantTitle ||
+				strings.TrimSpace(strings.ReplaceAll(c.Body, "\r\n", "\n")) != wantBody {
+				continue
 			}
+			if found != nil {
+				return nil, errors.New("ambiguous issue matches")
+			}
+			found = c
 		}
 		if len(issues) < 100 {
-			return nil, nil
+			return found, nil
 		}
 	}
 	return nil, errors.New("issue search incomplete")
@@ -328,21 +338,28 @@ func (s *Server) findIssueByMarker(ctx context.Context, writer github.IssueWrite
 
 // issueRun starts (or finds) the run for a created issue through the same start
 // path as POST /api/runs. Creating an issue never approves anything: the run
-// stops at awaiting_approval like any other.
+// stops at awaiting_approval like any other. The run is created under the
+// unique ingress key "dashboard-issue:<key>", so concurrent or later retries
+// get the one existing run even after it finished.
 func (s *Server) issueRun(ctx, work context.Context, row store.DashboardIssue, in issueRequest) (store.Run, error) {
 	if row.RunID > 0 {
 		return s.db.GetRun(work, row.RunID)
 	}
-	// A crash after the run was created but before it was linked must not start
-	// a second run: any run on this brand-new issue is ours.
-	if page, err := s.db.ListRuns(work, store.RunFilter{Repo: row.Repo, IssueNumber: row.Number, Limit: 1}); err == nil && len(page.Runs) > 0 {
-		_ = s.db.SetDashboardIssueRun(work, row.IdempotencyKey, page.Runs[0].ID)
-		return page.Runs[0], nil
+	ingress := "dashboard-issue:" + row.IdempotencyKey
+	start := in.start(row.Number)
+	start.IngressKey = ingress
+	run, err := s.startRun(runner.WithActor(ctx, row.Actor), start)
+	if errors.Is(err, store.ErrConflict) && run.ID == 0 {
+		existing, getErr := s.db.RunByIngressKey(work, ingress)
+		if getErr != nil {
+			return store.Run{}, err
+		}
+		run, err = existing, nil
 	}
-	ctx = runner.WithActor(ctx, row.Actor)
-	run, err := s.startRun(ctx, in.start(row.Number))
 	if run.ID > 0 {
-		_ = s.db.SetDashboardIssueRun(work, row.IdempotencyKey, run.ID)
+		if linkErr := s.db.SetDashboardIssueRun(work, row.IdempotencyKey, run.ID); linkErr != nil {
+			return store.Run{}, linkErr
+		}
 	}
 	return run, err
 }

@@ -119,6 +119,8 @@ type startRequest struct {
 	CodeModel     string `json:"code_model"`
 	DryRun        bool   `json:"dry_run"`
 	MaxCostMicros int64  `json:"max_cost_micros"`
+	// IngressKey is set by the server only (never decoded from a request).
+	IngressKey string `json:"-"`
 }
 
 func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
@@ -172,7 +174,7 @@ func (s *Server) validStartOptions(input startRequest) string {
 // startRun is the one place a dashboard request becomes a run. POST /api/runs
 // and POST /api/issues both use it, so lifecycle rules live only in the runner.
 func (s *Server) startRun(ctx context.Context, input startRequest) (store.Run, error) {
-	return s.runner.Start(ctx, runner.Request{Repo: input.Repo, Issue: input.Issue, Mode: input.Mode, Provider: input.Provider, Model: input.Model, RefineModel: input.RefineModel, CodeModel: input.CodeModel, DryRun: input.DryRun, MaxCostMicros: input.MaxCostMicros})
+	return s.runner.Start(ctx, runner.Request{IngressKey: input.IngressKey, Repo: input.Repo, Issue: input.Issue, Mode: input.Mode, Provider: input.Provider, Model: input.Model, RefineModel: input.RefineModel, CodeModel: input.CodeModel, DryRun: input.DryRun, MaxCostMicros: input.MaxCostMicros})
 }
 
 func validModels(models ...string) bool {

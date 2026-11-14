@@ -123,3 +123,8 @@ func (s *SQLite) DeletePendingDashboardIssue(ctx context.Context, key string) er
 	_, err := s.db.ExecContext(ctx, `DELETE FROM dashboard_issues WHERE idempotency_key=? AND state='pending'`, key)
 	return mapError(err)
 }
+
+// RunByIngressKey returns the run created under an ingress (idempotency) key.
+func (s *SQLite) RunByIngressKey(ctx context.Context, key string) (Run, error) {
+	return scanRun(s.db.QueryRowContext(ctx, "SELECT "+runColumns+" FROM runs WHERE ingress_key=?", key))
+}
