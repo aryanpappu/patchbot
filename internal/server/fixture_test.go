@@ -117,6 +117,11 @@ type fixture struct {
 
 func newFixture(t *testing.T, p *fake.Provider, adjust func(*Options)) *fixture {
 	t.Helper()
+	return newFixtureConfig(t, p, adjust, nil)
+}
+
+func newFixtureConfig(t *testing.T, p *fake.Provider, adjust func(*Options), adjustConfig func(*config.Config)) *fixture {
+	t.Helper()
 	f := &fixture{t: t, provider: p, gh: &fakeGitHub{}}
 	if f.provider == nil {
 		f.provider = fake.New("anthropic")
@@ -146,6 +151,9 @@ commands = {test = ["test", "-f", "result.txt"]}
 	f.cfg, err = config.Load(config.Options{Path: path, LookupEnv: func(string) (string, bool) { return "", false }})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if adjustConfig != nil {
+		adjustConfig(f.cfg)
 	}
 	f.db, err = store.Open(t.Context(), f.cfg.DatabasePath())
 	if err != nil {

@@ -132,10 +132,28 @@ type Log struct {
 
 // Server configures the web interface.
 type Server struct {
-	Addr              string `toml:"addr"`
-	MaxConcurrentRuns int    `toml:"max_concurrent_runs"`
-	MaxQueuedRuns     int    `toml:"max_queued_runs"`
-	VueSrc            string `toml:"vue_src"` // cdn or local
+	Addr              string     `toml:"addr"`
+	MaxConcurrentRuns int        `toml:"max_concurrent_runs"`
+	MaxQueuedRuns     int        `toml:"max_queued_runs"`
+	VueSrc            string     `toml:"vue_src"` // cdn or local
+	Auth              ServerAuth `toml:"auth"`
+}
+
+// Server authentication modes.
+const (
+	AuthToken            = "token"
+	AuthCloudflareAccess = "cloudflare_access"
+)
+
+// ServerAuth selects how the web interface authenticates callers. In token
+// mode PATCHBOT_UI_TOKEN guards non-loopback binds, as before. In
+// cloudflare_access mode every request must carry a valid Cloudflare Access
+// JWT for an allowed email, which becomes the recorded actor.
+type ServerAuth struct {
+	Mode          string   `toml:"mode"`
+	TeamDomain    string   `toml:"team_domain"`
+	Audience      string   `toml:"audience"`
+	AllowedEmails []string `toml:"allowed_emails"`
 }
 
 // Memory configures repository memory. Retrieved memory is unverified context

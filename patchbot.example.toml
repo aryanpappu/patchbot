@@ -60,6 +60,16 @@ max_concurrent_runs = 2              # executing jobs
 max_queued_runs = 16                 # pending jobs; excess requests return 429
 vue_src = "cdn"                     # cdn or local (vendored Vue is included)
 
+[server.auth]
+mode = "token"                      # token (PATCHBOT_UI_TOKEN, default) or cloudflare_access
+# Login via Cloudflare Access (owner-only app in front of the tunnel). Every
+# page and API request must carry a valid Cf-Access-Jwt-Assertion; the verified
+# email is recorded as the actor of each UI/API decision.
+# mode = "cloudflare_access"
+# team_domain = "your-team.cloudflareaccess.com"   # Zero Trust > Settings > Custom Pages > team domain
+# audience = "<Application Audience (AUD) tag>"     # Access > Applications > your app > Overview
+# allowed_emails = ["you@example.com"]
+
 [data]
 dir = "~/.patchbot"                 # private 0700 directory; SQLite is 0600
 

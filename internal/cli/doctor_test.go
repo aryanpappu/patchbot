@@ -224,3 +224,47 @@ func TestDoctorAndConfigWarnAboutEveryShortCredential(t *testing.T) {
 		}
 	}
 }
+
+func TestDoctorCloudflareAccess(t *testing.T) {
+	root, bin := testpath.Dir(t), t.TempDir()
+	for name, output := range map[string]string{"go": "go version go1.27.3 test/arch", "git": "git version 2.50.1", "repo-test": "test"} {
+		// #nosec G306 -- operator-owned executable fixture needs its owner execute bit.
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nprintf '%s\\n' '"+output+"'\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data := filepath.Join(root, "data")
+	if err := os.Mkdir(data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "config.toml")
+	content := fmt.Sprintf("[defaults]\napprovers=[\"owner\"]\n[limits]\ntrusted_path=[%q]\n[data]\ndir=%q\n[server.auth]\nmode=\"cloudflare_access\"\nteam_domain=\"crimson-scene-dba4.cloudflareaccess.com\"\naudience=\"0123456789abcdef0123456789abcdef\"\nallowed_emails=[\"owner@example.com\"]\n[repos.\"owner/repo\"]\ncommands={test=[\"repo-test\"]}\n", bin, data)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"keys":[]}`
+	certs := testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprint(w, body) }))
+	defer certs.Close()
+	client, err := github.New(certs.Client(), certs.URL, runner.Token{Value: secret.New("dummy-github-token")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := fake.New("anthropic")
+	constructors := llm.Constructors{"anthropic": func(llm.ProviderConfig) (llm.Provider, error) { return p, nil }}
+	// #nosec G101 -- dummy credentials for tests.
+	vars := map[string]string{"ANTHROPIC_API_KEY": "fixture-provider-key", "GITHUB_TOKEN": "dummy-github-token"}
+	invoke := func(args ...string) (int, string) {
+		var out, errs bytes.Buffer
+		app := cli.App{Context: context.Background(), Stdout: &out, Stderr: &errs, AccessCertsURL: certs.URL, Config: config.Options{Path: path, LookupEnv: func(name string) (string, bool) { v, ok := vars[name]; return v, ok }}, RunnerOptions: runner.Options{Constructors: constructors, GitHub: client}}
+		code := app.Run(append([]string{"doctor"}, args...))
+		return code, out.String() + errs.String()
+	}
+	code, text := invoke()
+	if code != 0 || !strings.Contains(text, "cloudflare_access") || strings.Contains(text, "access JWKS") {
+		t.Fatalf("offline: %d %s", code, text)
+	}
+	code, text = invoke("--online")
+	if code != 1 || !strings.Contains(text, "access JWKS") {
+		t.Fatalf("empty JWKS must fail: %d %s", code, text)
+	}
+}

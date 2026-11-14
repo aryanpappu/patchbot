@@ -6,6 +6,11 @@
   App manifest flow (`[github] setup_public_url`), the key is written straight
   to a 0600 file and only the App ID and slug are stored. Without an App the
   server starts in setup mode and refuses runs; `doctor` reports it.
+- Add Cloudflare Access login (`[server.auth] mode = "cloudflare_access"`, M23):
+  verifies the `Cf-Access-Jwt-Assertion` JWT (RS256, team JWKS, issuer, audience,
+  allowed emails), records the verified email as the actor of UI/API decisions,
+  adds `GET /api/session` and a "Signed in as" header, and extends `doctor`.
+  Token mode is unchanged and remains the default.
 
 - Add GitHub App authentication (`[github] auth = "app"`, M27): per-run
   installation tokens narrowed to one repository ID and four permissions,

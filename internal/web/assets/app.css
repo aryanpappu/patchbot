@@ -36,3 +36,4 @@ fieldset { min-width: 0; border: 1px solid var(--edge); }
 .skip:focus { left: 1rem; top: .2rem; background: Canvas; padding: .5rem; }
 @media (prefers-color-scheme: dark) { a { color: #92c4ff; } }
 @media (max-width: 36rem) { header, main { padding: .75rem; } .panel { padding: .75rem; } .filters, .file-row { display: block; } .actions > button { flex: 1 1 7rem; } }
+.whoami { color: var(--muted, inherit); font-size: .9rem; }

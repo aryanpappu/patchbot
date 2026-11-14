@@ -252,6 +252,13 @@ or model-directed access. They cannot contain a malicious test executable.
   `GIT_CONFIG_*` auth headers, never URLs, argv or `.git/config`. Hooks are off,
   submodules are refused, config is hash-checked, diffs are bounded and pushes
   allow only `patchbot/*`, without force or the default branch.
+- Login (M23): `internal/cfaccess` verifies Cloudflare Access JWTs (stdlib RS256,
+  team JWKS cache). `server.ServeHTTP` runs it before routing in
+  `cloudflare_access` mode and puts the email on the request context;
+  `runner.WithActor` carries it to the runner so approve, revise, reject,
+  cancel, retry, spec edit, run start and memory decisions record it on the ui
+  channel instead of `approval.local_actor`. CLI paths keep `local_actor`.
+  No schema change: `actor` columns already hold free text.
 - Redaction runs before logs, SQLite, model tool results, SSE, API/CLI output and
   PR bodies. All CLI/server runners receive the full redactor, including the
   UI token when set. Registered credentials require at least eight characters;

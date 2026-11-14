@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aryanpappu/patchbot/internal/cfaccess"
 	"github.com/aryanpappu/patchbot/internal/config"
 	"github.com/aryanpappu/patchbot/internal/github"
 	"github.com/aryanpappu/patchbot/internal/llm"
@@ -29,7 +30,10 @@ import (
 
 // Options supplies trusted infrastructure. Zero values use production defaults.
 type Options struct {
-	Token           secret.Secret
+	Token secret.Secret
+	// Access overrides the Cloudflare Access verifier built from the
+	// configuration (tests point it at a local JWKS server).
+	Access          *cfaccess.Verifier
 	Runner          runner.Options
 	ShutdownTimeout time.Duration
 	// Short intervals are useful to exercise timers without network or live keys.
@@ -54,6 +58,7 @@ type Server struct {
 	http            *http.Server
 	tokenHash       [32]byte
 	authenticated   bool
+	access          *cfaccess.Verifier
 	opts            Options
 	mu              sync.RWMutex
 	addr            string
@@ -91,6 +96,15 @@ func ValidateAddress(addr string, token secret.Secret) error {
 	return nil
 }
 
+// s0 is the credential ValidateAddress sees: Access JWT verification stands in
+// for the UI token on non-loopback binds.
+func s0(opts Options, cfg *config.Config) secret.Secret {
+	if cfg.Server.Auth.Mode == config.AuthCloudflareAccess {
+		return secret.New("cloudflare-access")
+	}
+	return opts.Token
+}
+
 // New constructs one runner and starts lifecycle maintenance and ownership heartbeats.
 func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) (*Server, error) {
 	if cfg == nil || db == nil {
@@ -99,7 +113,19 @@ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) 
 	if !opts.Token.IsSet() {
 		opts.Token = secret.New(os.Getenv("PATCHBOT_UI_TOKEN"))
 	}
-	if err := ValidateAddress(cfg.Server.Addr, opts.Token); err != nil {
+	if cfg.Server.Auth.Mode == config.AuthCloudflareAccess {
+		// Access replaces the bearer token; the token is ignored in this mode.
+		opts.Token = secret.Secret{}
+		if opts.Access == nil {
+			a := cfg.Server.Auth
+			var err error
+			opts.Access, err = cfaccess.New(cfaccess.Config{TeamDomain: a.TeamDomain, Audience: a.Audience, AllowedEmails: a.AllowedEmails})
+			if err != nil {
+				return nil, errors.New("invalid cloudflare_access configuration")
+			}
+		}
+	}
+	if err := ValidateAddress(cfg.Server.Addr, s0(opts, cfg)); err != nil {
 		return nil, err
 	}
 	if opts.ShutdownTimeout <= 0 {
@@ -122,6 +148,7 @@ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) 
 	}
 	s := &Server{cfg: cfg, db: db, opts: opts, addr: cfg.Server.Addr, manager: newManager(cfg.Server.MaxConcurrentRuns, cfg.Server.MaxQueuedRuns), redactor: cfg.Redactor(), done: make(chan struct{}), maintenanceDone: make(chan struct{})}
 	s.authenticated = opts.Token.IsSet()
+	s.access = opts.Access
 	s.tokenHash = sha256.Sum256([]byte(opts.Token.Reveal()))
 	s.redactor.AddExact(opts.Token.Reveal())
 	s.redactor.AddSecrets(secret.New(os.Getenv("GITHUB_TOKEN")))
@@ -223,7 +250,7 @@ func (s *Server) syncLabels(ctx context.Context, interval time.Duration) {
 // Serve runs HTTP until the caller cancels ctx or Shutdown is called. The
 // listener must be bound to the configured address; ListenAndServe binds it.
 func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
-	if err := ValidateAddress(listener.Addr().String(), s.opts.Token); err != nil {
+	if err := ValidateAddress(listener.Addr().String(), s0(s.opts, s.cfg)); err != nil {
 		_ = listener.Close()
 		return err
 	}
@@ -319,6 +346,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Webhook.Enabled && r.URL.Path == s.cfg.Webhook.Path {
 		s.webhook(w, r)
 		return
+	}
+	if s.access != nil {
+		var ok bool
+		if r, ok = s.accessAuth(w, r); !ok {
+			return
+		}
 	}
 	// Only data-free shells and their fixed assets are public. Browser navigation
 	// cannot attach a bearer header; every API and SSE request still requires it.

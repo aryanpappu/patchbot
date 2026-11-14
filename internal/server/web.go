@@ -13,7 +13,7 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 	if !s.method(w, r, http.MethodGet) {
 		return
 	}
-	state := web.State{Page: "runs", AuthRequired: s.authenticated}
+	state := web.State{Page: "runs", AuthRequired: s.authenticated, Email: sessionEmail(r)}
 	if r.URL.Path == "/runs/new" {
 		state.Page = "new"
 	} else if value := r.PathValue("id"); value != "" {
@@ -23,7 +23,7 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		state.Page, state.RunID = "detail", id
-		if !s.authenticated {
+		if !s.authenticated && s.access == nil {
 			data, err := s.detailData(r.Context(), id)
 			if err != nil {
 				s.respondError(w, err)

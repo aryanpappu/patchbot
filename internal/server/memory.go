@@ -14,7 +14,7 @@ import (
 )
 
 // Memory routes share the server's bearer auth, host checks and cross-origin
-// mutation protection. Decisions use approval.local_actor on the ui channel.
+// mutation protection. Decisions use the verified Access email (else approval.local_actor) on the ui channel.
 func (s *Server) memoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/memory", s.memoryList)
 	for _, action := range []string{store.MemoryApprove, store.MemoryReject, store.MemoryForget} {
@@ -101,7 +101,7 @@ func (s *Server) memoryAdd(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, 400, "invalid_request", "require an allowlisted repo")
 		return
 	}
-	entry, err := memory.AddLesson(r.Context(), s.db, s.redactor, memory.LessonInput{Repo: repo, Text: input.Text, Source: store.MemorySourceOperator, Actor: s.cfg.Approval.LocalActor, Channel: "ui"})
+	entry, err := memory.AddLesson(r.Context(), s.db, s.redactor, memory.LessonInput{Repo: repo, Text: input.Text, Source: store.MemorySourceOperator, Actor: s.actor(r), Channel: "ui"})
 	if errors.Is(err, tools.ErrInvalidLesson) {
 		s.writeError(w, 400, "invalid_request", tools.ErrInvalidLesson.Error())
 		return
@@ -136,7 +136,7 @@ func (s *Server) memoryDecide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	action := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
-	entry, err := memory.Decide(r.Context(), s.db, memory.DecideInput{ID: id, Action: action, Actor: s.cfg.Approval.LocalActor, Channel: "ui", HashPrefix: input.ContentHash,
+	entry, err := memory.Decide(r.Context(), s.db, memory.DecideInput{ID: id, Action: action, Actor: s.actor(r), Channel: "ui", HashPrefix: input.ContentHash,
 		Allowed: func(repo string) bool { return s.cfg.Repos[repo] != nil }})
 	switch {
 	case errors.Is(err, memory.ErrHashRequired):

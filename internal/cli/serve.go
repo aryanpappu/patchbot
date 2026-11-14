@@ -61,7 +61,11 @@ func (a *App) runServe(args []string) int {
 		return 1
 	}
 	redactor.Extend(cfg.Redactor())
-	if err := server.ValidateAddress(cfg.Server.Addr, secret.New(uiToken)); err != nil {
+	addrToken := secret.New(uiToken)
+	if cfg.Server.Auth.Mode == config.AuthCloudflareAccess {
+		addrToken = secret.New("cloudflare-access") // Access JWTs authenticate non-loopback binds
+	}
+	if err := server.ValidateAddress(cfg.Server.Addr, addrToken); err != nil {
 		a.printProblems(redactor, err)
 		return 1
 	}

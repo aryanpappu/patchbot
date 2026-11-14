@@ -331,7 +331,7 @@ func (r *Runner) start(ctx context.Context, run store.Run, reuse *store.Spec) (s
 	}
 	id := run.ID
 	initial := run
-	if err = r.action(ctx, id, "start", r.cfg.Approval.LocalActor, r.actionChannel(), nil); err == nil {
+	if err = r.action(ctx, id, "start", r.actorFor(ctx), r.actionChannel(), nil); err == nil {
 		err = r.dispatch(ctx, id, func(work context.Context) error {
 			run := initial
 			err := r.withWork(work, id, func(work context.Context) error {
