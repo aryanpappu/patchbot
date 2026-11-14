@@ -392,15 +392,26 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Location", fmt.Sprintf("/api/runs/%d", run.ID))
 		s.writeJSON(w, http.StatusAccepted, map[string]any{"run": publicRun(run)})
 		return
+	case "approve":
+		var input struct {
+			SpecVersion int64  `json:"spec_version"`
+			SpecHash    string `json:"spec_hash"`
+		}
+		if !s.decode(w, r, &input, false) {
+			return
+		}
+		if input.SpecVersion <= 0 || input.SpecHash == "" {
+			s.writeError(w, 400, "invalid_request", "spec_version and spec_hash are required")
+			return
+		}
+		err = s.runner.ApproveSpecAndExecute(r.Context(), id, s.actor(r), input.SpecVersion, input.SpecHash)
+		status = http.StatusAccepted
 	default:
 		var input struct{}
 		if !s.decode(w, r, &input, true) {
 			return
 		}
 		switch action {
-		case "approve":
-			err = s.runner.ApproveAndExecute(r.Context(), id, s.actor(r))
-			status = http.StatusAccepted
 		case "reject":
 			err = s.runner.Reject(r.Context(), id)
 		case "cancel":

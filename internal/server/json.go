@@ -76,6 +76,8 @@ func errorEnvelope(err error) (int, string, string) {
 		return http.StatusNotFound, "not_found", "run or resource not found"
 	case errors.Is(err, store.ErrActiveRunExists):
 		return http.StatusConflict, "active_run_exists", "an active run already exists for this issue"
+	case errors.Is(err, runner.ErrSpecChanged):
+		return http.StatusConflict, "spec_changed", runner.ErrSpecChanged.Error()
 	case errors.Is(err, store.ErrConflict), errors.Is(err, agent.ErrApprovalDenied):
 		return http.StatusConflict, "conflict", "action is not valid for the current run or specification"
 	case errors.Is(err, runner.ErrGitHubNotConnected):

@@ -98,7 +98,7 @@ func TestAccessApproveRecordsEmailAsActor(t *testing.T) {
 	requireStatus(t, w, 202)
 	run := a.responseRun(w)
 	a.waitFor(run.ID, store.StatusAwaitingApproval)
-	requireStatus(t, a.do("POST", fmt.Sprintf("/api/runs/%d/approve", run.ID), `{}`, jwt), 202)
+	requireStatus(t, a.do("POST", fmt.Sprintf("/api/runs/%d/approve", run.ID), a.approveBody(t, run.ID), jwt), 202)
 	a.waitFor(run.ID, store.StatusSucceeded)
 	approvals, err := a.db.ListApprovals(t.Context(), run.ID)
 	if err != nil || len(approvals) != 1 || approvals[0].Actor != accessOwner || approvals[0].Channel != "ui" {

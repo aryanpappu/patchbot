@@ -41,6 +41,21 @@ Existing features kept: list filters and cursor in the URL, spec edit/approve/
 revise/reject/cancel/retry, SSE with `Last-Event-ID`, memory panel, token unlock,
 Access-mode email, Repositories page, write-a-new-request form, Connect GitHub.
 
+## Review fix: approval bound to the shown spec
+
+Codex found that the confirm dialog showed one spec version but the approve call
+carried no identity, so an edit or revise in between would approve the newer spec.
+`POST /api/runs/{id}/approve` now requires `spec_version` and `spec_hash` (400 if
+missing) and calls the new `Runner.ApproveSpecAndExecute`, which passes them as
+`expected` to `approveDecision`. The comparison runs under the run's control lock
+in the same critical section as the decision; a mismatch returns 409 `spec_changed`
+(`runner.ErrSpecChanged`, which wraps `store.ErrConflict` so the GitHub comment path
+is unchanged). The CLI path is unchanged. The UI captures version and hash before the
+dialog opens and sends exactly those; on 409 it shows the error, reloads the run and
+does not retry. Tests: stale version, stale hash, missing fields and zero version
+record no approval; a matching body approves; a static UI test checks both fields are
+sent from the captured spec.
+
 ## Tests
 
 - `internal/web`: asset list equals the embedded tree; every import resolves

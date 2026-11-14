@@ -124,6 +124,8 @@ func TestCapabilitiesMatchAcceptedAPIActions(t *testing.T) {
 						method, body, endpoint = "PUT", string(raw), path+"/spec"
 					case "revise":
 						body = `{"notes":"clarify the result"}`
+					case "approve":
+						body = f.approveBody(t, run.ID)
 					}
 					w := f.request(method, endpoint, body)
 					accepted := w.Code >= 200 && w.Code < 300

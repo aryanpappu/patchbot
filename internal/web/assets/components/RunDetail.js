@@ -70,7 +70,10 @@ export const RunDetail = {
       const ok = await confirm.ask({ title: `Approve specification v${spec.version}?`, confirmLabel: `Approve v${spec.version} · ${shortHash(spec.hash)}`,
         message: "patchbot will start changing code for exactly this version. Editing it later clears the approval.",
         details: [["Version", String(spec.version)], ["Hash", shortHash(spec.hash)], ["SHA-256", spec.hash]] });
-      if (ok) await act("approve");
+      // Send exactly the version and hash the dialog showed. If the spec changed
+      // meanwhile the server answers 409 spec_changed: act() shows the error and
+      // reloads the run, and nothing is retried automatically.
+      if (ok) await act("approve", { spec_version: spec.version, spec_hash: spec.hash });
     }
     async function reject() {
       if (!can("reject")) return;

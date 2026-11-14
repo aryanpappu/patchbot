@@ -296,3 +296,22 @@ func TestAssetServingFixedList(t *testing.T) {
 		}
 	}
 }
+
+// The approve call sends exactly the version and hash captured when the confirm
+// dialog opened, and never retries on spec_changed.
+func TestApproveSendsShownSpecVersionAndHash(t *testing.T) {
+	data, err := files.ReadFile("assets/components/RunDetail.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(data)
+	ask := strings.Index(src, "confirm.ask({ title: `Approve specification")
+	send := strings.Index(src, `act("approve", { spec_version: spec.version, spec_hash: spec.hash })`)
+	capture := strings.Index(src, "const spec = s.detail?.latest_spec;")
+	if capture < 0 || ask < capture || send < ask {
+		t.Fatal("approve must capture the spec before the dialog and send its version and hash after confirmation")
+	}
+	if strings.Count(src, `act("approve"`) != 1 {
+		t.Fatal("approve must have a single call site")
+	}
+}
