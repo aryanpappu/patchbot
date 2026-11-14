@@ -64,9 +64,10 @@ func TestQueuedJobsKeepOwnershipBeforeWork(t *testing.T) {
 			} else {
 				run = f.seed(store.StatusAwaitingApproval)
 				body := `{}`
-				if action == "revise" {
+				switch action {
+				case "revise":
 					body = `{"notes":"clarify"}`
-				} else if action == "approve" {
+				case "approve":
 					body = f.approveBody(t, run.ID)
 				}
 				requireStatus(t, f.request("POST", fmt.Sprintf("/api/runs/%d/%s", run.ID, action), body), 202)
@@ -197,11 +198,9 @@ func TestPendingQueueRejectsExcessWork(t *testing.T) {
 	}
 	waiting := f.seed(store.StatusAwaitingApproval)
 	for _, action := range []string{"approve", "revise"} {
-		body := `{}`
+		body := f.approveBody(t, waiting.ID)
 		if action == "revise" {
 			body = `{"notes":"clarify"}`
-		} else {
-			body = f.approveBody(t, waiting.ID)
 		}
 		w := f.request("POST", fmt.Sprintf("/api/runs/%d/%s", waiting.ID, action), body)
 		requireStatus(t, w, 429)
