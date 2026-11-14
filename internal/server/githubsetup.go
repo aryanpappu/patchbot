@@ -73,7 +73,7 @@ func (s *setupStates) pruneLocked(now time.Time) {
 // take consumes state. It returns false for an unknown, reused, expired or
 // malformed value.
 func (s *setupStates) take(state string, now time.Time) bool {
-	raw, err := base64.RawURLEncoding.DecodeString(state)
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(state)
 	if err != nil || len(raw) != 32 {
 		return false
 	}

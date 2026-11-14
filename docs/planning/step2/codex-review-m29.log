@@ -1,0 +1,3236 @@
+Reading additional input from stdin...
+OpenAI Codex v0.166.0
+--------
+workdir: /Users/pappumishra/Documents/selfproject/patchbot-m29-dashboard
+model: gpt-6.1-sol
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: none
+reasoning summaries: none
+session id: 01a1d9d1-764c-7011-9c10-649bd0b18c85
+--------
+user
+Review branch m29-dashboard vs development (git diff development...HEAD): patchbot dashboard rewritten into Vue 3 ES modules with render functions (no build). Focus on the XSS surface: any place untrusted text (spec, diff, log events, test output, repo names/settings, memory lessons, issue titles, errors, PR URLs) reaches innerHTML/v-html/attribute sinks (href/src/style/on*), Vue h() props that could be spread from untrusted objects, link validation, CSS injection via class names, open redirect via router/navigation, keyboard shortcut approve without confirm, storage of secrets, asset allow-list in web.go/access.go exposing unintended paths, CSP regressions, SSE parsing. Also functional regressions vs old app.js (token unlock flow, approve with spec hash, Last-Event-ID). Report only real findings: file:line, severity, scenario, fix. Concise.
+codex
+I’ll compare the branch with `development`, trace the untrusted-data sinks, and check the token, approval, and SSE flows against the old app.
+exec
+/bin/zsh -lc "git status --short; git diff --stat development...HEAD; rg --files -g AGENTS.md -g '*web.go' -g '*access.go' -g '*app*' -g '*.js' -g '*.html'" in /Users/pappumishra/Documents/selfproject/patchbot-m29-dashboard
+ succeeded in 168ms:
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-xIjYEyxY' (errno=Operation not permitted)
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-AQU3FUxy' (errno=Operation not permitted)
+ CHANGELOG.md                                    |   9 +
+ docs/M29-REPORT.md                              |  70 +++
+ docs/PROGRESS.md                                |   1 +
+ internal/server/README.md                       |   4 +-
+ internal/server/access.go                       |   7 +-
+ internal/server/access_test.go                  |  17 +-
+ internal/server/api.go                          |   3 +
+ internal/server/githubsetup.go                  |   2 +-
+ internal/server/web.go                          |   8 +-
+ internal/server/web_test.go                     |  24 +-
+ internal/web/README.md                          |  52 +-
+ internal/web/assets/app.css                     | 244 ++++++--
+ internal/web/assets/app.js                      | 715 ------------------------
+ internal/web/assets/components/ActionBar.js     |  37 ++
+ internal/web/assets/components/App.js           |  58 ++
+ internal/web/assets/components/BudgetMeters.js  |  20 +
+ internal/web/assets/components/ChangesView.js   |  30 +
+ internal/web/assets/components/ConfirmDialog.js |  25 +
+ internal/web/assets/components/DiffView.js      |  29 +
+ internal/web/assets/components/HelpDialog.js    |  21 +
+ internal/web/assets/components/Inbox.js         |  46 ++
+ internal/web/assets/components/LogStream.js     |  37 ++
+ internal/web/assets/components/MemoryView.js    |  79 +++
+ internal/web/assets/components/Modal.js         |  34 ++
+ internal/web/assets/components/ModelFields.js   |  16 +
+ internal/web/assets/components/NewRequest.js    |  92 +++
+ internal/web/assets/components/PhaseStepper.js  |  24 +
+ internal/web/assets/components/RepoCard.js      |  26 +
+ internal/web/assets/components/RepoEditor.js    |  50 ++
+ internal/web/assets/components/RepoPage.js      |  61 ++
+ internal/web/assets/components/RunCard.js       |  32 ++
+ internal/web/assets/components/RunDetail.js     | 146 +++++
+ internal/web/assets/components/RunList.js       |  57 ++
+ internal/web/assets/components/Sidebar.js       |  49 ++
+ internal/web/assets/components/SpecEditor.js    |  33 ++
+ internal/web/assets/components/SpecView.js      |  46 ++
+ internal/web/assets/components/Tabs.js          |  20 +
+ internal/web/assets/components/Toast.js         |  15 +
+ internal/web/assets/components/Unlock.js        |  29 +
+ internal/web/assets/composables/useApi.js       |  51 ++
+ internal/web/assets/composables/useBadges.js    |  39 ++
+ internal/web/assets/composables/useConfirm.js   |  20 +
+ internal/web/assets/composables/useKeyboard.js  |  32 ++
+ internal/web/assets/composables/useProviders.js |  40 ++
+ internal/web/assets/composables/useRunStream.js |  93 +++
+ internal/web/assets/composables/useSession.js   |  16 +
+ internal/web/assets/composables/useTask.js      |  13 +
+ internal/web/assets/composables/useTheme.js     |  22 +
+ internal/web/assets/composables/useToast.js     |  23 +
+ internal/web/assets/format.js                   | 190 +++++++
+ internal/web/assets/main.js                     |  21 +
+ internal/web/assets/ui.js                       |  89 +++
+ internal/web/shell.html                         |  18 +-
+ internal/web/web.go                             |  68 ++-
+ internal/web/web_test.go                        | 196 ++++++-
+ 55 files changed, 2387 insertions(+), 812 deletions(-)
+internal/store/githubapp.go
+internal/store/migrations/0009_github_app.sql
+internal/store/githubapp_test.go
+internal/github/appkey.go
+internal/github/app.go
+internal/github/appkey_unix.go
+internal/github/appkey_other.go
+internal/github/app_test.go
+internal/cli/doctor_app_test.go
+internal/server/access.go
+internal/server/web.go
+internal/runner/app_auth_test.go
+internal/runner/reapproval_test.go
+internal/web/assets/setup.js
+internal/web/assets/components/SpecView.js
+internal/web/assets/components/App.js
+internal/web/assets/components/Toast.js
+internal/web/assets/components/Inbox.js
+internal/web/assets/components/Modal.js
+internal/web/assets/components/NewRequest.js
+internal/web/assets/components/ConfirmDialog.js
+internal/web/assets/components/ChangesView.js
+internal/web/assets/components/BudgetMeters.js
+internal/web/assets/components/RunCard.js
+internal/web/assets/components/PhaseStepper.js
+internal/web/assets/components/ModelFields.js
+internal/web/assets/components/LogStream.js
+internal/web/assets/components/RepoCard.js
+internal/web/assets/components/DiffView.js
+internal/web/assets/components/RunDetail.js
+internal/web/assets/components/RepoPage.js
+internal/web/assets/components/Tabs.js
+internal/web/assets/components/ActionBar.js
+internal/web/assets/components/Sidebar.js
+internal/web/assets/components/HelpDialog.js
+internal/web/assets/components/Unlock.js
+internal/web/assets/components/MemoryView.js
+internal/web/assets/components/RepoEditor.js
+internal/web/assets/components/SpecEditor.js
+internal/web/assets/components/RunList.js
+internal/web/assets/main.js
+internal/web/assets/app.css
+internal/web/assets/vue.global.prod.js
+internal/web/assets/format.js
+internal/web/assets/composables/useConfirm.js
+internal/web/assets/composables/useToast.js
+internal/web/assets/composables/useRunStream.js
+internal/web/assets/composables/useTheme.js
+internal/web/assets/composables/useTask.js
+internal/web/assets/composables/useKeyboard.js
+internal/web/assets/composables/useSession.js
+internal/web/assets/composables/useBadges.js
+internal/web/assets/composables/useApi.js
+internal/web/assets/composables/useProviders.js
+internal/web/assets/ui.js
+internal/web/shell.html
+internal/web/web.go
+internal/cfaccess/cfaccess.go
+
+exec
+/bin/zsh -lc 'git diff development...HEAD -- internal/server internal/web/web.go internal/web/shell.html; cat internal/web/assets/{format.js,ui.js,main.js}; cat internal/web/assets/composables/*.js' in /Users/pappumishra/Documents/selfproject/patchbot-m29-dashboard
+ succeeded in 0ms:
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-eS7mJRzC' (errno=Operation not permitted)
+diff --git a/internal/server/README.md b/internal/server/README.md
+index f27c7f8..d3d5cb5 100644
+--- a/internal/server/README.md
++++ b/internal/server/README.md
+@@ -107,8 +107,8 @@ The included Vue asset is checked against the shared SHA-384 pin by an offline t
+ 
+ `[server.auth] mode` is `token` (default: `PATCHBOT_UI_TOKEN` bearer, loopback
+ may run without one) or `cloudflare_access`. In Access mode the bearer token is
+-ignored and every request except `GET /assets/app.js`, `/assets/app.css` and
+-`/assets/vue.global.prod.js` (and the HMAC-checked webhook path) must carry a
++ignored and every request except `GET` of the fixed asset list in `web.AssetNames` (the
++ES modules, `/assets/app.css`, `/assets/vue.global.prod.js`; no wildcards) (and the HMAC-checked webhook path) must carry a
+ valid `Cf-Access-Jwt-Assertion` for an allowed email (`internal/cfaccess`).
+ Missing or invalid tokens return 401, a valid token for a disallowed email
+ returns 403; API errors use the usual JSON envelope with a generic message and
+diff --git a/internal/server/access.go b/internal/server/access.go
+index 53bdf18..fb43499 100644
+--- a/internal/server/access.go
++++ b/internal/server/access.go
+@@ -8,6 +8,7 @@ import (
+ 
+ 	"github.com/aryanpappu/patchbot/internal/cfaccess"
+ 	"github.com/aryanpappu/patchbot/internal/runner"
++	"github.com/aryanpappu/patchbot/internal/web"
+ )
+ 
+ type emailKey struct{}
+@@ -18,11 +19,7 @@ func accessPublic(r *http.Request) bool {
+ 	if r.Method != http.MethodGet {
+ 		return false
+ 	}
+-	switch r.URL.Path {
+-	case "/assets/app.js", "/assets/app.css", "/assets/vue.global.prod.js":
+-		return true
+-	}
+-	return false
++	return web.AssetPath(r.URL.Path)
+ }
+ 
+ // accessAuth verifies the Cloudflare Access JWT. On success it returns a
+diff --git a/internal/server/access_test.go b/internal/server/access_test.go
+index 7302835..801e5cd 100644
+--- a/internal/server/access_test.go
++++ b/internal/server/access_test.go
+@@ -19,6 +19,7 @@ import (
+ 	"github.com/aryanpappu/patchbot/internal/config"
+ 	"github.com/aryanpappu/patchbot/internal/llm/fake"
+ 	"github.com/aryanpappu/patchbot/internal/store"
++	"github.com/aryanpappu/patchbot/internal/web"
+ )
+ 
+ const (
+@@ -179,8 +180,18 @@ func TestAccessPublicAssetsAndSession(t *testing.T) {
+ 	if w := a.do("GET", "/assets/app.css", "", ""); w.Code != 200 {
+ 		t.Fatalf("asset without JWT: %d", w.Code)
+ 	}
+-	if w := a.do("GET", "/assets/other.js", "", ""); w.Code != 401 {
+-		t.Fatalf("unlisted asset path must need a JWT: %d", w.Code)
++	for _, name := range web.AssetNames() {
++		if w := a.do("GET", "/assets/"+name, "", ""); w.Code != 200 {
++			t.Fatalf("listed asset %s without JWT: %d", name, w.Code)
++		}
++	}
++	for _, path := range []string{"/assets/other.js", "/assets/components/Nope.js", "/assets/components/", "/assets/app.js", "/", "/runs", "/memory", "/repos", "/api/runs", "/setup/github"} {
++		if w := a.do("GET", path, "", ""); w.Code != 401 {
++			t.Fatalf("%s without a JWT must be refused: %d", path, w.Code)
++		}
++	}
++	if w := a.do("POST", "/assets/main.js", "{}", ""); w.Code != 401 {
++		t.Fatalf("non-GET asset request must need a JWT: %d", w.Code)
+ 	}
+ 	jwt := a.token(nil)
+ 	w := a.do("GET", "/api/session", "", jwt)
+@@ -190,7 +201,7 @@ func TestAccessPublicAssetsAndSession(t *testing.T) {
+ 		t.Fatalf("session %s", w.Body.String())
+ 	}
+ 	page := a.do("GET", "/runs", "", jwt)
+-	if page.Code != 200 || !strings.Contains(page.Body.String(), "Signed in as "+accessOwner) || strings.Contains(page.Body.String(), `"auth_required":true`) {
++	if page.Code != 200 || stateFromPage(t, page.Body.String()).Email != accessOwner || strings.Contains(page.Body.String(), `"auth_required":true`) {
+ 		t.Fatalf("page %d: %s", page.Code, page.Body.String())
+ 	}
+ }
+diff --git a/internal/server/api.go b/internal/server/api.go
+index 81f5de6..871d556 100644
+--- a/internal/server/api.go
++++ b/internal/server/api.go
+@@ -26,8 +26,11 @@ func (s *Server) routes() http.Handler {
+ 	mux.HandleFunc("/runs", s.page)
+ 	mux.HandleFunc("/runs/new", s.page)
+ 	mux.HandleFunc("/repos", s.page)
++	mux.HandleFunc("/memory", s.page)
+ 	mux.HandleFunc("/runs/{id}", s.page)
+ 	mux.HandleFunc("/assets/{name}", s.asset)
++	mux.HandleFunc("/assets/components/{name}", s.asset)
++	mux.HandleFunc("/assets/composables/{name}", s.asset)
+ 	mux.HandleFunc("/api/session", s.session)
+ 	mux.HandleFunc("/api/providers", s.providers)
+ 	mux.HandleFunc("/api/providers/{id}/models", s.providerModels)
+diff --git a/internal/server/githubsetup.go b/internal/server/githubsetup.go
+index ebf69e6..a39820c 100644
+--- a/internal/server/githubsetup.go
++++ b/internal/server/githubsetup.go
+@@ -141,7 +141,7 @@ var setupTemplate = template.Must(template.New("setup").Parse(`<!doctype html>
+ <title>patchbot · connect GitHub</title>
+ <link rel="stylesheet" href="/assets/app.css">
+ <script defer src="/assets/setup.js"></script></head>
+-<body><header><a href="/runs">patchbot</a><nav aria-label="Main"><a href="/runs">Runs</a><a href="/runs/new">New run</a></nav></header>
++<body><header><a href="/runs">patchbot</a><nav aria-label="Main"><a href="/">Inbox</a><a href="/runs">Runs</a><a href="/runs/new">New request</a><a href="/repos">Repositories</a><a href="/memory">Memory</a></nav></header>
+ <main id="main"><h1>{{.Title}}</h1>
+ {{with .Message}}<p role="status">{{.}}</p>{{end}}
+ {{if .Connect}}<div class="panel"><p>patchbot asks GitHub to create a private App named in the manifest, with only contents, issues and pull requests (write) and metadata (read), and no webhook. GitHub shows you the request first; you confirm it there. The private key goes straight to this server and is never shown to you.</p>
+diff --git a/internal/server/web.go b/internal/server/web.go
+index d3e3db2..02754dd 100644
+--- a/internal/server/web.go
++++ b/internal/server/web.go
+@@ -13,11 +13,15 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
+ 	if !s.method(w, r, http.MethodGet) {
+ 		return
+ 	}
+-	state := web.State{Page: "runs", AuthRequired: s.authenticated, Email: sessionEmail(r)}
+-	if r.URL.Path == "/runs/new" {
++	state := web.State{Page: "inbox", AuthRequired: s.authenticated, Email: sessionEmail(r)}
++	if r.URL.Path == "/runs" {
++		state.Page = "runs"
++	} else if r.URL.Path == "/runs/new" {
+ 		state.Page = "new"
+ 	} else if r.URL.Path == "/repos" {
+ 		state.Page = "repos"
++	} else if r.URL.Path == "/memory" {
++		state.Page = "memory"
+ 	} else if value := r.PathValue("id"); value != "" {
+ 		id, err := strconv.ParseInt(value, 10, 64)
+ 		if err != nil || id <= 0 {
+diff --git a/internal/server/web_test.go b/internal/server/web_test.go
+index fd4a5a6..06e43d6 100644
+--- a/internal/server/web_test.go
++++ b/internal/server/web_test.go
+@@ -40,7 +40,7 @@ func TestPagesAndEscapedIssueState(t *testing.T) {
+ 		t.Fatal(err)
+ 	}
+ 	for _, tc := range []struct{ path, page string }{
+-		{"/", "runs"}, {"/runs", "runs"}, {"/runs/new", "new"}, {fmt.Sprintf("/runs/%d", run.ID), "detail"},
++		{"/", "inbox"}, {"/runs", "runs"}, {"/memory", "memory"}, {"/repos", "repos"}, {"/runs/new", "new"}, {fmt.Sprintf("/runs/%d", run.ID), "detail"},
+ 	} {
+ 		t.Run(tc.path, func(t *testing.T) {
+ 			w := f.request("GET", tc.path, "")
+@@ -91,11 +91,20 @@ func TestModeCSPAndAssets(t *testing.T) {
+ 			if !strings.Contains(html.UnescapeString(page.Body.String()), `src="`+source+`" integrity="`+web.VueIntegrity+`" crossorigin="anonymous"`) {
+ 				t.Fatal("wrong Vue source or missing integrity pin")
+ 			}
+-			for path, media := range map[string]string{"/assets/app.js": "text/javascript; charset=utf-8", "/assets/app.css": "text/css; charset=utf-8"} {
+-				w := f.request("GET", path, "")
++			for _, name := range web.AssetNames() {
++				media := "text/javascript; charset=utf-8"
++				if strings.HasSuffix(name, ".css") {
++					media = "text/css; charset=utf-8"
++				}
++				w := f.request("GET", "/assets/"+name, "")
+ 				requireStatus(t, w, 200)
+ 				if w.Header().Get("Content-Type") != media || w.Header().Get("X-Content-Type-Options") != "nosniff" || w.Body.Len() == 0 {
+-					t.Fatalf("incorrect static response for %s", path)
++					t.Fatalf("incorrect static response for %s", name)
++				}
++			}
++			for _, bad := range []string{"/assets/app.js", "/assets/components/Nope.js", "/assets/components/", "/assets/composables/main.js", "/assets/components/%2e%2e/app.css"} {
++				if w := f.request("GET", bad, ""); w.Code == 200 {
++					t.Fatalf("%s must not be served", bad)
+ 				}
+ 			}
+ 			vue := f.request("GET", "/assets/vue.global.prod.js", "")
+@@ -117,7 +126,8 @@ func TestModeCSPAndAssets(t *testing.T) {
+ 		})
+ 	}
+ 	requireStatus(t, f.request("GET", "/assets/shell.html", ""), 404)
+-	requireStatus(t, f.request("POST", "/assets/app.js", "{}"), 405)
++	requireStatus(t, f.request("POST", "/assets/main.js", "{}"), 405)
++	requireStatus(t, f.request("POST", "/assets/components/App.js", "{}"), 405)
+ }
+ 
+ func TestProtectedShellNeverRendersTokenOrRunData(t *testing.T) {
+@@ -128,7 +138,7 @@ func TestProtectedShellNeverRendersTokenOrRunData(t *testing.T) {
+ 	if err := f.db.SetRunStatus(t.Context(), run.ID, run.Status, run.Status, store.RunPatch{IssueTitle: &title, Phase: store.PhaseRefine}); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	for _, path := range []string{"/", "/runs", "/runs/new", fmt.Sprintf("/runs/%d", run.ID)} {
++	for _, path := range []string{"/", "/runs", "/runs/new", "/repos", "/memory", fmt.Sprintf("/runs/%d", run.ID)} {
+ 		for _, auth := range []string{"", "Bearer wrong", "Bearer " + token} {
+ 			r := httptest.NewRequest(http.MethodGet, "http://"+f.cfg.Server.Addr+path, nil)
+ 			r.Header.Set("Authorization", auth)
+@@ -141,7 +151,7 @@ func TestProtectedShellNeverRendersTokenOrRunData(t *testing.T) {
+ 			}
+ 		}
+ 	}
+-	for _, path := range []string{"/assets/app.js", "/assets/app.css"} {
++	for _, path := range []string{"/assets/main.js", "/assets/app.css", "/assets/components/RunDetail.js", "/assets/composables/useApi.js"} {
+ 		r := httptest.NewRequest(http.MethodGet, "http://"+f.cfg.Server.Addr+path, nil)
+ 		w := httptest.NewRecorder()
+ 		f.server.ServeHTTP(w, r)
+diff --git a/internal/web/shell.html b/internal/web/shell.html
+index 527adc5..d03d2ba 100644
+--- a/internal/web/shell.html
++++ b/internal/web/shell.html
+@@ -3,18 +3,22 @@
+ <head>
+   <meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+-  <title>patchbot · runs</title>
++  <title>patchbot</title>
+   <link rel="stylesheet" href="/assets/app.css">
+   <script type="application/json" id="state">{{.State}}</script>
+   <script defer src="{{.Source}}" integrity="{{.Integrity}}" crossorigin="anonymous"></script>
+-  <script defer src="/assets/app.js"></script>
++  <script type="module" src="/assets/main.js"></script>
+ </head>
+ <body>
+   <a class="skip" href="#main">Skip to content</a>
+-  <header><a href="/runs">patchbot</a><nav aria-label="Main"><a href="/runs">Runs</a><a href="/runs/new">New run</a><a href="/repos">Repositories</a></nav>{{with .State.Email}}<span class="whoami">Signed in as {{.}}</span>{{end}}</header>
+-  <main id="main" tabindex="-1">
+-    <div id="app"><h1>patchbot</h1>{{with .State.Preview}}<pre class="output">{{.}}</pre>{{end}}<p role="status">Loading the run interface… If this remains visible, Vue could not load. Check the CDN connection and integrity pin, or run <code>make vendor-vue</code> and rebuild for local mode.</p></div>
+-    <noscript>JavaScript is required for the run interface.</noscript>
+-  </main>
++  <div id="app">
++    <main id="main" tabindex="-1" class="fallback">
++      <h1>patchbot</h1>
++      <nav aria-label="Main"><a href="/">Inbox</a> <a href="/runs">Runs</a> <a href="/runs/new">New request</a> <a href="/repos">Repositories</a> <a href="/memory">Memory</a> <a href="/setup/github">GitHub</a></nav>
++      {{with .State.Preview}}<pre class="output">{{.}}</pre>{{end}}
++      <p role="status">Loading the run interface… If this remains visible, Vue could not load. Check the CDN connection and integrity pin, or run <code>make vendor-vue</code> and rebuild for local mode.</p>
++      <noscript>JavaScript is required for the run interface.</noscript>
++    </main>
++  </div>
+ </body>
+ </html>
+diff --git a/internal/web/web.go b/internal/web/web.go
+index 5155c11..59b48a5 100644
+--- a/internal/web/web.go
++++ b/internal/web/web.go
+@@ -8,6 +8,7 @@ import (
+ 	"io"
+ 	"net/http"
+ 	"strconv"
++	"strings"
+ )
+ 
+ // VueVersion pins the global production build used in both delivery modes.
+@@ -61,10 +62,51 @@ func CSP(local bool) string {
+ 	return "default-src 'none'; script-src " + scripts + "; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+ }
+ 
++// assetNames is the complete, fixed list of files served under /assets/. Nothing
++// is matched by prefix or wildcard: a file is public only if it is named here,
++// and a test asserts the list equals the embedded asset tree (minus the
++// vendored Vue build, which is added conditionally by Asset).
++var assetNames = []string{
++	"main.js", "ui.js", "format.js", "setup.js", "app.css",
++	"components/ActionBar.js", "components/App.js", "components/BudgetMeters.js", "components/ChangesView.js",
++	"components/ConfirmDialog.js", "components/DiffView.js", "components/HelpDialog.js", "components/Inbox.js",
++	"components/LogStream.js", "components/MemoryView.js", "components/Modal.js", "components/ModelFields.js",
++	"components/NewRequest.js", "components/PhaseStepper.js", "components/RepoCard.js", "components/RepoEditor.js",
++	"components/RepoPage.js", "components/RunCard.js", "components/RunDetail.js", "components/RunList.js",
++	"components/Sidebar.js", "components/SpecEditor.js", "components/SpecView.js", "components/Tabs.js",
++	"components/Toast.js", "components/Unlock.js",
++	"composables/useApi.js", "composables/useBadges.js", "composables/useConfirm.js", "composables/useKeyboard.js",
++	"composables/useProviders.js", "composables/useRunStream.js", "composables/useSession.js", "composables/useTask.js",
++	"composables/useTheme.js", "composables/useToast.js",
++}
++
++const vueAsset = "vue.global.prod.js"
++
++var assetSet = func() map[string]bool {
++	set := map[string]bool{vueAsset: true}
++	for _, name := range assetNames {
++		set[name] = true
++	}
++	return set
++}()
++
++// AssetNames returns the fixed served asset list, excluding the vendored Vue.
++func AssetNames() []string { return append([]string(nil), assetNames...) }
++
++// AssetPath reports whether path is exactly one of the fixed, data-free asset
++// URLs. Access mode and token mode both use it for the unauthenticated GET list.
++func AssetPath(path string) bool {
++	name, ok := strings.CutPrefix(path, "/assets/")
++	return ok && assetSet[name]
++}
++
+ // PublicPath identifies exact shell/asset GET paths that contain no private data.
+ func PublicPath(path string) bool {
+ 	switch path {
+-	case "/", "/runs", "/runs/new", "/repos", "/setup/github", "/assets/app.js", "/assets/app.css", "/assets/setup.js", "/assets/vue.global.prod.js":
++	case "/", "/runs", "/runs/new", "/repos", "/memory", "/setup/github":
++		return true
++	}
++	if AssetPath(path) {
+ 		return true
+ 	}
+ 	if len(path) > len("/runs/") && path[:len("/runs/")] == "/runs/" {
+@@ -77,28 +119,22 @@ func PublicPath(path string) bool {
+ // Asset serves only explicitly named embedded assets with fixed media types.
+ func Asset(w http.ResponseWriter, r *http.Request, local bool) {
+ 	w.Header().Set("X-Content-Type-Options", "nosniff")
+-	name, media := "", ""
+-	switch r.URL.Path {
+-	case "/assets/app.js":
+-		name, media = "app.js", "text/javascript; charset=utf-8"
+-	case "/assets/app.css":
+-		name, media = "app.css", "text/css; charset=utf-8"
+-	case "/assets/setup.js":
+-		name, media = "setup.js", "text/javascript; charset=utf-8"
+-	case "/assets/vue.global.prod.js":
+-		if local {
+-			name, media = "vue.global.prod.js", "text/javascript; charset=utf-8"
+-		}
+-	}
+-	if name == "" {
++	name, ok := strings.CutPrefix(r.URL.Path, "/assets/")
++	if !ok || !assetSet[name] || (name == vueAsset && !local) {
+ 		http.NotFound(w, r)
+ 		return
+ 	}
++	media := "text/javascript; charset=utf-8"
++	if strings.HasSuffix(name, ".css") {
++		media = "text/css; charset=utf-8"
++	}
+ 	data, err := files.ReadFile("assets/" + name)
+ 	if err != nil {
+ 		http.Error(w, "Vue is not vendored. Run make vendor-vue, then rebuild patchbot.", http.StatusServiceUnavailable)
+ 		return
+ 	}
+ 	w.Header().Set("Content-Type", media)
+-	_, _ = w.Write(data)
++	// data is an embedded file chosen only from the fixed assetNames list, with a
++	// fixed script/style media type and nosniff.
++	_, _ = w.Write(data) //nolint:gosec // G705: not user-controlled content
+ }
+// Pure helpers: no DOM access, no Vue. Everything here returns plain strings,
+// numbers or plain objects so it can be unit-tested and so untrusted text is
+// only ever handed to the renderer as text.
+
+export const active = ["queued", "running", "awaiting_approval", "needs_info", "approved"];
+export const statuses = [...active, "succeeded", "failed", "cancelled", "rejected"];
+
+// One mapping for every status chip: icon + text + colour class.
+export const statusMeta = {
+  awaiting_approval: { icon: "clock", label: "Awaiting approval" },
+  needs_info: { icon: "question", label: "Needs info" },
+  queued: { icon: "dots", label: "Queued" },
+  running: { icon: "spinner", label: "Running" },
+  approved: { icon: "check", label: "Approved" },
+  succeeded: { icon: "check-circle", label: "Succeeded" },
+  failed: { icon: "x-circle", label: "Failed" },
+  rejected: { icon: "ban", label: "Rejected" },
+  cancelled: { icon: "stop", label: "Cancelled" }
+};
+
+export const text = value => value == null ? "unknown" : String(value);
+export const money = value => value == null ? "unknown" : `$${(value / 1000000).toFixed(4)}`;
+export const human = value => String(value || "pending").replaceAll("_", " ");
+export const lines = value => String(value || "").split("\n").map(line => line.trim()).filter(Boolean);
+export const shortHash = hash => String(hash || "").slice(0, 9);
+export const count = value => value == null ? "unknown" : Number(value).toLocaleString("en-US");
+
+// Escape every rune a lesson may not contain (format, bidi, tag, private-use,
+// separators, controls other than newline/tab) so nothing hides from review.
+const printable = /[\p{L}\p{M}\p{N}\p{P}\p{S} \n\t]/u;
+export const visible = value => Array.from(String(value ?? ""), c => printable.test(c) ? c
+  : String.fromCharCode(92) + "u{" + c.codePointAt(0).toString(16).toUpperCase() + "}").join("");
+
+// linkHref returns a normalised http(s) URL or "" for anything else.
+export function linkHref(url) {
+  try {
+    const parsed = new URL(url);
+    if (["http:", "https:"].includes(parsed.protocol)) return parsed.href;
+  } catch { /* An invalid external link stays text. */ }
+  return "";
+}
+
+// runHref builds an in-app run URL from an integer ID only.
+export const runHref = id => Number.isSafeInteger(id) && id > 0 ? `/runs/${id}` : "/runs";
+
+export const specText = spec => (spec?.body_md || "").replace(/\n<!-- patchbot:spec-data [A-Za-z0-9+/=]+ -->\n$/, "");
+
+// decodeSpec recovers the structured fields hidden in the spec marker, or null.
+export function decodeSpec(spec) {
+  const match = (spec?.body_md || "").match(/\n<!-- patchbot:spec-data ([A-Za-z0-9+/=]+) -->\n$/);
+  if (!match) return null;
+  try {
+    const data = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(match[1]), c => c.charCodeAt(0))));
+    const list = value => Array.isArray(value) ? value.map(String) : [];
+    return {
+      summary: String(data.summary || ""), acceptance_criteria: list(data.acceptance_criteria), risks: list(data.risks),
+      test_plan: list(data.test_plan), open_questions: list(data.open_questions),
+      files: Array.isArray(data.files) ? data.files.map(f => ({ path: String(f?.path || ""), change: String(f?.change || "") })) : []
+    };
+  } catch { return null; }
+}
+
+// A linear replacement diff: common prefix/suffix stay as context; changed
+// lines are shown in full. No quadratic work on model-generated documents.
+export function lineDiff(before, after) {
+  const a = before.split("\n"), b = after.split("\n");
+  let start = 0, end = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start++;
+  while (end < a.length - start && end < b.length - start && a[a.length - end - 1] === b[b.length - end - 1]) end++;
+  if (start === a.length && start === b.length) return "No changes.";
+  return [
+    ...a.slice(Math.max(0, start - 3), start).map(line => "  " + line),
+    ...a.slice(start, a.length - end).map(line => "- " + line),
+    ...b.slice(start, b.length - end).map(line => "+ " + line),
+    ...b.slice(b.length - end, b.length - end + 3).map(line => "  " + line)
+  ].join("\n");
+}
+
+// parseDiff splits a unified diff into files with typed lines, in linear time.
+// Unrecognised input still yields one "(diff)" file so nothing is dropped.
+export function parseDiff(raw) {
+  const files = [];
+  let file = null;
+  const open = path => { file = { path, adds: 0, dels: 0, lines: [] }; files.push(file); };
+  for (const line of String(raw || "").split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      open(line.replace(/^diff --git a\/(.*) b\/.*$/, "$1"));
+      file.lines.push({ kind: "meta", text: line });
+      continue;
+    }
+    if (!file) open("(diff)");
+    let kind = "ctx";
+    if (/^(\+\+\+|---|index |new file|deleted file|similarity|rename |old mode|new mode|Binary)/.test(line)) kind = "meta";
+    else if (line.startsWith("@@")) kind = "hunk";
+    else if (line.startsWith("+")) { kind = "add"; file.adds++; }
+    else if (line.startsWith("-")) { kind = "del"; file.dels++; }
+    file.lines.push({ kind, text: line });
+  }
+  return files;
+}
+
+// Phase stepper: Refine, Approval, Code, Tests, Review, PR. The state of each
+// step comes only from the run status/phase the API reports.
+export const stepperPhases = ["Refine", "Approval", "Code", "Tests", "Review", "PR"];
+const phaseToStep = { preflight: 0, refine: 0, clone: 2, baseline: 3, code: 2, verify: 3, review: 4, publish: 5 };
+
+export function stepperState(run) {
+  const waiting = run.status === "awaiting_approval" || run.status === "needs_info";
+  let current = waiting ? 1 : (phaseToStep[run.phase] ?? 0);
+  if (run.status === "approved") current = 1;
+  if (run.status === "queued") current = 0;
+  const done = run.status === "succeeded";
+  const failed = ["failed", "rejected", "cancelled"].includes(run.status);
+  return stepperPhases.map((label, index) => {
+    let state = "todo";
+    if (done || index < current) state = "done";
+    else if (index === current) state = failed ? (run.status === "failed" ? "failed" : "stopped") : "current";
+    return { label, state };
+  });
+}
+
+const failureText = {
+  expired: ["The approval wait expired.", "Retry the run to produce a fresh specification."],
+  interrupted: ["patchbot restarted while this run was working.", "Retry the run; nothing was published."],
+  budget_exhausted: ["The run used up its cost budget.", "Retry with a larger budget."],
+  review_failed: ["The independent reviewer asked for changes.", "Read the review in the Changes tab, then revise or retry."],
+  review_stale: ["The code changed after it was reviewed.", "Retry the run so the review matches the final diff."],
+  provider_auth: ["The model provider rejected the API key.", "Fix the provider key in the server config, then retry."],
+  rate_limit: ["The model provider is rate limiting requests.", "Wait a few minutes and retry."],
+  tests_failed: ["The tests did not pass.", "Open the Changes tab to read the test output, then revise or retry."]
+};
+
+// failureInfo explains a failed/stopped run in plain language, or returns null.
+export function failureInfo(run) {
+  if (run.status === "rejected") return { title: "You rejected this specification.", next: "Retry to start over with a new specification.", detail: "" };
+  if (run.status === "cancelled") return { title: "This run was cancelled.", next: "Retry to start a new run.", detail: "" };
+  if (run.status !== "failed" && !run.error_kind) return null;
+  const known = failureText[run.error_kind];
+  return {
+    title: known ? known[0] : "The run stopped with an error.",
+    next: known ? known[1] : "Read the details below, then retry or revise.",
+    detail: [run.error_kind, run.error_message].filter(Boolean).join(": ")
+  };
+}
+
+export function duration(run, now = Date.now()) {
+  if (!run.started_at) return null;
+  const end = run.finished_at ? Date.parse(run.finished_at) : now;
+  const ms = end - Date.parse(run.started_at);
+  return Number.isFinite(ms) && ms >= 0 ? ms : null;
+}
+
+export function formatMs(ms) {
+  if (ms == null) return "unknown";
+  const total = Math.round(ms / 1000);
+  const minutes = Math.floor(total / 60);
+  return minutes ? `${minutes}m ${total % 60}s` : `${total}s`;
+}
+
+// budgetLimits reads the frozen per-run limits (Go field names, no JSON tags);
+// anything missing or non-positive is null, shown as "unknown".
+export function budgetLimits(run) {
+  const l = run.limits_json && typeof run.limits_json === "object" ? run.limits_json : {};
+  const a = l.Agent && typeof l.Agent === "object" ? l.Agent : {};
+  const pos = value => Number.isFinite(value) && value > 0 ? value : null;
+  return { cost: pos(a.MaxCostMicros), tokens: pos(a.MaxTotalTokens), ms: pos(l.Timeout) == null ? null : l.Timeout / 1e6 };
+}
+
+// eventInfo labels a log event by turn, else phase, else type. Payloads are
+// untrusted: only plain scalar fields are read.
+export function eventInfo(event) {
+  let payload = null;
+  try { payload = JSON.parse(event.output); } catch { /* Malformed data is shown as text. */ }
+  const p = payload && typeof payload === "object" ? payload : {};
+  const turn = Number.isSafeInteger(p.turn) ? p.turn : null;
+  const phase = typeof p.phase === "string" ? p.phase : (event.type === "run.status" && typeof p.status === "string" ? p.status : "");
+  const failing = p.ok === false || ["failed", "error"].includes(p.status) || (Number.isFinite(p.exit_code) && p.exit_code !== 0) || /\b(FAIL|panic:)\b/.test(event.output);
+  return { group: turn != null ? `Turn ${turn}` : phase ? human(phase) : "Events", failing };
+}
+
+export function groupEvents(events) {
+  const groups = [];
+  for (const event of events) {
+    const info = eventInfo(event);
+    let group = groups[groups.length - 1];
+    if (!group || group.label !== info.group) { group = { label: info.group, items: [] }; groups.push(group); }
+    group.items.push({ ...event, failing: info.failing });
+  }
+  return groups;
+}
+// UI primitives. Every untrusted value passes through as a Vue text child;
+// there is no HTML string anywhere. Reuse these instead of re-creating them.
+import { human, linkHref, statusMeta, text } from "./format.js";
+
+const { h } = window.Vue;
+
+// Inline SVG icons, 24x24 stroke paths. Decorative: the label is always text.
+const paths = {
+  clock: ["M12 7v5l3 2", "M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18z"],
+  question: ["M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7", "M12 17h.01", "M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18z"],
+  dots: ["M7 12h.01", "M12 12h.01", "M17 12h.01"],
+  spinner: ["M12 3a9 9 0 0 1 9 9", "M12 21a9 9 0 0 1-9-9"],
+  check: ["M5 12l5 5L20 7"],
+  "check-circle": ["M8 12l3 3 5-6", "M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18z"],
+  "x-circle": ["M9 9l6 6", "M15 9l-6 6", "M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18z"],
+  ban: ["M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18z", "M5.6 5.6l12.8 12.8"],
+  stop: ["M6 6h12v12H6z"],
+  inbox: ["M3 13l3-8h12l3 8", "M3 13v6h18v-6", "M3 13h5l1 3h6l1-3h5"],
+  list: ["M8 6h12", "M8 12h12", "M8 18h12", "M4 6h.01", "M4 12h.01", "M4 18h.01"],
+  plus: ["M12 5v14", "M5 12h14"],
+  repo: ["M5 4h12a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z", "M5 18a2 2 0 0 1 2-2h12"],
+  brain: ["M9 4a3 3 0 0 0-3 3v1a3 3 0 0 0 0 6v1a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3z", "M15 4a3 3 0 0 1 3 3v1a3 3 0 0 1 0 6v1a3 3 0 0 1-6 0"],
+  github: ["M9 19c-4 1.5-4-2-6-2", "M15 22v-3.5a3 3 0 0 0-1-2.5c3 0 6-1.5 6-5.5a4.5 4.5 0 0 0-1.2-3 4 4 0 0 0 0-3s-1 0-3 1.3a10 10 0 0 0-5.6 0C8 4 7 4 7 4a4 4 0 0 0 0 3 4.5 4.5 0 0 0-1.2 3c0 4 3 5.5 6 5.5a3 3 0 0 0-1 2.5V22"],
+  sun: ["M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8z", "M12 2v2", "M12 20v2", "M2 12h2", "M20 12h2", "M5 5l1.5 1.5", "M17.5 17.5L19 19", "M5 19l1.5-1.5", "M17.5 6.5L19 5"],
+  moon: ["M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"],
+  menu: ["M4 6h16", "M4 12h16", "M4 18h16"],
+  external: ["M14 4h6v6", "M20 4l-9 9", "M18 14v5H5V6h5"],
+  warn: ["M12 3l10 18H2z", "M12 10v4", "M12 17h.01"],
+  keyboard: ["M3 6h18v12H3z", "M7 10h.01", "M11 10h.01", "M15 10h.01", "M8 14h8"]
+};
+
+export function icon(name, size = 16) {
+  return h("svg", {
+    class: "icon", width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor",
+    "stroke-width": 2, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true", focusable: "false"
+  }, (paths[name] || paths.dots).map(d => h("path", { d })));
+}
+
+export const chip = status => {
+  const meta = statusMeta[status];
+  return h("span", { class: "chip s-" + (meta ? status : "unknown") }, [icon(meta ? meta.icon : "dots", 14), meta ? meta.label : human(status)]);
+};
+
+export function button(label, click, options = {}) {
+  const { disabled = false, kind = "", icon: iconName = "", type = "button", title, ariaLabel, pressed } = options;
+  return h("button", {
+    type, class: "btn" + (kind ? " " + kind : ""), onClick: click, disabled, title, "aria-label": ariaLabel,
+    "aria-pressed": pressed == null ? undefined : String(pressed)
+  }, [iconName ? icon(iconName, 16) : null, label]);
+}
+
+export const field = (label, control, hint) => h("label", { class: "field" }, [h("span", label), control, hint ? h("small", hint) : null]);
+export const input = (object, key, attributes = {}) => h("input", {
+  ...attributes, value: object[key], onInput: event => { object[key] = event.target.value; }
+});
+export const area = (object, key, attributes = {}) => h("textarea", {
+  rows: 4, ...attributes, value: object[key], onInput: event => { object[key] = event.target.value; }
+});
+export const select = (object, key, options, change) => h("select", {
+  value: object[key], onChange: event => { object[key] = event.target.value; if (change) change(); }
+}, options.map(([value, label]) => h("option", { value, selected: value === object[key] }, label)));
+export const checkbox = (object, key, label) => h("label", { class: "check" }, [
+  h("input", { type: "checkbox", checked: !!object[key], onChange: event => { object[key] = event.target.checked; } }), label]);
+
+export const panel = (title, children, attributes = {}) => h("section", { class: "panel", ...attributes }, [title ? h("h2", title) : null, ...children]);
+
+// block renders untrusted text in a keyboard-scrollable monospace panel.
+export const block = (value, label) => h("pre", { class: "output", tabindex: 0, "aria-label": label }, text(value));
+
+// link makes an anchor only for validated http(s) URLs; anything else is text.
+export const link = (url, label) => {
+  const href = linkHref(url);
+  return href ? h("a", { href, target: "_blank", rel: "noopener noreferrer" }, [label, icon("external", 12)]) : h("span", label);
+};
+
+export const loading = (label = "Loading…") => h("p", { class: "state", role: "status" }, [icon("spinner", 16), label]);
+export const empty = (title, next, action) => h("div", { class: "state empty" }, [h("p", h("strong", title)), next ? h("p", { class: "muted" }, next) : null, action || null]);
+export const errorPanel = (message, retry) => h("div", { class: "alert", role: "alert" }, [
+  icon("warn", 16), h("div", [h("p", message), retry ? button("Try again", retry) : null])]);
+
+// meter shows used/limit as text and a bar; unknown values stay "unknown".
+export function meter(label, used, limit, show) {
+  const known = used != null && limit != null;
+  const pct = known ? Math.min(100, Math.round(used / limit * 100)) : 0;
+  return h("div", { class: "meter" }, [
+    h("div", { class: "meter-head" }, [h("span", label), h("strong", show(used) + (limit != null ? " of " + show(limit) : " (limit unknown)"))]),
+    known ? h("progress", { class: pct >= 90 ? "hot" : "", max: 100, value: pct, "aria-label": label + " used" }, pct + "%") : null
+  ]);
+}
+// Entry point, loaded as <script type="module"> from this origin after the
+// pinned Vue global build. Shared services are created once here and handed to
+// components with provide-free props (ctx), so there are no mutable globals.
+import { useApi } from "./composables/useApi.js";
+import { useBadges } from "./composables/useBadges.js";
+import { useConfirm } from "./composables/useConfirm.js";
+import { useProviders } from "./composables/useProviders.js";
+import { useSession } from "./composables/useSession.js";
+import { useTheme } from "./composables/useTheme.js";
+import { useToast } from "./composables/useToast.js";
+import { App } from "./components/App.js";
+
+const { createApp } = window.Vue;
+const initial = JSON.parse(document.getElementById("state").textContent);
+const api = useApi(!!initial.auth_required);
+const ctx = {
+  initial, api, shortcuts: {}, openHelp: () => {},
+  session: useSession(api, initial.email), toast: useToast(), theme: useTheme(), confirm: useConfirm(),
+  badges: useBadges(api), providers: useProviders(api)
+};
+createApp(App, { ctx }).mount("#app");
+// The single fetch helper. In token mode the bearer token lives only in
+// sessionStorage and a closure; in Access mode there is no credential at all.
+const { reactive } = window.Vue;
+const storageKey = "patchbot.ui-token";
+
+export function useApi(authRequired) {
+  let token = "";
+  try { token = sessionStorage.getItem(storageKey) || ""; } catch { /* The unlock form explains storage failures. */ }
+  const state = reactive({ authRequired, locked: authRequired && !token });
+  const listeners = [];
+
+  const headers = (extra = {}) => token ? { ...extra, Authorization: "Bearer " + token } : extra;
+
+  function forget() {
+    token = "";
+    try { sessionStorage.removeItem(storageKey); } catch { /* No persistent fallback. */ }
+    state.locked = true;
+    for (const listener of listeners) listener();
+  }
+
+  // unlock stores a token for this tab only. It throws when storage is blocked.
+  function unlock(value) {
+    const candidate = value.trim();
+    if (!candidate) throw new Error("Enter the UI token.");
+    try { sessionStorage.setItem(storageKey, candidate); }
+    catch { throw new Error("Enable session storage to use token authentication in this tab."); }
+    token = candidate;
+    state.locked = false;
+  }
+
+  async function request(path, options = {}, plain = false) {
+    const response = await fetch(path, { ...options, credentials: "same-origin", headers: headers(options.headers) });
+    if (response.status === 401) {
+      if (state.authRequired) forget();
+      throw new Error(state.authRequired ? "Enter the UI token to continue." : "Sign in through Cloudflare Access to continue.");
+    }
+    if (!response.ok) {
+      let message = `Request failed (${response.status}).`;
+      let failure = null;
+      try { failure = await response.json(); message = failure.error?.message || message; } catch { /* Use the status if the body is not JSON. */ }
+      throw Object.assign(new Error(message), { body: failure, status: response.status });
+    }
+    return plain ? response.text() : response.json();
+  }
+
+  const send = (path, body, method = "POST") => request(path, {
+    method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+  });
+
+  return { state, request, send, headers, forget, unlock, onForget: listener => { listeners.push(listener); } };
+}
+// Sidebar badge counts and the `(n) patchbot` tab title. Counts come from the
+// existing list API (all pages), never from the current list filter.
+const { reactive } = window.Vue;
+
+export function useBadges(api) {
+  const state = reactive({ inbox: null, running: null, memory: null });
+
+  async function countStatus(status) {
+    let cursor = "", total = 0;
+    do {
+      const q = new URLSearchParams({ status, limit: "500" });
+      if (cursor) q.set("cursor", cursor);
+      const page = await api.request("/api/runs?" + q);
+      total += page.runs.length;
+      cursor = page.next_cursor;
+    } while (cursor && !api.state.locked);
+    return total;
+  }
+
+  function title() {
+    document.title = state.inbox ? `(${state.inbox}) patchbot` : "patchbot";
+  }
+
+  async function refresh() {
+    if (api.state.locked) return;
+    try {
+      const [waiting, info, running, memory] = await Promise.all([
+        countStatus("awaiting_approval"), countStatus("needs_info"), countStatus("running"),
+        api.request("/api/memory?status=pending").catch(() => null)
+      ]);
+      state.inbox = waiting + info;
+      state.running = running;
+      state.memory = memory ? (memory.entries || []).length : null;
+    } catch { /* Badges are best effort; the page shows its own errors. */ }
+    title();
+  }
+  function clear() { state.inbox = state.running = state.memory = null; title(); }
+  return { state, refresh, clear };
+}
+// Promise-based confirmation. ConfirmDialog renders `state`; callers await ask().
+const { reactive } = window.Vue;
+
+export function useConfirm() {
+  const state = reactive({ open: false, title: "", message: "", confirmLabel: "Confirm", danger: false, details: [] });
+  let resolve = null;
+
+  function ask(options) {
+    if (resolve) resolve(false);
+    Object.assign(state, { title: "", message: "", confirmLabel: "Confirm", danger: false, details: [] }, options, { open: true });
+    return new Promise(done => { resolve = done; });
+  }
+  function answer(value) {
+    state.open = false;
+    const done = resolve;
+    resolve = null;
+    if (done) done(value);
+  }
+  return { state, ask, answer };
+}
+// Global shortcuts. Ignored while typing, with modifier keys, or while a
+// dialog is open. Destructive actions only open the confirm dialog.
+export function useKeyboard(bindings, blocked) {
+  let pendingG = false, timer = null;
+
+  const typing = target => {
+    if (!target || !(target instanceof Element)) return false;
+    return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+  };
+  function onKey(event) {
+    if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
+    if (typing(event.target) || blocked()) return;
+    const key = event.key;
+    if (pendingG) {
+      pendingG = false; clearTimeout(timer);
+      const run = bindings["g " + key];
+      if (run) { event.preventDefault(); run(); }
+      return;
+    }
+    if (key === "g") {
+      pendingG = true;
+      timer = setTimeout(() => { pendingG = false; }, 1200);
+      return;
+    }
+    const run = bindings[key];
+    if (run) { event.preventDefault(); run(); }
+  }
+  return {
+    start() { document.addEventListener("keydown", onKey); },
+    stop() { document.removeEventListener("keydown", onKey); clearTimeout(timer); }
+  };
+}
+// Providers, repositories and model lists shared by the request and retry forms.
+const { reactive } = window.Vue;
+
+export function useProviders(api) {
+  const state = reactive({ providers: [], repos: [], models: [], warning: "", defaults: null, loaded: false });
+  const form = reactive({ repo: "", issue: "", mode: "fix", budget: "2", dry: true, provider: "", model: "", separate: false, refine: "" });
+  let serial = 0;
+
+  async function loadModels(reset = false) {
+    const mine = ++serial;
+    state.models = []; state.warning = "Loading models…";
+    if (reset) {
+      form.model = state.providers.find(p => p.id === form.provider)?.default_model || "";
+      form.refine = ""; form.separate = false;
+    }
+    try {
+      const list = await api.request(`/api/providers/${encodeURIComponent(form.provider)}/models`);
+      if (mine !== serial) return;
+      state.models = list.models || [];
+      state.warning = list.warning || (!list.live ? "Live listing failed. Choose a configured model or type a model ID." : "");
+    } catch (error) {
+      if (mine === serial) state.warning = error.message + " Type a model ID to continue.";
+    }
+  }
+
+  async function load() {
+    const body = await api.request("/api/providers");
+    state.providers = body.providers; state.repos = body.repos; state.defaults = body.defaults;
+    form.repo = state.repos[0] || "";
+    form.provider = body.defaults.provider;
+    form.mode = body.defaults.mode;
+    form.model = body.defaults.code_model || "";
+    form.refine = body.defaults.refine_model || "";
+    form.separate = !!form.refine && form.refine !== form.model;
+    form.budget = String(body.defaults.max_cost_usd);
+    state.loaded = true;
+  }
+  const reset = () => { serial++; state.providers = []; state.repos = []; state.models = []; state.loaded = false; };
+  return { state, form, load, loadModels, reset };
+}
+// Live run log over fetch-based SSE. Frames are parsed across chunk boundaries,
+// sequence IDs are deduplicated, only fully consumed frames advance the cursor,
+// and reconnects send Last-Event-ID with a 1-10 s backoff. Keeps the latest
+// 1,000 events.
+const { reactive } = window.Vue;
+
+export function useRunStream(api, runId, onEvent, onDrained) {
+  const state = reactive({ events: [], status: "Connecting", lastID: 0 });
+  let controller = null, disposed = false;
+
+  function consume(frame) {
+    let id = "", type = "message";
+    const data = [];
+    for (const line of frame.split("\n")) {
+      const colon = line.indexOf(":");
+      const key = colon < 0 ? line : line.slice(0, colon);
+      const value = colon < 0 ? "" : line.slice(colon + 1).replace(/^ /, "");
+      if (key === "id") id = value;
+      if (key === "event") type = value;
+      if (key === "data") data.push(value);
+    }
+    if (type === "end") {
+      try {
+        const end = JSON.parse(data.join("\n"));
+        return Number.isSafeInteger(end.last_seq) && end.last_seq === state.lastID;
+      } catch { return false; }
+    }
+    if (!data.length || !/^\d+$/.test(id) || !Number.isSafeInteger(Number(id)) || Number(id) <= state.lastID) return false;
+    const payload = data.join("\n");
+    let output = payload;
+    try { output = JSON.stringify(JSON.parse(payload), null, 2); } catch { /* Malformed data is shown as text. */ }
+    state.events.push({ id, type, output });
+    if (state.events.length > 1000) state.events.shift();
+    state.lastID = Number(id);
+    onEvent();
+    return false;
+  }
+
+  async function follow(signal) {
+    let delay = 1000;
+    while (!signal.aborted && !api.state.locked && !disposed) {
+      try {
+        state.status = state.lastID ? "Reconnecting" : "Connecting";
+        const extra = { Accept: "text/event-stream" };
+        if (state.lastID) extra["Last-Event-ID"] = String(state.lastID);
+        const response = await fetch(`/api/runs/${runId}/events`, { credentials: "same-origin", headers: api.headers(extra), signal });
+        if (response.status === 401) { if (api.state.authRequired) api.forget(); throw new Error("Sign in to resume the log."); }
+        if (!response.ok || !response.body) throw new Error(`Live log unavailable (${response.status}).`);
+        state.status = "Live";
+        const reader = response.body.getReader(), decoder = new TextDecoder();
+        let pending = "", frame = [], complete = false;
+        try {
+          while (!signal.aborted && !complete) {
+            const part = await reader.read();
+            if (part.done) break;
+            pending += decoder.decode(part.value, { stream: true });
+            let newline;
+            while ((newline = pending.indexOf("\n")) >= 0) {
+              const line = pending.slice(0, newline).replace(/\r$/, "");
+              pending = pending.slice(newline + 1);
+              if (line === "") {
+                const before = state.lastID;
+                complete = consume(frame.join("\n")); frame = [];
+                if (state.lastID > before) delay = 1000;
+                if (complete) break;
+              } else frame.push(line);
+            }
+          }
+        } finally { await reader.cancel(); reader.releaseLock(); }
+        await onDrained();
+        // Only an explicit end frame proves terminal replay was drained.
+        if (complete) { state.status = "Complete"; return; }
+        state.status = "Reconnecting";
+      } catch (error) {
+        if (signal.aborted || disposed) return;
+        state.status = error.message + " Reconnecting…";
+      }
+      if (api.state.locked) return;
+      await new Promise(resolve => setTimeout(resolve, delay));
+      delay = Math.min(delay * 2, 10000);
+    }
+  }
+
+  function start() {
+    stop();
+    state.lastID = 0; state.events = [];
+    controller = new AbortController();
+    void follow(controller.signal);
+  }
+  function stop() { if (controller) controller.abort(); controller = null; }
+  function dispose() { disposed = true; stop(); }
+  return { state, start, stop, dispose };
+}
+// Signed-in identity. Access mode: GET /api/session returns the verified email.
+// Token mode: no identity; the email stays empty.
+const { reactive } = window.Vue;
+
+export function useSession(api, email) {
+  const state = reactive({ email: email || "", mode: "", loaded: false });
+  async function load() {
+    try {
+      const body = await api.request("/api/session");
+      state.email = typeof body.email === "string" ? body.email : "";
+      state.mode = typeof body.mode === "string" ? body.mode : "";
+    } catch { /* The shell already carries the email; a failure here is not fatal. */ }
+    state.loaded = true;
+  }
+  return { state, load };
+}
+// Runs one async task at a time and keeps a visible error for it. Failures are
+// never swallowed: they land in state.error, rendered as a role="alert" panel.
+const { reactive } = window.Vue;
+
+export function useTask() {
+  const state = reactive({ busy: false, error: "" });
+  async function run(task) {
+    state.error = ""; state.busy = true;
+    try { return await task(); } catch (error) { state.error = error.message; return undefined; }
+    finally { state.busy = false; }
+  }
+  return { state, run };
+}
+// Theme toggle. It only sets data-theme on <html>; the choice is a per-viewer
+// convenience kept in localStorage, and the page works without it.
+const { reactive } = window.Vue;
+const key = "patchbot.theme";
+
+export function useTheme() {
+  const state = reactive({ theme: "" });
+  const root = document.documentElement;
+  try {
+    const saved = localStorage.getItem(key);
+    if (saved === "light" || saved === "dark") state.theme = saved;
+  } catch { /* Storage may be blocked; follow the system theme. */ }
+  if (state.theme) root.dataset.theme = state.theme;
+
+  const effective = () => state.theme || (window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  function toggle() {
+    state.theme = effective() === "dark" ? "light" : "dark";
+    root.dataset.theme = state.theme;
+    try { localStorage.setItem(key, state.theme); } catch { /* Not persisted. */ }
+  }
+  return { state, toggle, effective };
+}
+// Toasts: role="status" messages that dismiss themselves after 6 seconds.
+const { reactive } = window.Vue;
+
+export function useToast() {
+  const state = reactive({ items: [] });
+  const timers = new Map();
+  let next = 1;
+
+  function dismiss(id) {
+    clearTimeout(timers.get(id));
+    timers.delete(id);
+    const index = state.items.findIndex(item => item.id === id);
+    if (index >= 0) state.items.splice(index, 1);
+  }
+  function push(message, kind = "ok") {
+    const id = next++;
+    state.items.push({ id, message: String(message), kind });
+    if (state.items.length > 4) dismiss(state.items[0].id);
+    timers.set(id, setTimeout(() => dismiss(id), 6000));
+  }
+  function dispose() { for (const timer of timers.values()) clearTimeout(timer); timers.clear(); }
+  return { state, push, dismiss, dispose };
+}
+
+exec
+/bin/zsh -lc "cat internal/web/assets/components/{App,RunDetail,Unlock,SpecEditor,SpecView,ActionBar}.js; cat internal/web/assets/format.js; rg -n 'innerHTML|v-html|href|src:|style:|class:|\\.\\.\\.|location|navigate|pushState|localStorage|sessionStorage' internal/web/assets --glob '"'!vue*'"'" in /Users/pappumishra/Documents/selfproject/patchbot-m29-dashboard
+ succeeded in 0ms:
+// Application frame: sidebar, routed page, toasts and dialogs. Pages mount only
+// while the tab is unlocked, so locking tears down their timers and streams.
+import { errorPanel } from "../ui.js";
+import { useKeyboard } from "../composables/useKeyboard.js";
+import { ConfirmDialog } from "./ConfirmDialog.js";
+import { HelpDialog } from "./HelpDialog.js";
+import { Inbox } from "./Inbox.js";
+import { MemoryView } from "./MemoryView.js";
+import { NewRequest } from "./NewRequest.js";
+import { RepoPage } from "./RepoPage.js";
+import { RunDetail } from "./RunDetail.js";
+import { RunList } from "./RunList.js";
+import { Sidebar } from "./Sidebar.js";
+import { Toast } from "./Toast.js";
+import { Unlock } from "./Unlock.js";
+
+const { h, reactive, onMounted, onUnmounted } = window.Vue;
+const pages = { inbox: Inbox, runs: RunList, new: NewRequest, repos: RepoPage, memory: MemoryView, detail: RunDetail };
+
+export const App = {
+  props: { ctx: { type: Object, required: true } },
+  setup(props) {
+    const { ctx } = props, { api } = ctx;
+    const local = reactive({ help: false, error: "" });
+    let timer = null;
+    ctx.openHelp = () => { local.help = true; };
+    Object.assign(ctx.shortcuts, {
+      "g i": () => location.assign("/"), "g r": () => location.assign("/runs"), "g n": () => location.assign("/runs/new"), "?": ctx.openHelp
+    });
+    const keyboard = useKeyboard(ctx.shortcuts, () => ctx.confirm.state.open || local.help);
+
+    async function boot() {
+      await ctx.session.load();
+      await ctx.badges.refresh();
+    }
+    api.onForget(() => { ctx.badges.clear(); ctx.providers.reset(); });
+    onMounted(() => {
+      keyboard.start();
+      if (!api.state.locked) void boot();
+      timer = setInterval(() => { if (!api.state.locked) void ctx.badges.refresh(); }, 15000);
+    });
+    onUnmounted(() => { keyboard.stop(); clearInterval(timer); ctx.toast.dispose(); });
+
+    return () => {
+      const Page = pages[ctx.initial.page] || Inbox;
+      return h("div", { class: "frame" }, [
+        h(Sidebar, { ctx }),
+        h("main", { id: "main", tabindex: -1 }, [
+          local.error ? errorPanel(local.error) : null,
+          api.state.locked ? h(Unlock, { ctx, onUnlocked: boot }) : h(Page, { ctx, key: ctx.initial.page + ctx.initial.run_id })
+        ]),
+        h(Toast, { toast: ctx.toast }),
+        h(ConfirmDialog, { confirm: ctx.confirm }),
+        h(HelpDialog, { open: local.help, onClose: () => { local.help = false; } })
+      ]);
+    };
+  }
+};
+// Run detail: header, phase stepper, budget, tabs (Spec / Live log / Changes)
+// and the sticky action bar. Lifecycle rules stay on the server.
+import { decodeSpec, human, runHref, shortHash } from "../format.js";
+import { block, chip, errorPanel, link, loading } from "../ui.js";
+import { useRunStream } from "../composables/useRunStream.js";
+import { useTask } from "../composables/useTask.js";
+import { ActionBar } from "./ActionBar.js";
+import { budgetMeters } from "./BudgetMeters.js";
+import { changesView } from "./ChangesView.js";
+import { LogStream } from "./LogStream.js";
+import { phaseStepper } from "./PhaseStepper.js";
+import { newEditor } from "./SpecEditor.js";
+import { SpecView } from "./SpecView.js";
+import { tabList, tabPanel } from "./Tabs.js";
+
+const { h, reactive, nextTick, onMounted, onUnmounted } = window.Vue;
+const tabs = [{ id: "spec", label: "Spec" }, { id: "log", label: "Live log" }, { id: "changes", label: "Changes" }];
+
+export const RunDetail = {
+  props: { ctx: { type: Object, required: true } },
+  setup(props) {
+    const { ctx } = props, { api, toast, confirm, providers } = ctx;
+    const id = ctx.initial.run_id;
+    const hashTab = location.hash.slice(1);
+    const s = reactive({ ready: false, detail: ctx.initial.initial || null, artifacts: [], editor: null, notes: "", reviseOpen: false, retryOpen: false,
+      tab: tabs.some(t => t.id === hashTab) ? hashTab : "spec" });
+    const task = useTask();
+    let refreshing = null, refreshTimer = null, pollTimer = null, redirect = null, disposed = false;
+
+    async function loadDetail(fresh = false) {
+      while (refreshing) { await refreshing; if (!fresh) return; }
+      refreshing = (async () => {
+        const detail = await api.request(`/api/runs/${id}`);
+        const loaded = new Map(s.artifacts.map(a => [a.key, a.content]));
+        const artifacts = await Promise.all((detail.artifacts || []).map(async a => {
+          const key = `${a.kind}:${a.attempt}:${a.bytes}:${a.created_at}`;
+          const content = loaded.has(key) ? loaded.get(key) : await api.request(`/api/runs/${id}/artifacts/${encodeURIComponent(a.kind)}?attempt=${a.attempt}`, {}, true);
+          return { ...a, key, content };
+        }));
+        if (disposed) return;
+        s.detail = detail; s.artifacts = artifacts; s.ready = true;
+      })();
+      try { await refreshing; } finally { refreshing = null; }
+    }
+    function scheduleRefresh() {
+      if (refreshTimer) return;
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        if (!api.state.locked && !disposed) loadDetail(true).catch(error => { task.state.error = error.message; });
+      }, 200);
+    }
+    const stream = useRunStream(api, id, scheduleRefresh, () => loadDetail());
+    const can = name => !!s.detail?.capabilities?.["can_" + name];
+    const navigate = run => { location.assign(runHref(run.id)); };
+
+    function act(name, body = {}) {
+      if (!can(name) || task.state.busy) return Promise.resolve();
+      return task.run(async () => {
+        let result;
+        try { result = await api.send(`/api/runs/${id}/${name}`, body); }
+        finally { if (!api.state.locked) await loadDetail(true); }
+        if (name === "retry") { navigate(result.run); return; }
+        toast.push(human(name) + " accepted.");
+        s.notes = ""; s.reviseOpen = false;
+      });
+    }
+    async function approve() {
+      const spec = s.detail?.latest_spec;
+      if (!can("approve") || !spec) return;
+      const ok = await confirm.ask({ title: `Approve specification v${spec.version}?`, confirmLabel: `Approve v${spec.version} · ${shortHash(spec.hash)}`,
+        message: "patchbot will start changing code for exactly this version. Editing it later clears the approval.",
+        details: [["Version", String(spec.version)], ["Hash", shortHash(spec.hash)], ["SHA-256", spec.hash]] });
+      if (ok) await act("approve");
+    }
+    async function reject() {
+      if (!can("reject")) return;
+      if (await confirm.ask({ title: "Reject this specification?", message: "The run stops. You can retry later to start over.", confirmLabel: "Reject", danger: true })) await act("reject");
+    }
+    async function cancel() {
+      if (!can("cancel")) return;
+      if (await confirm.ask({ title: "Cancel this run?", message: "Work in progress is stopped. Nothing already published is undone.", confirmLabel: "Cancel run", danger: true })) await act("cancel");
+    }
+    function edit() {
+      const spec = decodeSpec(s.detail?.latest_spec);
+      if (!can("edit") || task.state.busy) return;
+      if (!spec) { task.state.error = "This specification has no editable structured fields."; return; }
+      task.state.error = ""; s.editor = newEditor(spec);
+    }
+    function saveSpec() {
+      if (!can("edit") || task.state.busy) return Promise.resolve();
+      return task.run(async () => {
+        const e = s.editor, lines = v => String(v).split("\n").map(x => x.trim()).filter(Boolean);
+        const draft = { summary: e.summary, files: e.files.map(f => ({ path: f.path, change: f.change })) };
+        for (const key of ["acceptance_criteria", "risks", "test_plan", "open_questions"]) draft[key] = lines(e[key]);
+        try { await api.send(`/api/runs/${id}/spec`, draft, "PUT"); }
+        finally { if (!api.state.locked) await loadDetail(true); }
+        s.editor = null;
+        toast.push("New specification version saved. Any prior approval is cleared.");
+      });
+    }
+    const retry = () => act("retry", { provider: providers.form.provider, model: providers.form.model });
+    function pickTab(tab) { s.tab = tab; try { history.replaceState(null, "", "#" + tab); } catch { /* Hash is a convenience. */ } }
+
+    onMounted(() => {
+      ctx.shortcuts.a = () => void approve();
+      ctx.shortcuts.r = () => { if (can("revise")) { s.reviseOpen = true; s.retryOpen = false; void nextTick(() => document.getElementById("revise-notes")?.focus()); } };
+      void task.run(async () => {
+        await loadDetail();
+        providers.form.provider = s.detail.run.provider; providers.form.model = s.detail.run.code_model;
+        stream.start();
+        void providers.load().then(() => { providers.form.provider = s.detail.run.provider; providers.form.model = s.detail.run.code_model; return providers.loadModels(); }).catch(() => { /* Retry can still type a model. */ });
+      });
+      pollTimer = setInterval(() => {
+        if (api.state.locked || !s.ready || task.state.busy || s.editor) return;
+        loadDetail().catch(error => { task.state.error = error.message; });
+      }, 15000);
+    });
+    onUnmounted(() => {
+      disposed = true; stream.dispose();
+      delete ctx.shortcuts.a; delete ctx.shortcuts.r;
+      clearInterval(pollTimer); clearTimeout(refreshTimer); clearTimeout(redirect);
+    });
+
+    return () => {
+      const d = s.detail;
+      if (!d) return h("div", [task.state.error ? errorPanel(task.state.error, () => task.run(() => loadDetail(true))) : loading("Loading run…")]);
+      const run = d.run;
+      return h("div", { class: "detail" }, [
+        h("p", { class: "crumbs" }, [h("a", { href: "/runs" }, "Runs"), " / ", `${run.repo} #${run.issue_number}`]),
+        h("h1", `${run.repo} #${run.issue_number}`), h("p", { class: "lead" }, run.issue_title),
+        h("div", { class: "actions" }, [chip(run.status), run.dry_run ? h("span", { class: "tag" }, "Dry run") : null, run.prurl ? link(run.prurl, "Open pull request") : null]),
+        h("p", { class: "meta" }, `run ${run.id} · ${run.mode} · ${run.provider} · refine: ${run.refine_model} · code: ${run.code_model}`),
+        run.retry_of ? h("p", ["Retry of ", h("a", { href: runHref(run.retry_of) }, `run ${run.retry_of}`)]) : null,
+        d.dashboard_issue ? h("p", { class: "meta" }, `Requested from the dashboard by ${d.dashboard_issue.requested_by}`) : null,
+        task.state.error ? errorPanel(task.state.error) : null,
+        phaseStepper(run), budgetMeters(run),
+        run.summary ? h("details", [h("summary", "Run summary"), block(run.summary, "Run summary")]) : null,
+        tabList("Run sections", tabs, s.tab, pickTab),
+        s.tab === "spec" ? tabPanel("spec", [h(SpecView, { d, editor: s.editor, busy: task.state.busy, canEdit: can("edit"), onEdit: edit, onSave: saveSpec, onDiscard: () => { s.editor = null; } })]) : null,
+        s.tab === "log" ? tabPanel("log", [h(LogStream, { stream })]) : null,
+        s.tab === "changes" ? tabPanel("changes", [changesView(d, s.artifacts)]) : null,
+        h(ActionBar, { d, s, busy: task.state.busy, providers, onApprove: approve, onReject: reject, onCancel: cancel, onRevise: () => act("revise", { notes: s.notes }), onRetry: retry })
+      ]);
+    };
+  }
+};
+// Token-mode unlock form. The token is kept in session storage by useApi and
+// never rendered, put in a URL or kept in reactive state after submit.
+import { button, errorPanel, field, input } from "../ui.js";
+import { useTask } from "../composables/useTask.js";
+
+const { h, reactive } = window.Vue;
+
+export const Unlock = {
+  props: { ctx: { type: Object, required: true }, onUnlocked: Function },
+  setup(props) {
+    const form = reactive({ token: "" });
+    const task = useTask();
+    function submit(event) {
+      event.preventDefault();
+      void task.run(async () => {
+        const value = form.token; form.token = "";
+        props.ctx.api.unlock(value);
+        await props.onUnlocked();
+      });
+    }
+    return () => h("form", { class: "panel narrow", onSubmit: submit }, [
+      h("h1", "Unlock patchbot"),
+      h("p", "Enter PATCHBOT_UI_TOKEN once for this tab. It is kept only in session storage."),
+      task.state.error ? errorPanel(task.state.error) : null,
+      field("UI token", input(form, "token", { type: "password", required: true, autocomplete: "off", autofocus: true })),
+      button("Unlock", null, { type: "submit", kind: "primary", disabled: task.state.busy })
+    ]);
+  }
+};
+// Structured spec editor. Saving creates a new version and clears approval.
+import { area, button, field, input } from "../ui.js";
+
+const { h } = window.Vue;
+const lists = [["acceptance_criteria", "Acceptance criteria"], ["risks", "Risks"], ["test_plan", "Test plan"], ["open_questions", "Open questions"]];
+
+export function newEditor(spec) {
+  const e = { summary: spec.summary, files: spec.files.map(f => ({ ...f })) };
+  for (const [key] of lists) e[key] = spec[key].join("\n");
+  return e;
+}
+
+export const SpecEditor = {
+  props: { editor: Object, busy: Boolean, canEdit: Boolean, onSave: Function, onDiscard: Function },
+  setup(props) {
+    return () => {
+      const e = props.editor;
+      return h("form", { class: "editor", onSubmit: event => { event.preventDefault(); props.onSave(); } }, [
+        h("h3", "Edit specification"),
+        field("Summary", area(e, "summary", { required: true })),
+        ...lists.map(([key, label]) => field(label + " (one per line)", area(e, key))),
+        h("fieldset", [h("legend", "Files likely to change"), ...e.files.map((file, index) => h("div", { class: "file-row", key: index }, [
+          field("Path", input(file, "path", { required: true })), field("Change", input(file, "change", { required: true })),
+          button(`Remove file ${index + 1}`, () => e.files.splice(index, 1), { disabled: props.busy || !props.canEdit })
+        ])), button("Add file", () => e.files.push({ path: "", change: "" }), { disabled: props.busy || !props.canEdit })]),
+        h("div", { class: "actions" }, [
+          button("Save new version", null, { type: "submit", kind: "primary", disabled: props.busy || !props.canEdit }),
+          button("Discard edit", props.onDiscard, { disabled: props.busy })
+        ])
+      ]);
+    };
+  }
+};
+// The Spec tab: structured view (criteria checklist, files, risks, test plan),
+// version picker, version diff and the editor. Everything is text; the full
+// plain text stays available because the structured view is a convenience.
+import { decodeSpec, lineDiff, shortHash, specText } from "../format.js";
+import { block, button, empty, field, icon, panel, select } from "../ui.js";
+import { SpecEditor } from "./SpecEditor.js";
+
+const { h, reactive } = window.Vue;
+
+const list = (title, items, mark) => items.length ? h("section", { class: "spec-sec" }, [h("h3", title),
+  h("ul", { class: mark ? "checks" : "plain" }, items.map((item, i) => h("li", { key: i }, [mark ? icon("check-circle", 16) : null, h("span", item)])))]) : null;
+
+export const SpecView = {
+  props: { d: Object, editor: Object, busy: Boolean, canEdit: Boolean, onEdit: Function, onSave: Function, onDiscard: Function },
+  setup(props) {
+    const local = reactive({ version: "", compare: "" });
+    return () => {
+      const d = props.d, versions = d.spec_versions || [];
+      if (!d.latest_spec) return panel("Specification", [empty("No specification yet.", "It appears here once the refine step finishes.")]);
+      const current = versions.find(v => String(v.version) === local.version) || d.latest_spec;
+      const previous = versions.find(v => String(v.version) === local.compare) || versions[Math.max(0, versions.indexOf(current) - 1)] || current;
+      const options = versions.map(v => [String(v.version), `Version ${v.version} · ${v.source} · ${v.created_at}`]);
+      const spec = decodeSpec(current);
+      return panel("Specification", [
+        h("p", { class: "meta" }, ["Version ", h("strong", String(current.version)), " · SHA-256 ", h("span", { class: "mono", title: current.hash }, shortHash(current.hash)),
+          current.version === d.latest_spec.version ? " · latest" : " · older version"]),
+        spec ? h("div", { class: "spec-structured" }, [
+          h("section", { class: "spec-sec" }, [h("h3", "Summary"), h("p", { class: "pre" }, spec.summary)]),
+          list("Acceptance criteria", spec.acceptance_criteria, true),
+          spec.files.length ? h("section", { class: "spec-sec" }, [h("h3", "Files likely to change"), h("ul", { class: "plain" }, spec.files.map((f, i) =>
+            h("li", { key: i }, [h("span", { class: "mono" }, f.path), " — ", f.change])))]) : null,
+          list("Risks", spec.risks), list("Test plan", spec.test_plan), list("Open questions", spec.open_questions)
+        ]) : null,
+        h("details", { open: !spec }, [h("summary", spec ? "Full specification text" : "Specification text"), block(specText(current), "Specification text")]),
+        h("p", { class: "muted small" }, "Specifications are displayed as plain text. HTML and links are never executed."),
+        versions.length > 1 ? h("div", { class: "filters" }, [
+          field("View version", select(local, "version", [["", "Latest version"], ...options])),
+          field("Compare against", select(local, "compare", [["", "Previous version"], ...options]))
+        ]) : null,
+        versions.length > 1 ? h("details", [h("summary", `Changes from version ${previous.version} to ${current.version}`), block(lineDiff(specText(previous), specText(current)), "Version diff")]) : null,
+        props.editor ? h(SpecEditor, { editor: props.editor, busy: props.busy, canEdit: props.canEdit, onSave: props.onSave, onDiscard: props.onDiscard })
+          : button("Edit latest specification", props.onEdit, { disabled: props.busy || !props.canEdit })
+      ]);
+    };
+  }
+};
+// Sticky Approve / Revise / Reject bar plus Cancel and Retry. Buttons show by
+// the API's capabilities; the server still decides whether an action is valid.
+import { shortHash } from "../format.js";
+import { area, button, field } from "../ui.js";
+import { modelFields } from "./ModelFields.js";
+
+const { h } = window.Vue;
+
+export const ActionBar = {
+  props: { d: Object, s: Object, busy: Boolean, providers: Object, onApprove: Function, onReject: Function, onCancel: Function, onRevise: Function, onRetry: Function },
+  setup(props) {
+    return () => {
+      const { d, s, busy } = props, can = d.capabilities || {};
+      const spec = d.latest_spec;
+      const stop = busy || !!s.editor;
+      if (!["approve", "revise", "reject", "cancel", "retry"].some(k => can["can_" + k])) return null;
+      return h("div", { class: "actionbar", role: "region", "aria-label": "Run actions" }, [
+        s.reviseOpen && can.can_revise ? h("form", { class: "revise", onSubmit: event => { event.preventDefault(); props.onRevise(); } }, [
+          field("Revision notes (what should change?)", area(s, "notes", { id: "revise-notes", required: true, rows: 3 })),
+          h("div", { class: "actions" }, [button("Send revision", null, { type: "submit", kind: "primary", disabled: stop || !s.notes.trim() }),
+            button("Close", () => { s.reviseOpen = false; })])
+        ]) : null,
+        s.retryOpen && can.can_retry ? h("form", { class: "revise", onSubmit: event => { event.preventDefault(); props.onRetry(); } }, [
+          h("h3", "Retry with a new run"), ...modelFields(props.providers),
+          h("div", { class: "actions" }, [button("Start retry", null, { type: "submit", kind: "primary", disabled: busy }), button("Close", () => { s.retryOpen = false; })])
+        ]) : null,
+        h("div", { class: "actions bar" }, [
+          can.can_approve && spec ? button(`Approve v${spec.version} · ${shortHash(spec.hash)}`, props.onApprove, { kind: "primary", icon: "check", disabled: stop, title: "Approves exactly this version (a)" }) : null,
+          can.can_revise ? button("Revise", () => { s.reviseOpen = !s.reviseOpen; if (s.reviseOpen) s.retryOpen = false; }, { disabled: stop, pressed: s.reviseOpen, title: "Ask for changes (r)" }) : null,
+          can.can_reject ? button("Reject", props.onReject, { kind: "danger", disabled: stop }) : null,
+          can.can_cancel ? button("Cancel run", props.onCancel, { kind: "danger quiet", disabled: busy }) : null,
+          can.can_retry ? button("Retry…", () => { s.retryOpen = !s.retryOpen; if (s.retryOpen) s.reviseOpen = false; }, { disabled: busy, pressed: s.retryOpen }) : null
+        ])
+      ]);
+    };
+  }
+};
+// Pure helpers: no DOM access, no Vue. Everything here returns plain strings,
+// numbers or plain objects so it can be unit-tested and so untrusted text is
+// only ever handed to the renderer as text.
+
+export const active = ["queued", "running", "awaiting_approval", "needs_info", "approved"];
+export const statuses = [...active, "succeeded", "failed", "cancelled", "rejected"];
+
+// One mapping for every status chip: icon + text + colour class.
+export const statusMeta = {
+  awaiting_approval: { icon: "clock", label: "Awaiting approval" },
+  needs_info: { icon: "question", label: "Needs info" },
+  queued: { icon: "dots", label: "Queued" },
+  running: { icon: "spinner", label: "Running" },
+  approved: { icon: "check", label: "Approved" },
+  succeeded: { icon: "check-circle", label: "Succeeded" },
+  failed: { icon: "x-circle", label: "Failed" },
+  rejected: { icon: "ban", label: "Rejected" },
+  cancelled: { icon: "stop", label: "Cancelled" }
+};
+
+export const text = value => value == null ? "unknown" : String(value);
+export const money = value => value == null ? "unknown" : `$${(value / 1000000).toFixed(4)}`;
+export const human = value => String(value || "pending").replaceAll("_", " ");
+export const lines = value => String(value || "").split("\n").map(line => line.trim()).filter(Boolean);
+export const shortHash = hash => String(hash || "").slice(0, 9);
+export const count = value => value == null ? "unknown" : Number(value).toLocaleString("en-US");
+
+// Escape every rune a lesson may not contain (format, bidi, tag, private-use,
+// separators, controls other than newline/tab) so nothing hides from review.
+const printable = /[\p{L}\p{M}\p{N}\p{P}\p{S} \n\t]/u;
+export const visible = value => Array.from(String(value ?? ""), c => printable.test(c) ? c
+  : String.fromCharCode(92) + "u{" + c.codePointAt(0).toString(16).toUpperCase() + "}").join("");
+
+// linkHref returns a normalised http(s) URL or "" for anything else.
+export function linkHref(url) {
+  try {
+    const parsed = new URL(url);
+    if (["http:", "https:"].includes(parsed.protocol)) return parsed.href;
+  } catch { /* An invalid external link stays text. */ }
+  return "";
+}
+
+// runHref builds an in-app run URL from an integer ID only.
+export const runHref = id => Number.isSafeInteger(id) && id > 0 ? `/runs/${id}` : "/runs";
+
+export const specText = spec => (spec?.body_md || "").replace(/\n<!-- patchbot:spec-data [A-Za-z0-9+/=]+ -->\n$/, "");
+
+// decodeSpec recovers the structured fields hidden in the spec marker, or null.
+export function decodeSpec(spec) {
+  const match = (spec?.body_md || "").match(/\n<!-- patchbot:spec-data ([A-Za-z0-9+/=]+) -->\n$/);
+  if (!match) return null;
+  try {
+    const data = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(match[1]), c => c.charCodeAt(0))));
+    const list = value => Array.isArray(value) ? value.map(String) : [];
+    return {
+      summary: String(data.summary || ""), acceptance_criteria: list(data.acceptance_criteria), risks: list(data.risks),
+      test_plan: list(data.test_plan), open_questions: list(data.open_questions),
+      files: Array.isArray(data.files) ? data.files.map(f => ({ path: String(f?.path || ""), change: String(f?.change || "") })) : []
+    };
+  } catch { return null; }
+}
+
+// A linear replacement diff: common prefix/suffix stay as context; changed
+// lines are shown in full. No quadratic work on model-generated documents.
+export function lineDiff(before, after) {
+  const a = before.split("\n"), b = after.split("\n");
+  let start = 0, end = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start++;
+  while (end < a.length - start && end < b.length - start && a[a.length - end - 1] === b[b.length - end - 1]) end++;
+  if (start === a.length && start === b.length) return "No changes.";
+  return [
+    ...a.slice(Math.max(0, start - 3), start).map(line => "  " + line),
+    ...a.slice(start, a.length - end).map(line => "- " + line),
+    ...b.slice(start, b.length - end).map(line => "+ " + line),
+    ...b.slice(b.length - end, b.length - end + 3).map(line => "  " + line)
+  ].join("\n");
+}
+
+// parseDiff splits a unified diff into files with typed lines, in linear time.
+// Unrecognised input still yields one "(diff)" file so nothing is dropped.
+export function parseDiff(raw) {
+  const files = [];
+  let file = null;
+  const open = path => { file = { path, adds: 0, dels: 0, lines: [] }; files.push(file); };
+  for (const line of String(raw || "").split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      open(line.replace(/^diff --git a\/(.*) b\/.*$/, "$1"));
+      file.lines.push({ kind: "meta", text: line });
+      continue;
+    }
+    if (!file) open("(diff)");
+    let kind = "ctx";
+    if (/^(\+\+\+|---|index |new file|deleted file|similarity|rename |old mode|new mode|Binary)/.test(line)) kind = "meta";
+    else if (line.startsWith("@@")) kind = "hunk";
+    else if (line.startsWith("+")) { kind = "add"; file.adds++; }
+    else if (line.startsWith("-")) { kind = "del"; file.dels++; }
+    file.lines.push({ kind, text: line });
+  }
+  return files;
+}
+
+// Phase stepper: Refine, Approval, Code, Tests, Review, PR. The state of each
+// step comes only from the run status/phase the API reports.
+export const stepperPhases = ["Refine", "Approval", "Code", "Tests", "Review", "PR"];
+const phaseToStep = { preflight: 0, refine: 0, clone: 2, baseline: 3, code: 2, verify: 3, review: 4, publish: 5 };
+
+export function stepperState(run) {
+  const waiting = run.status === "awaiting_approval" || run.status === "needs_info";
+  let current = waiting ? 1 : (phaseToStep[run.phase] ?? 0);
+  if (run.status === "approved") current = 1;
+  if (run.status === "queued") current = 0;
+  const done = run.status === "succeeded";
+  const failed = ["failed", "rejected", "cancelled"].includes(run.status);
+  return stepperPhases.map((label, index) => {
+    let state = "todo";
+    if (done || index < current) state = "done";
+    else if (index === current) state = failed ? (run.status === "failed" ? "failed" : "stopped") : "current";
+    return { label, state };
+  });
+}
+
+const failureText = {
+  expired: ["The approval wait expired.", "Retry the run to produce a fresh specification."],
+  interrupted: ["patchbot restarted while this run was working.", "Retry the run; nothing was published."],
+  budget_exhausted: ["The run used up its cost budget.", "Retry with a larger budget."],
+  review_failed: ["The independent reviewer asked for changes.", "Read the review in the Changes tab, then revise or retry."],
+  review_stale: ["The code changed after it was reviewed.", "Retry the run so the review matches the final diff."],
+  provider_auth: ["The model provider rejected the API key.", "Fix the provider key in the server config, then retry."],
+  rate_limit: ["The model provider is rate limiting requests.", "Wait a few minutes and retry."],
+  tests_failed: ["The tests did not pass.", "Open the Changes tab to read the test output, then revise or retry."]
+};
+
+// failureInfo explains a failed/stopped run in plain language, or returns null.
+export function failureInfo(run) {
+  if (run.status === "rejected") return { title: "You rejected this specification.", next: "Retry to start over with a new specification.", detail: "" };
+  if (run.status === "cancelled") return { title: "This run was cancelled.", next: "Retry to start a new run.", detail: "" };
+  if (run.status !== "failed" && !run.error_kind) return null;
+  const known = failureText[run.error_kind];
+  return {
+    title: known ? known[0] : "The run stopped with an error.",
+    next: known ? known[1] : "Read the details below, then retry or revise.",
+    detail: [run.error_kind, run.error_message].filter(Boolean).join(": ")
+  };
+}
+
+export function duration(run, now = Date.now()) {
+  if (!run.started_at) return null;
+  const end = run.finished_at ? Date.parse(run.finished_at) : now;
+  const ms = end - Date.parse(run.started_at);
+  return Number.isFinite(ms) && ms >= 0 ? ms : null;
+}
+
+export function formatMs(ms) {
+  if (ms == null) return "unknown";
+  const total = Math.round(ms / 1000);
+  const minutes = Math.floor(total / 60);
+  return minutes ? `${minutes}m ${total % 60}s` : `${total}s`;
+}
+
+// budgetLimits reads the frozen per-run limits (Go field names, no JSON tags);
+// anything missing or non-positive is null, shown as "unknown".
+export function budgetLimits(run) {
+  const l = run.limits_json && typeof run.limits_json === "object" ? run.limits_json : {};
+  const a = l.Agent && typeof l.Agent === "object" ? l.Agent : {};
+  const pos = value => Number.isFinite(value) && value > 0 ? value : null;
+  return { cost: pos(a.MaxCostMicros), tokens: pos(a.MaxTotalTokens), ms: pos(l.Timeout) == null ? null : l.Timeout / 1e6 };
+}
+
+// eventInfo labels a log event by turn, else phase, else type. Payloads are
+// untrusted: only plain scalar fields are read.
+export function eventInfo(event) {
+  let payload = null;
+  try { payload = JSON.parse(event.output); } catch { /* Malformed data is shown as text. */ }
+  const p = payload && typeof payload === "object" ? payload : {};
+  const turn = Number.isSafeInteger(p.turn) ? p.turn : null;
+  const phase = typeof p.phase === "string" ? p.phase : (event.type === "run.status" && typeof p.status === "string" ? p.status : "");
+  const failing = p.ok === false || ["failed", "error"].includes(p.status) || (Number.isFinite(p.exit_code) && p.exit_code !== 0) || /\b(FAIL|panic:)\b/.test(event.output);
+  return { group: turn != null ? `Turn ${turn}` : phase ? human(phase) : "Events", failing };
+}
+
+export function groupEvents(events) {
+  const groups = [];
+  for (const event of events) {
+    const info = eventInfo(event);
+    let group = groups[groups.length - 1];
+    if (!group || group.label !== info.group) { group = { label: info.group, items: [] }; groups.push(group); }
+    group.items.push({ ...event, failing: info.failing });
+  }
+  return groups;
+}
+internal/web/assets/setup.js:7:    try { token = sessionStorage.getItem(storageKey) || ""; } catch { /* no storage: unauthenticated mode only */ }
+internal/web/assets/setup.js:8:    return token ? { ...extra, Authorization: "Bearer " + token } : extra;
+internal/web/assets/components/SpecView.js:10:const list = (title, items, mark) => items.length ? h("section", { class: "spec-sec" }, [h("h3", title),
+internal/web/assets/components/SpecView.js:11:  h("ul", { class: mark ? "checks" : "plain" }, items.map((item, i) => h("li", { key: i }, [mark ? icon("check-circle", 16) : null, h("span", item)])))]) : null;
+internal/web/assets/components/SpecView.js:25:        h("p", { class: "meta" }, ["Version ", h("strong", String(current.version)), " · SHA-256 ", h("span", { class: "mono", title: current.hash }, shortHash(current.hash)),
+internal/web/assets/components/SpecView.js:27:        spec ? h("div", { class: "spec-structured" }, [
+internal/web/assets/components/SpecView.js:28:          h("section", { class: "spec-sec" }, [h("h3", "Summary"), h("p", { class: "pre" }, spec.summary)]),
+internal/web/assets/components/SpecView.js:30:          spec.files.length ? h("section", { class: "spec-sec" }, [h("h3", "Files likely to change"), h("ul", { class: "plain" }, spec.files.map((f, i) =>
+internal/web/assets/components/SpecView.js:31:            h("li", { key: i }, [h("span", { class: "mono" }, f.path), " — ", f.change])))]) : null,
+internal/web/assets/components/SpecView.js:35:        h("p", { class: "muted small" }, "Specifications are displayed as plain text. HTML and links are never executed."),
+internal/web/assets/components/SpecView.js:36:        versions.length > 1 ? h("div", { class: "filters" }, [
+internal/web/assets/components/SpecView.js:37:          field("View version", select(local, "version", [["", "Latest version"], ...options])),
+internal/web/assets/components/SpecView.js:38:          field("Compare against", select(local, "compare", [["", "Previous version"], ...options]))
+internal/web/assets/components/App.js:28:      "g i": () => location.assign("/"), "g r": () => location.assign("/runs"), "g n": () => location.assign("/runs/new"), "?": ctx.openHelp
+internal/web/assets/components/App.js:46:      return h("div", { class: "frame" }, [
+internal/web/assets/components/Toast.js:9:    return () => h("div", { class: "toasts", role: "status", "aria-live": "polite" }, props.toast.state.items.map(item =>
+internal/web/assets/components/Toast.js:10:      h("div", { class: "toast " + item.kind, key: item.id }, [
+internal/web/assets/components/Toast.js:12:        h("button", { type: "button", class: "btn quiet", "aria-label": "Dismiss message", onClick: () => props.toast.dismiss(item.id) }, "×")
+internal/web/assets/components/ChangesView.js:16:      ...artifacts.filter(a => ["pr_title", "pr_body"].includes(a.kind)).map(a => h("div", { key: a.kind }, [h("h3", human(a.kind)), block(a.content, human(a.kind))]))
+internal/web/assets/components/ChangesView.js:21:      ...tests.map(a => h("details", { key: a.kind + a.attempt, open: a.kind === "test_output" && run.tests_status === "failed" },
+internal/web/assets/components/ChangesView.js:25:      h("p", { class: "muted" }, "Advisory reviewer verdicts, each bound to the approved spec hash and the reviewed diff hash. A review never replaces approval or harness tests."),
+internal/web/assets/components/ChangesView.js:26:      ...(d.reviews || []).map(r => h("p", { key: r.id }, [chip(r.verdict), ` round ${r.round} · ${r.provider} / ${r.model}${r.reason ? " · " + r.reason : ""} · diff ${String(r.diff_hash).slice(0, 12)}`])),
+internal/web/assets/components/ChangesView.js:27:      ...artifacts.filter(a => a.kind === "review").map(a => h("details", { key: "r" + a.attempt }, [h("summary", `Review round ${a.attempt}`), block(a.content, "Review")]))
+internal/web/assets/components/ConfirmDialog.js:2:// and for Approve. The caller awaits ctx.confirm.ask(...).
+internal/web/assets/components/ConfirmDialog.js:17:        s.details.length ? h("dl", { class: "facts" }, s.details.flatMap(([k, v]) => [h("dt", k), h("dd", { class: "mono" }, v)])) : null,
+internal/web/assets/components/ConfirmDialog.js:18:        h("div", { class: "actions" }, [
+internal/web/assets/components/ConfirmDialog.js:20:          h("button", { type: "button", class: "btn", "data-autofocus": "", onClick: () => c.answer(false) }, "Keep it as is")
+internal/web/assets/components/Tabs.js:14:  return h("div", { class: "tabs", role: "tablist", "aria-label": label }, tabs.map((tab, index) => h("button", {
+internal/web/assets/components/Tabs.js:15:    type: "button", role: "tab", id: "tab-" + tab.id, key: tab.id, class: "tab", "aria-selected": String(tab.id === current),
+internal/web/assets/components/Tabs.js:20:export const tabPanel = (id, children) => h("div", { role: "tabpanel", id: "panel-" + id, "aria-labelledby": "tab-" + id, tabindex: 0, class: "tabpanel" }, children);
+internal/web/assets/components/PhaseStepper.js:12:  return h("section", { class: "stepper-wrap", "aria-label": "Progress" }, [
+internal/web/assets/components/PhaseStepper.js:13:    h("ol", { class: "stepper" }, stepperState(run).map(step => h("li", { class: "step " + step.state, key: step.label, "aria-current": step.state === "current" ? "step" : undefined }, [
+internal/web/assets/components/PhaseStepper.js:14:      h("span", { class: "dot" }, step.state === "todo" ? null : icon(marks[step.state], 14)),
+internal/web/assets/components/PhaseStepper.js:15:      h("span", { class: "step-label" }, step.label),
+internal/web/assets/components/PhaseStepper.js:16:      h("span", { class: "sr-only" }, ", " + words[step.state])
+internal/web/assets/components/PhaseStepper.js:18:    failure ? h("div", { class: "alert", role: "alert" }, [icon("warn", 16), h("div", [
+internal/web/assets/components/PhaseStepper.js:21:      failure.detail ? h("p", { class: "mono small" }, failure.detail) : null
+internal/web/assets/components/NewRequest.js:27:    const go = run => { location.assign(runHref(run.id)); };
+internal/web/assets/components/NewRequest.js:36:        go((await api.send("/api/runs", { repo: form.repo, issue, ...modelBody() })).run);
+internal/web/assets/components/NewRequest.js:50:        try { result = await api.send("/api/issues", { ...payload, idempotency_key: draft.key }); }
+internal/web/assets/components/NewRequest.js:63:      return h("form", { class: "panel", onSubmit: startRun }, [
+internal/web/assets/components/NewRequest.js:66:        ...modelFields(providers, true), budget(), checkbox(form, "dry", "Dry run — produce artifacts without publishing"), submit("Start run", !form.provider)
+internal/web/assets/components/NewRequest.js:71:      return h("form", { class: "panel", onSubmit: submitIssue }, [
+internal/web/assets/components/NewRequest.js:76:        ...(draft.start ? [field("Mode", select(form, "mode", ["fix", "refine"].map(m => [m, m]))), ...modelFields(providers, true), budget(),
+internal/web/assets/components/NewRequest.js:84:      h("div", { class: "actions", role: "group", "aria-label": "Request type" }, [
+internal/web/assets/components/BudgetMeters.js:11:  return h("section", { class: "panel", "aria-label": "Budget" }, [
+internal/web/assets/components/BudgetMeters.js:13:    h("div", { class: "meters" }, [
+internal/web/assets/components/BudgetMeters.js:18:    h("p", { class: "muted small" }, `Input ${count(run.input_tokens)} · output ${count(run.output_tokens)} · cache read ${count(run.cache_read_tokens)} · cache write ${count(run.cache_write_tokens)}`)
+internal/web/assets/components/RunCard.js:19:  return h("li", { key: run.id, class: "card" }, [
+internal/web/assets/components/RunCard.js:20:    h("div", { class: "card-head" }, [
+internal/web/assets/components/RunCard.js:21:      h("h3", h("a", { href: runHref(run.id) }, `${run.repo} #${run.issue_number}`)),
+internal/web/assets/components/RunCard.js:24:    h("p", { class: "card-title" }, run.issue_title || "(untitled)"),
+internal/web/assets/components/RunCard.js:25:    h("p", { class: "meta" }, [
+internal/web/assets/components/RunCard.js:29:    hint ? h("p", { class: "hint" }, [icon("clock", 14), hint]) : null,
+internal/web/assets/components/Inbox.js:30:      const list = (runs, hint) => h("ul", { class: "cards" }, runs.map(run => runCard(run, hint)));
+internal/web/assets/components/Inbox.js:36:          h("p", h("a", { class: "btn primary", href: "/runs/new" }, [icon("plus", 16), "Write a new request"]))) : null,
+internal/web/assets/components/Inbox.js:42:        s.ready ? h("p", h("a", { href: "/runs" }, "See all runs")) : null
+internal/web/assets/components/Modal.js:5:const focusable = 'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+internal/web/assets/components/Modal.js:25:      const items = [...root.value.querySelectorAll(focusable)];
+internal/web/assets/components/Modal.js:31:    return () => h("div", { class: "backdrop", onClick: event => { if (event.target === event.currentTarget) emit("close"); } },
+internal/web/assets/components/Modal.js:32:      h("div", { ref: root, class: "modal", role: "dialog", "aria-modal": "true", "aria-label": props.label, tabindex: -1, onKeydown }, slots.default()));
+internal/web/assets/components/RunDetail.js:24:    const hashTab = location.hash.slice(1);
+internal/web/assets/components/RunDetail.js:38:          return { ...a, key, content };
+internal/web/assets/components/RunDetail.js:54:    const navigate = run => { location.assign(runHref(run.id)); };
+internal/web/assets/components/RunDetail.js:62:        if (name === "retry") { navigate(result.run); return; }
+internal/web/assets/components/RunDetail.js:128:      return h("div", { class: "detail" }, [
+internal/web/assets/components/RunDetail.js:129:        h("p", { class: "crumbs" }, [h("a", { href: "/runs" }, "Runs"), " / ", `${run.repo} #${run.issue_number}`]),
+internal/web/assets/components/RunDetail.js:130:        h("h1", `${run.repo} #${run.issue_number}`), h("p", { class: "lead" }, run.issue_title),
+internal/web/assets/components/RunDetail.js:131:        h("div", { class: "actions" }, [chip(run.status), run.dry_run ? h("span", { class: "tag" }, "Dry run") : null, run.prurl ? link(run.prurl, "Open pull request") : null]),
+internal/web/assets/components/RunDetail.js:132:        h("p", { class: "meta" }, `run ${run.id} · ${run.mode} · ${run.provider} · refine: ${run.refine_model} · code: ${run.code_model}`),
+internal/web/assets/components/RunDetail.js:133:        run.retry_of ? h("p", ["Retry of ", h("a", { href: runHref(run.retry_of) }, `run ${run.retry_of}`)]) : null,
+internal/web/assets/components/RunDetail.js:134:        d.dashboard_issue ? h("p", { class: "meta" }, `Requested from the dashboard by ${d.dashboard_issue.requested_by}`) : null,
+internal/web/assets/components/ActionBar.js:17:      return h("div", { class: "actionbar", role: "region", "aria-label": "Run actions" }, [
+internal/web/assets/components/ActionBar.js:18:        s.reviseOpen && can.can_revise ? h("form", { class: "revise", onSubmit: event => { event.preventDefault(); props.onRevise(); } }, [
+internal/web/assets/components/ActionBar.js:20:          h("div", { class: "actions" }, [button("Send revision", null, { type: "submit", kind: "primary", disabled: stop || !s.notes.trim() }),
+internal/web/assets/components/ActionBar.js:23:        s.retryOpen && can.can_retry ? h("form", { class: "revise", onSubmit: event => { event.preventDefault(); props.onRetry(); } }, [
+internal/web/assets/components/ActionBar.js:24:          h("h3", "Retry with a new run"), ...modelFields(props.providers),
+internal/web/assets/components/ActionBar.js:25:          h("div", { class: "actions" }, [button("Start retry", null, { type: "submit", kind: "primary", disabled: busy }), button("Close", () => { s.retryOpen = false; })])
+internal/web/assets/components/ActionBar.js:27:        h("div", { class: "actions bar" }, [
+internal/web/assets/components/ModelFields.js:12:    state.warning ? h("p", { class: "warning", role: "status" }, state.warning) : null,
+internal/web/assets/components/DiffView.js:17:      return h("div", { class: "diff" }, [
+internal/web/assets/components/DiffView.js:18:        files.length > 1 ? h("ul", { class: "filetree", "aria-label": "Changed files" }, files.map(f => h("li", { key: f.path }, [
+internal/web/assets/components/DiffView.js:19:          h("span", { class: "mono" }, f.path), h("span", { class: "add" }, ` +${f.adds}`), h("span", { class: "del" }, ` -${f.dels}`)]))) : null,
+internal/web/assets/components/DiffView.js:20:        h("div", { class: "output diff-lines mono", tabindex: 0, role: "region", "aria-label": "Diff" }, files.flatMap(f => {
+internal/web/assets/components/DiffView.js:23:          return shown.map((line, i) => h("div", { class: "dl " + line.kind, key: f.path + i }, line.text || " "));
+internal/web/assets/components/RepoCard.js:11:  return h("li", { key: r.name, class: "card" }, [
+internal/web/assets/components/RepoCard.js:12:    h("div", { class: "card-head" }, [h("h3", r.name), h("span", { class: "tag" }, dashboard ? "dashboard · v" + r.version : "config file (read-only)")]),
+internal/web/assets/components/RepoCard.js:13:    h("dl", { class: "facts" }, [
+internal/web/assets/components/RepoCard.js:16:      h("dt", "Protected"), h("dd", { class: "mono" }, [...(r.builtin_protected || []), ...(r.settings.protected || [])].join(", ")),
+internal/web/assets/components/RepoCard.js:17:      r.settings.image ? h("dt", "Image") : null, r.settings.image ? h("dd", { class: "mono" }, r.settings.image) : null,
+internal/web/assets/components/RepoCard.js:20:    h("div", { class: "actions" }, [
+internal/web/assets/format.js:6:export const statuses = [...active, "succeeded", "failed", "cancelled", "rejected"];
+internal/web/assets/format.js:38:    if (["http:", "https:"].includes(parsed.protocol)) return parsed.href;
+internal/web/assets/format.js:72:    ...a.slice(Math.max(0, start - 3), start).map(line => "  " + line),
+internal/web/assets/format.js:73:    ...a.slice(start, a.length - end).map(line => "- " + line),
+internal/web/assets/format.js:74:    ...b.slice(start, b.length - end).map(line => "+ " + line),
+internal/web/assets/format.js:75:    ...b.slice(b.length - end, b.length - end + 3).map(line => "  " + line)
+internal/web/assets/format.js:187:    group.items.push({ ...event, failing: info.failing });
+internal/web/assets/components/SpecEditor.js:8:  const e = { summary: spec.summary, files: spec.files.map(f => ({ ...f })) };
+internal/web/assets/components/SpecEditor.js:18:      return h("form", { class: "editor", onSubmit: event => { event.preventDefault(); props.onSave(); } }, [
+internal/web/assets/components/SpecEditor.js:21:        ...lists.map(([key, label]) => field(label + " (one per line)", area(e, key))),
+internal/web/assets/components/SpecEditor.js:22:        h("fieldset", [h("legend", "Files likely to change"), ...e.files.map((file, index) => h("div", { class: "file-row", key: index }, [
+internal/web/assets/components/SpecEditor.js:26:        h("div", { class: "actions" }, [
+internal/web/assets/components/Unlock.js:21:    return () => h("form", { class: "panel narrow", onSubmit: submit }, [
+internal/web/assets/composables/useTheme.js:2:// convenience kept in localStorage, and the page works without it.
+internal/web/assets/composables/useTheme.js:10:    const saved = localStorage.getItem(key);
+internal/web/assets/composables/useTheme.js:19:    try { localStorage.setItem(key, state.theme); } catch { /* Not persisted. */ }
+internal/web/assets/composables/useApi.js:2:// sessionStorage and a closure; in Access mode there is no credential at all.
+internal/web/assets/composables/useApi.js:8:  try { token = sessionStorage.getItem(storageKey) || ""; } catch { /* The unlock form explains storage failures. */ }
+internal/web/assets/composables/useApi.js:12:  const headers = (extra = {}) => token ? { ...extra, Authorization: "Bearer " + token } : extra;
+internal/web/assets/composables/useApi.js:16:    try { sessionStorage.removeItem(storageKey); } catch { /* No persistent fallback. */ }
+internal/web/assets/composables/useApi.js:25:    try { sessionStorage.setItem(storageKey, candidate); }
+internal/web/assets/composables/useApi.js:32:    const response = await fetch(path, { ...options, credentials: "same-origin", headers: headers(options.headers) });
+internal/web/assets/ui.js:34:    class: "icon", width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor",
+internal/web/assets/ui.js:41:  return h("span", { class: "chip s-" + (meta ? status : "unknown") }, [icon(meta ? meta.icon : "dots", 14), meta ? meta.label : human(status)]);
+internal/web/assets/ui.js:47:    type, class: "btn" + (kind ? " " + kind : ""), onClick: click, disabled, title, "aria-label": ariaLabel,
+internal/web/assets/ui.js:52:export const field = (label, control, hint) => h("label", { class: "field" }, [h("span", label), control, hint ? h("small", hint) : null]);
+internal/web/assets/ui.js:54:  ...attributes, value: object[key], onInput: event => { object[key] = event.target.value; }
+internal/web/assets/ui.js:57:  rows: 4, ...attributes, value: object[key], onInput: event => { object[key] = event.target.value; }
+internal/web/assets/ui.js:62:export const checkbox = (object, key, label) => h("label", { class: "check" }, [
+internal/web/assets/ui.js:65:export const panel = (title, children, attributes = {}) => h("section", { class: "panel", ...attributes }, [title ? h("h2", title) : null, ...children]);
+internal/web/assets/ui.js:68:export const block = (value, label) => h("pre", { class: "output", tabindex: 0, "aria-label": label }, text(value));
+internal/web/assets/ui.js:72:  const href = linkHref(url);
+internal/web/assets/ui.js:73:  return href ? h("a", { href, target: "_blank", rel: "noopener noreferrer" }, [label, icon("external", 12)]) : h("span", label);
+internal/web/assets/ui.js:76:export const loading = (label = "Loading…") => h("p", { class: "state", role: "status" }, [icon("spinner", 16), label]);
+internal/web/assets/ui.js:77:export const empty = (title, next, action) => h("div", { class: "state empty" }, [h("p", h("strong", title)), next ? h("p", { class: "muted" }, next) : null, action || null]);
+internal/web/assets/ui.js:78:export const errorPanel = (message, retry) => h("div", { class: "alert", role: "alert" }, [
+internal/web/assets/ui.js:85:  return h("div", { class: "meter" }, [
+internal/web/assets/ui.js:86:    h("div", { class: "meter-head" }, [h("span", label), h("strong", show(used) + (limit != null ? " of " + show(limit) : " (limit unknown)"))]),
+internal/web/assets/ui.js:87:    known ? h("progress", { class: pct >= 90 ? "hot" : "", max: 100, value: pct, "aria-label": label + " used" }, pct + "%") : null
+internal/web/assets/components/RunList.js:15:    const query = new URLSearchParams(location.search);
+internal/web/assets/components/RunList.js:42:      h("form", { class: "filters", role: "search", onSubmit: event => { event.preventDefault(); clearTimeout(debounce); void go(""); } }, [
+internal/web/assets/components/RunList.js:43:        field("Repository", select(filters, "repo", [["", "All repositories"], ...s.repos.map(r => [r, r])], filtered)),
+internal/web/assets/components/RunList.js:45:        field("Status", select(filters, "status", [["", "All statuses"], ...statuses.map(v => [v, human(v)])], filtered))
+internal/web/assets/components/RunList.js:49:      s.ready && !s.runs.length ? empty("No runs match these filters.", "Clear a filter, or start a new request.", h("p", h("a", { class: "btn", href: "/runs/new" }, "New request"))) : null,
+internal/web/assets/components/RunList.js:50:      s.runs.length ? h("ul", { class: "cards" }, s.runs.map(run => runCard(run))) : null,
+internal/web/assets/components/RunList.js:51:      h("div", { class: "actions" }, [
+internal/web/assets/components/LogStream.js:18:      return h("section", { class: "panel", "aria-label": "Live log" }, [
+internal/web/assets/components/LogStream.js:19:        h("div", { class: "log-head" }, [
+internal/web/assets/components/LogStream.js:23:        h("p", { class: "muted small", role: "status" }, `${st.status} · last event ${st.lastID} · showing the latest 1,000 events`),
+internal/web/assets/components/LogStream.js:24:        groups.length ? h("div", { class: "events", ref: box, tabindex: 0, role: "region", "aria-label": "Run event log" }, groups.map((group, gi) =>
+internal/web/assets/components/LogStream.js:25:          h("section", { key: gi + group.label, class: "event-group" }, [
+internal/web/assets/components/LogStream.js:27:            h("ol", group.items.map(event => h("li", { key: event.id, class: event.failing ? "failing" : "" }, [
+internal/web/assets/components/LogStream.js:29:                h("summary", [event.failing ? icon("x-circle", 14) : null, h("span", { class: "mono" }, `${event.id} · ${event.type}`), event.failing ? h("strong", " failing") : null]),
+internal/web/assets/components/RepoEditor.js:20:    if (cut < 1) throw new Error("Write each command as: id: [\"program\", \"arg\", ...]");
+internal/web/assets/components/RepoEditor.js:39:  return h("form", { class: "panel", onSubmit: event => { event.preventDefault(); onSave(); } }, [
+internal/web/assets/components/RepoEditor.js:48:    h("div", { class: "actions" }, [button(e.mode === "add" ? "Add repository" : "Save changes", null, { type: "submit", kind: "primary", disabled: busy }), button("Cancel", onCancel)])
+internal/web/assets/components/Sidebar.js:8:  { href: "/", page: "inbox", label: "Inbox", icon: "inbox", badge: "inbox" },
+internal/web/assets/components/Sidebar.js:9:  { href: "/runs", page: "runs", label: "Runs", icon: "list", badge: "running" },
+internal/web/assets/components/Sidebar.js:10:  { href: "/runs/new", page: "new", label: "New request", icon: "plus" },
+internal/web/assets/components/Sidebar.js:11:  { href: "/repos", page: "repos", label: "Repositories", icon: "repo" },
+internal/web/assets/components/Sidebar.js:12:  { href: "/memory", page: "memory", label: "Memory", icon: "brain", badge: "memory" },
+internal/web/assets/components/Sidebar.js:13:  { href: "/setup/github", page: "github", label: "GitHub", icon: "github" }
+internal/web/assets/components/Sidebar.js:24:      return h("header", { class: "sidebar" }, [
+internal/web/assets/components/Sidebar.js:25:        h("div", { class: "brand-row" }, [
+internal/web/assets/components/Sidebar.js:26:          h("a", { class: "brand", href: "/" }, "patchbot"),
+internal/web/assets/components/Sidebar.js:27:          h("button", { type: "button", class: "btn quiet menu", "aria-expanded": String(local.open), "aria-controls": "site-nav", "aria-label": "Menu", onClick: () => { local.open = !local.open; } }, [icon("menu", 18)])
+internal/web/assets/components/Sidebar.js:29:        h("div", { class: "side-body" + (local.open ? " open" : "") }, [
+internal/web/assets/components/Sidebar.js:32:            return h("li", { key: item.page }, h("a", { href: item.href, class: "navlink", "aria-current": item.page === current ? "page" : undefined }, [
+internal/web/assets/components/Sidebar.js:34:              n ? h("span", { class: "count" + (item.badge === "inbox" ? " alert" : ""), "aria-label": `${n} ${item.badge === "inbox" ? "waiting for you" : item.badge === "running" ? "running" : "pending"}` }, String(n)) : null
+internal/web/assets/components/Sidebar.js:37:          h("div", { class: "side-foot" }, [
+internal/web/assets/components/Sidebar.js:38:            ctx.session.state.email ? h("p", { class: "whoami" }, ["Signed in as ", h("strong", ctx.session.state.email)]) : null,
+internal/web/assets/components/Sidebar.js:39:            h("div", { class: "actions" }, [
+internal/web/assets/components/MemoryView.js:52:      s.enabled ? null : h("p", { class: "warning", role: "status" }, "Memory is disabled: runs neither retrieve nor write memory."),
+internal/web/assets/components/MemoryView.js:54:      h("form", { class: "filters", onSubmit: event => { event.preventDefault(); void task.run(load); } }, [
+internal/web/assets/components/MemoryView.js:55:        field("Repository", select(filters, "repo", [["", "All repositories"], ...repoOptions()])),
+internal/web/assets/components/MemoryView.js:56:        field("Status", select(filters, "status", [["", "All statuses"], ...["pending", "approved", "active", "rejected", "revoked"].map(v => [v, v])])),
+internal/web/assets/components/MemoryView.js:61:      s.entries.length ? h("ul", { class: "cards" }, s.entries.map(e => h("li", { key: e.id, class: "card" }, [
+internal/web/assets/components/MemoryView.js:64:        h("p", { class: "muted small mono" }, `Content hash ${e.content_hash}`),
+internal/web/assets/components/MemoryView.js:65:        h("div", { class: "actions" }, [
+internal/web/assets/components/MemoryView.js:71:      h("form", { class: "panel", onSubmit: add }, [
+internal/web/assets/components/HelpDialog.js:16:      h("p", { class: "muted" }, "Shortcuts are ignored while you type in a field. a and r only work on a run that is waiting for you."),
+internal/web/assets/components/HelpDialog.js:17:      h("dl", { class: "facts" }, rows.flatMap(([k, v]) => [h("dt", h("kbd", k)), h("dd", v)])),
+internal/web/assets/components/HelpDialog.js:18:      h("div", { class: "actions" }, [h("button", { type: "button", class: "btn primary", "data-autofocus": "", onClick: () => emit("close") }, "Close")])
+internal/web/assets/components/RepoPage.js:53:      s.list.length ? h("ul", { class: "cards" }, s.list.map(r => repoCard(r, handlers, task.state.busy))) : null,
+internal/web/assets/app.css:63:.sidebar ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+internal/web/assets/app.css:104:.cards { list-style: none; padding: 0; display: grid; gap: var(--space-3); }
+internal/web/assets/app.css:132:.stepper { list-style: none; display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); padding: 0; margin: var(--space-4) 0; }
+internal/web/assets/app.css:160:.checks { list-style: none; padding: 0; }
+internal/web/assets/app.css:172:.filetree { list-style: none; padding: 0; font-size: .875rem; }
+internal/web/assets/app.css:177:.events ol { list-style: none; padding: 0; margin: 0; }
+
+exec
+/bin/zsh -lc "rg -n 'spec_hash|func .*approve|last_seq|event: end|Last-Event-ID' internal/server; git show development:internal/web/assets/app.js | rg -n -C 5 'approve|unlock|Last-Event-ID'; cat internal/web/assets/format.js; cat internal/web/assets/components/{NewRequest,MemoryView,RepoPage}.js" in /Users/pappumishra/Documents/selfproject/patchbot-m29-dashboard
+ succeeded in 0ms:
+internal/server/README.md:78:  JSON data. Nonempty `Last-Event-ID` takes precedence over `?after=`.
+internal/server/README.md:83:  `event: end` with JSON `{"last_seq":N}` before closing. This control frame
+internal/server/README.md:85:  `end`; clients must reconnect with their last consumed `Last-Event-ID` and
+internal/server/sse_test.go:58:	req.Header.Set("Last-Event-ID", lastID)
+internal/server/sse_test.go:98:	want := fmt.Sprintf(`{"last_seq":%d}`, lastSeq)
+internal/server/sse_test.go:100:		t.Fatalf("end frame = %+v, %v; want last_seq %d", frame, err, lastSeq)
+internal/server/sse_test.go:328:			if strings.Contains(w.Body.String(), "event: end\n") {
+internal/server/sse.go:23:	value := r.Header.Get("Last-Event-ID")
+internal/server/sse.go:118:			write(fmt.Sprintf("event: end\ndata: {\"last_seq\":%d}\n\n", after))
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-YJtg2SGk' (errno=Operation not permitted)
+2-(() => {
+3-  "use strict";
+4-  if (!window.Vue) return;
+5-  const initial = JSON.parse(document.getElementById("state").textContent);
+6-  const { createApp, h, reactive, onMounted, onUnmounted } = window.Vue;
+7:  const active = ["queued", "running", "awaiting_approval", "needs_info", "approved"];
+8-  const statuses = [...active, "succeeded", "failed", "cancelled", "rejected"];
+9-  const storageKey = "patchbot.ui-token";
+10-  const text = value => value == null ? "unknown" : String(value);
+11-  const money = value => value == null ? "unknown" : `$${(value / 1000000).toFixed(4)}`;
+12-  const human = value => String(value || "pending").replaceAll("_", " ");
+--
+192-        event.preventDefault();
+193-        void work(async () => {
+194-          try { await send("/api/memory", { repo: memoryForm.repo, text: memoryForm.text }); }
+195-          finally { if (!s.locked) await loadMemory(); }
+196-          memoryForm.text = "";
+197:          s.notice = "Operator lesson saved and approved.";
+198-        });
+199-      }
+200-      const can = action => !!s.detail?.capabilities?.[`can_${action}`];
+201-      async function loadDetail(fresh = false) {
+202-        while (refreshing) {
+--
+255-        let delay = 1000;
+256-        while (!signal.aborted && !s.locked && !disposed) {
+257-          try {
+258-            s.streamStatus = lastID ? "Reconnecting" : "Connecting";
+259-            const extra = { Accept: "text/event-stream" };
+260:            if (lastID) extra["Last-Event-ID"] = String(lastID);
+261-            const response = await fetch(`/api/runs/${initial.run_id}/events`, {
+262-              credentials: "same-origin", headers: headers(extra), signal
+263-            });
+264-            if (response.status === 401) { forgetToken(); throw new Error("Enter the UI token to resume the log."); }
+265-            if (!response.ok || !response.body) throw new Error(`Live log unavailable (${response.status}).`);
+--
+542-        ]);
+543-      }
+544-      function requestForm() {
+545-        const made = draft.created;
+546-        return h("form", { class: "panel", onSubmit: submitIssue }, [
+547:          h("p", "patchbot opens a GitHub issue with this text and, if chosen, starts the refine step. Nothing changes in the repository until you approve the specification."),
+548-          field("Repository", select(form, "repo", s.repos.map(repo => [repo, repo]))),
+549-          field("Title", input(draft, "title", { required: true, maxlength: 256 })),
+550-          field("Request", area(draft, "body", { rows: 8, maxlength: 65536 })),
+551-          h("label", { class: "check" }, [h("input", { type: "checkbox", checked: draft.start, onChange: e => { draft.start = e.target.checked; } }), "Start refine now"]),
+552-          ...(draft.start ? [
+--
+580-        ];
+581-      }
+582-      function memoryView() {
+583-        const m = s.memory;
+584-        return panel("Repository memory", [
+585:          h("p", "Memory is unverified context for the model. It never changes command policy, protected paths, repository scope or approval. Only approved lessons and fresh observations are retrieved."),
+586-          m.enabled ? null : h("p", { class: "warning", role: "status" }, "Memory is disabled: runs neither retrieve nor write memory."),
+587-          h("form", { class: "filters", onSubmit: event => { event.preventDefault(); void work(loadMemory); } }, [
+588-            field("Repository", select(memoryFilters, "repo", [["", "All repositories"], ...s.repos.map(repo => [repo, repo])])),
+589:            field("Status", select(memoryFilters, "status", [["", "All statuses"], ...["pending", "approved", "active", "rejected", "revoked"].map(v => [v, v])])),
+590-            h("button", { type: "submit", disabled: s.busy }, "Show memory")
+591-          ]),
+592-          (m.entries || []).length ? h("ul", { class: "runs" }, m.entries.map(e => h("li", { key: e.id }, [
+593-            h("strong", `#${e.id} · ${e.repo} · ${e.kind} · ${e.status} · ${e.source}${e.run_id ? " · run " + e.run_id : ""}`),
+594-            block(visible(e.kind === "lesson" ? (e.text || "(forgotten: text erased)") : e.summary)),
+595-            h("p", h("small", `Content hash ${e.content_hash}`)),
+596-            h("div", { class: "actions" }, [
+597:              e.kind === "lesson" && e.status === "pending" ? button("Approve", () => memoryAction(e, "approve"), s.busy) : null,
+598-              e.kind === "lesson" && e.status === "pending" ? button("Reject", () => memoryAction(e, "reject"), s.busy) : null,
+599-              e.status !== "revoked" ? button("Forget", () => memoryAction(e, "forget"), s.busy) : null
+600-            ])
+601-          ]))) : h("p", "No memory entries match these filters."),
+602-          h("form", { onSubmit: addLesson }, [
+603:            h("h3", "Add an operator lesson (approved immediately)"),
+604-            field("Repository", select(memoryForm, "repo", s.repos.map(repo => [repo, repo]))),
+605-            field("Lesson (up to 600 bytes)", area(memoryForm, "text", { required: true, maxlength: 600 })),
+606-            h("button", { type: "submit", disabled: s.busy || !memoryForm.text.trim() || !memoryForm.repo }, "Add lesson")
+607-          ])
+608-        ]);
+--
+656-            return h("li", [h("strong", human(phase)), ` · ${state}`, latest ? h("small", ` ${latest.started_at}`) : null]);
+657-          })), h("details", [h("summary", "Recorded steps"), h("ul", (d.steps || []).map(step => h("li", `${step.seq} · ${step.phase} · ${step.kind} ${step.tool} · ${step.status}${step.exit_code == null ? "" : " · exit " + step.exit_code}`)))])]),
+658-          specView(),
+659-          panel("Run controls", [
+660-            h("div", { class: "actions" }, [
+661:              button("Approve", () => action("approve"), disabled || !can("approve")),
+662-              button("Reject", () => action("reject"), disabled || !can("reject")),
+663-              button("Cancel", () => action("cancel"), s.busy || !can("cancel"))
+664-            ]),
+665-            h("form", { onSubmit: event => { event.preventDefault(); action("revise", { notes: s.notes }); } }, [
+666-              field("Revision notes", area(s, "notes", { required: true, disabled: !can("revise") })),
+--
+673-          ]),
+674-          panel("Diff", s.artifacts.filter(a => a.kind === "diff").map(a => block(a.content)).concat(s.artifacts.some(a => a.kind === "diff") ? [] : [h("p", "No diff recorded yet.")])),
+675-          panel("Test output", [h("p", `Harness: ${run.tests_status || "not recorded"} · ${run.test_attempts} attempts`),
+676-            ...s.artifacts.filter(a => ["test_output", "baseline"].includes(a.kind)).map(a => h("details", [h("summary", `${human(a.kind)} · attempt ${a.attempt}`), block(a.content)]))]),
+677-          (d.reviews && d.reviews.length) || run.phase === "review" ? panel("Independent review", [
+678:            h("p", "Advisory reviewer verdicts, each bound to the approved spec hash and the reviewed diff hash. A review never replaces approval or harness tests."),
+679-            ...(d.reviews || []).map(r => h("p", [chip(r.verdict), ` round ${r.round} · ${r.provider} / ${r.model}${r.reason ? " · " + r.reason : ""} · diff ${String(r.diff_hash).slice(0, 12)}`])),
+680-            ...s.artifacts.filter(a => a.kind === "review").map(a => h("details", [h("summary", `Review round ${a.attempt}`), block(a.content)]))
+681-          ]) : null,
+682-          panel("Pull request preview", s.artifacts.filter(a => ["pr_title", "pr_body"].includes(a.kind)).map(a => h("div", [h("h3", human(a.kind)), block(a.content)]))),
+683-          panel("Live log", [h("p", { role: "status" }, `${s.streamStatus} · last event ${lastID} · showing the latest 1,000 events`),
+// Pure helpers: no DOM access, no Vue. Everything here returns plain strings,
+// numbers or plain objects so it can be unit-tested and so untrusted text is
+// only ever handed to the renderer as text.
+
+export const active = ["queued", "running", "awaiting_approval", "needs_info", "approved"];
+export const statuses = [...active, "succeeded", "failed", "cancelled", "rejected"];
+
+// One mapping for every status chip: icon + text + colour class.
+export const statusMeta = {
+  awaiting_approval: { icon: "clock", label: "Awaiting approval" },
+  needs_info: { icon: "question", label: "Needs info" },
+  queued: { icon: "dots", label: "Queued" },
+  running: { icon: "spinner", label: "Running" },
+  approved: { icon: "check", label: "Approved" },
+  succeeded: { icon: "check-circle", label: "Succeeded" },
+  failed: { icon: "x-circle", label: "Failed" },
+  rejected: { icon: "ban", label: "Rejected" },
+  cancelled: { icon: "stop", label: "Cancelled" }
+};
+
+export const text = value => value == null ? "unknown" : String(value);
+export const money = value => value == null ? "unknown" : `$${(value / 1000000).toFixed(4)}`;
+export const human = value => String(value || "pending").replaceAll("_", " ");
+export const lines = value => String(value || "").split("\n").map(line => line.trim()).filter(Boolean);
+export const shortHash = hash => String(hash || "").slice(0, 9);
+export const count = value => value == null ? "unknown" : Number(value).toLocaleString("en-US");
+
+// Escape every rune a lesson may not contain (format, bidi, tag, private-use,
+// separators, controls other than newline/tab) so nothing hides from review.
+const printable = /[\p{L}\p{M}\p{N}\p{P}\p{S} \n\t]/u;
+export const visible = value => Array.from(String(value ?? ""), c => printable.test(c) ? c
+  : String.fromCharCode(92) + "u{" + c.codePointAt(0).toString(16).toUpperCase() + "}").join("");
+
+// linkHref returns a normalised http(s) URL or "" for anything else.
+export function linkHref(url) {
+  try {
+    const parsed = new URL(url);
+    if (["http:", "https:"].includes(parsed.protocol)) return parsed.href;
+  } catch { /* An invalid external link stays text. */ }
+  return "";
+}
+
+// runHref builds an in-app run URL from an integer ID only.
+export const runHref = id => Number.isSafeInteger(id) && id > 0 ? `/runs/${id}` : "/runs";
+
+export const specText = spec => (spec?.body_md || "").replace(/\n<!-- patchbot:spec-data [A-Za-z0-9+/=]+ -->\n$/, "");
+
+// decodeSpec recovers the structured fields hidden in the spec marker, or null.
+export function decodeSpec(spec) {
+  const match = (spec?.body_md || "").match(/\n<!-- patchbot:spec-data ([A-Za-z0-9+/=]+) -->\n$/);
+  if (!match) return null;
+  try {
+    const data = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(match[1]), c => c.charCodeAt(0))));
+    const list = value => Array.isArray(value) ? value.map(String) : [];
+    return {
+      summary: String(data.summary || ""), acceptance_criteria: list(data.acceptance_criteria), risks: list(data.risks),
+      test_plan: list(data.test_plan), open_questions: list(data.open_questions),
+      files: Array.isArray(data.files) ? data.files.map(f => ({ path: String(f?.path || ""), change: String(f?.change || "") })) : []
+    };
+  } catch { return null; }
+}
+
+// A linear replacement diff: common prefix/suffix stay as context; changed
+// lines are shown in full. No quadratic work on model-generated documents.
+export function lineDiff(before, after) {
+  const a = before.split("\n"), b = after.split("\n");
+  let start = 0, end = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start++;
+  while (end < a.length - start && end < b.length - start && a[a.length - end - 1] === b[b.length - end - 1]) end++;
+  if (start === a.length && start === b.length) return "No changes.";
+  return [
+    ...a.slice(Math.max(0, start - 3), start).map(line => "  " + line),
+    ...a.slice(start, a.length - end).map(line => "- " + line),
+    ...b.slice(start, b.length - end).map(line => "+ " + line),
+    ...b.slice(b.length - end, b.length - end + 3).map(line => "  " + line)
+  ].join("\n");
+}
+
+// parseDiff splits a unified diff into files with typed lines, in linear time.
+// Unrecognised input still yields one "(diff)" file so nothing is dropped.
+export function parseDiff(raw) {
+  const files = [];
+  let file = null;
+  const open = path => { file = { path, adds: 0, dels: 0, lines: [] }; files.push(file); };
+  for (const line of String(raw || "").split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      open(line.replace(/^diff --git a\/(.*) b\/.*$/, "$1"));
+      file.lines.push({ kind: "meta", text: line });
+      continue;
+    }
+    if (!file) open("(diff)");
+    let kind = "ctx";
+    if (/^(\+\+\+|---|index |new file|deleted file|similarity|rename |old mode|new mode|Binary)/.test(line)) kind = "meta";
+    else if (line.startsWith("@@")) kind = "hunk";
+    else if (line.startsWith("+")) { kind = "add"; file.adds++; }
+    else if (line.startsWith("-")) { kind = "del"; file.dels++; }
+    file.lines.push({ kind, text: line });
+  }
+  return files;
+}
+
+// Phase stepper: Refine, Approval, Code, Tests, Review, PR. The state of each
+// step comes only from the run status/phase the API reports.
+export const stepperPhases = ["Refine", "Approval", "Code", "Tests", "Review", "PR"];
+const phaseToStep = { preflight: 0, refine: 0, clone: 2, baseline: 3, code: 2, verify: 3, review: 4, publish: 5 };
+
+export function stepperState(run) {
+  const waiting = run.status === "awaiting_approval" || run.status === "needs_info";
+  let current = waiting ? 1 : (phaseToStep[run.phase] ?? 0);
+  if (run.status === "approved") current = 1;
+  if (run.status === "queued") current = 0;
+  const done = run.status === "succeeded";
+  const failed = ["failed", "rejected", "cancelled"].includes(run.status);
+  return stepperPhases.map((label, index) => {
+    let state = "todo";
+    if (done || index < current) state = "done";
+    else if (index === current) state = failed ? (run.status === "failed" ? "failed" : "stopped") : "current";
+    return { label, state };
+  });
+}
+
+const failureText = {
+  expired: ["The approval wait expired.", "Retry the run to produce a fresh specification."],
+  interrupted: ["patchbot restarted while this run was working.", "Retry the run; nothing was published."],
+  budget_exhausted: ["The run used up its cost budget.", "Retry with a larger budget."],
+  review_failed: ["The independent reviewer asked for changes.", "Read the review in the Changes tab, then revise or retry."],
+  review_stale: ["The code changed after it was reviewed.", "Retry the run so the review matches the final diff."],
+  provider_auth: ["The model provider rejected the API key.", "Fix the provider key in the server config, then retry."],
+  rate_limit: ["The model provider is rate limiting requests.", "Wait a few minutes and retry."],
+  tests_failed: ["The tests did not pass.", "Open the Changes tab to read the test output, then revise or retry."]
+};
+
+// failureInfo explains a failed/stopped run in plain language, or returns null.
+export function failureInfo(run) {
+  if (run.status === "rejected") return { title: "You rejected this specification.", next: "Retry to start over with a new specification.", detail: "" };
+  if (run.status === "cancelled") return { title: "This run was cancelled.", next: "Retry to start a new run.", detail: "" };
+  if (run.status !== "failed" && !run.error_kind) return null;
+  const known = failureText[run.error_kind];
+  return {
+    title: known ? known[0] : "The run stopped with an error.",
+    next: known ? known[1] : "Read the details below, then retry or revise.",
+    detail: [run.error_kind, run.error_message].filter(Boolean).join(": ")
+  };
+}
+
+export function duration(run, now = Date.now()) {
+  if (!run.started_at) return null;
+  const end = run.finished_at ? Date.parse(run.finished_at) : now;
+  const ms = end - Date.parse(run.started_at);
+  return Number.isFinite(ms) && ms >= 0 ? ms : null;
+}
+
+export function formatMs(ms) {
+  if (ms == null) return "unknown";
+  const total = Math.round(ms / 1000);
+  const minutes = Math.floor(total / 60);
+  return minutes ? `${minutes}m ${total % 60}s` : `${total}s`;
+}
+
+// budgetLimits reads the frozen per-run limits (Go field names, no JSON tags);
+// anything missing or non-positive is null, shown as "unknown".
+export function budgetLimits(run) {
+  const l = run.limits_json && typeof run.limits_json === "object" ? run.limits_json : {};
+  const a = l.Agent && typeof l.Agent === "object" ? l.Agent : {};
+  const pos = value => Number.isFinite(value) && value > 0 ? value : null;
+  return { cost: pos(a.MaxCostMicros), tokens: pos(a.MaxTotalTokens), ms: pos(l.Timeout) == null ? null : l.Timeout / 1e6 };
+}
+
+// eventInfo labels a log event by turn, else phase, else type. Payloads are
+// untrusted: only plain scalar fields are read.
+export function eventInfo(event) {
+  let payload = null;
+  try { payload = JSON.parse(event.output); } catch { /* Malformed data is shown as text. */ }
+  const p = payload && typeof payload === "object" ? payload : {};
+  const turn = Number.isSafeInteger(p.turn) ? p.turn : null;
+  const phase = typeof p.phase === "string" ? p.phase : (event.type === "run.status" && typeof p.status === "string" ? p.status : "");
+  const failing = p.ok === false || ["failed", "error"].includes(p.status) || (Number.isFinite(p.exit_code) && p.exit_code !== 0) || /\b(FAIL|panic:)\b/.test(event.output);
+  return { group: turn != null ? `Turn ${turn}` : phase ? human(phase) : "Events", failing };
+}
+
+export function groupEvents(events) {
+  const groups = [];
+  for (const event of events) {
+    const info = eventInfo(event);
+    let group = groups[groups.length - 1];
+    if (!group || group.label !== info.group) { group = { label: info.group, items: [] }; groups.push(group); }
+    group.items.push({ ...event, failing: info.failing });
+  }
+  return groups;
+}
+// New request: start a run for an existing issue, or write a new request that
+// patchbot opens as a GitHub issue (POST /api/issues, idempotent by key).
+import { runHref } from "../format.js";
+import { button, checkbox, errorPanel, field, input, area, link, loading, select } from "../ui.js";
+import { useTask } from "../composables/useTask.js";
+import { modelFields } from "./ModelFields.js";
+
+const { h, reactive, onMounted, onUnmounted } = window.Vue;
+
+const freshKey = () => {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return Array.from(window.crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
+};
+const validBudget = budget => Number.isFinite(budget) && budget > 0 && Number.isSafeInteger(Math.round(budget * 1000000));
+
+export const NewRequest = {
+  props: { ctx: { type: Object, required: true } },
+  setup(props) {
+    const { api, toast, providers } = props.ctx;
+    const { state: p, form } = providers;
+    const draft = reactive({ write: false, title: "", body: "", start: true, key: "", print: "", created: null });
+    const task = useTask();
+    let redirect = null;
+
+    onMounted(() => task.run(async () => { await providers.load(); void providers.loadModels(); }));
+    onUnmounted(() => clearTimeout(redirect));
+    const go = run => { location.assign(runHref(run.id)); };
+    const modelBody = () => ({ mode: form.mode, provider: form.provider, code_model: form.model, refine_model: form.separate ? form.refine : form.model,
+      max_cost_micros: Math.round(Number(form.budget) * 1000000), dry_run: form.dry });
+
+    function startRun(event) {
+      event.preventDefault();
+      void task.run(async () => {
+        const issue = Number(form.issue);
+        if (!Number.isSafeInteger(issue) || issue <= 0 || !validBudget(Number(form.budget))) throw new Error("Enter a positive issue number and budget.");
+        go((await api.send("/api/runs", { repo: form.repo, issue, ...modelBody() })).run);
+      });
+    }
+    function submitIssue(event) {
+      event.preventDefault();
+      void task.run(async () => {
+        if (!draft.title.trim()) throw new Error("Enter a title.");
+        if (draft.start && !validBudget(Number(form.budget))) throw new Error("Enter a positive budget.");
+        const payload = { repo: form.repo, title: draft.title, body: draft.body, start_run: draft.start };
+        if (draft.start) Object.assign(payload, modelBody());
+        // Same content keeps the key, so pressing the button again after a timeout cannot open a second issue.
+        const print = JSON.stringify(payload);
+        if (print !== draft.print || !draft.key) { draft.key = freshKey(); draft.print = print; }
+        let result;
+        try { result = await api.send("/api/issues", { ...payload, idempotency_key: draft.key }); }
+        catch (error) { if (error.body?.issue) draft.created = error.body.issue; throw error; }
+        draft.created = result.issue;
+        toast.push(result.issue.created ? "Issue created." : "Issue already created for this request.");
+        draft.title = ""; draft.body = ""; draft.key = ""; draft.print = "";
+        if (result.run) redirect = setTimeout(() => go(result.run), 1500);
+      });
+    }
+    const repoField = () => field("Repository", select(form, "repo", p.repos.map(r => [r, r])));
+    const budget = () => field("Run budget (USD)", input(form, "budget", { type: "number", min: "0.000001", step: "0.000001", required: true }));
+    const submit = (label, extra) => button(label, null, { type: "submit", kind: "primary", disabled: task.state.busy || !p.repos.length || extra });
+
+    function existing() {
+      return h("form", { class: "panel", onSubmit: startRun }, [
+        repoField(), field("Issue number", input(form, "issue", { type: "number", min: 1, step: 1, required: true })),
+        field("Mode", select(form, "mode", ["fix", "refine", "investigate"].map(m => [m, m]))),
+        ...modelFields(providers, true), budget(), checkbox(form, "dry", "Dry run — produce artifacts without publishing"), submit("Start run", !form.provider)
+      ]);
+    }
+    function written() {
+      const made = draft.created;
+      return h("form", { class: "panel", onSubmit: submitIssue }, [
+        h("p", "patchbot opens a GitHub issue with this text and, if chosen, starts the refine step. Nothing changes in the repository until you approve the specification."),
+        repoField(), field("Title", input(draft, "title", { required: true, maxlength: 256 })),
+        field("Request", area(draft, "body", { rows: 8, maxlength: 65536 })),
+        checkbox(draft, "start", "Start refine now"),
+        ...(draft.start ? [field("Mode", select(form, "mode", ["fix", "refine"].map(m => [m, m]))), ...modelFields(providers, true), budget(),
+          checkbox(form, "dry", "Dry run — produce artifacts without publishing")] : []),
+        submit("Create issue", draft.start && !form.provider),
+        made ? h("p", { role: "status" }, [`Created ${made.repo} #${made.number}: `, link(made.html_url, "open on GitHub")]) : null
+      ]);
+    }
+    return () => h("div", [
+      h("h1", "New request"),
+      h("div", { class: "actions", role: "group", "aria-label": "Request type" }, [
+        button("Existing issue", () => { draft.write = false; }, { pressed: !draft.write }),
+        button("Write a new request", () => { draft.write = true; }, { pressed: draft.write })
+      ]),
+      task.state.error ? errorPanel(task.state.error) : null,
+      !p.loaded && !task.state.error ? loading("Loading repositories and models…") : (draft.write ? written() : existing())
+    ]);
+  }
+};
+// Repository memory: review pending lessons, forget entries, add a lesson.
+import { visible } from "../format.js";
+import { area, block, button, empty, errorPanel, field, loading, select } from "../ui.js";
+import { useTask } from "../composables/useTask.js";
+
+const { h, reactive, onMounted } = window.Vue;
+
+export const MemoryView = {
+  props: { ctx: { type: Object, required: true } },
+  setup(props) {
+    const { api, toast, confirm, providers, badges } = props.ctx;
+    const s = reactive({ ready: false, enabled: true, entries: [] });
+    const filters = reactive({ repo: "", status: "pending" });
+    const lesson = reactive({ repo: "", text: "" });
+    const task = useTask();
+
+    async function load() {
+      const params = new URLSearchParams();
+      if (filters.repo) params.set("repo", filters.repo);
+      if (filters.status) params.set("status", filters.status);
+      const body = await api.request("/api/memory?" + params);
+      s.enabled = body.enabled; s.entries = body.entries || []; s.ready = true;
+      void badges.refresh();
+    }
+    onMounted(() => task.run(async () => {
+      await providers.load().catch(() => { /* Repositories fall back to the filter only. */ });
+      lesson.repo = providers.state.repos[0] || "";
+      await load();
+    }));
+    const decide = (entry, name) => task.run(async () => {
+      // Bind the decision to the exact content hash shown to the operator.
+      try { await api.send(`/api/memory/${entry.id}/${name}`, { content_hash: entry.content_hash }); }
+      finally { if (!api.state.locked) await load(); }
+      toast.push(`Memory ${entry.id}: ${name} accepted.`);
+    });
+    async function forget(entry) {
+      if (await confirm.ask({ title: `Forget memory #${entry.id}?`, message: "The entry stops being used and its text is erased. This cannot be undone.", confirmLabel: "Forget", danger: true })) await decide(entry, "forget");
+    }
+    function add(event) {
+      event.preventDefault();
+      void task.run(async () => {
+        try { await api.send("/api/memory", { repo: lesson.repo, text: lesson.text }); }
+        finally { if (!api.state.locked) await load(); }
+        lesson.text = "";
+        toast.push("Operator lesson saved and approved.");
+      });
+    }
+    const repoOptions = () => providers.state.repos.map(r => [r, r]);
+    return () => h("div", [
+      h("h1", "Repository memory"),
+      h("p", "Memory is unverified context for the model. It never changes command policy, protected paths, repository scope or approval. Only approved lessons and fresh observations are retrieved."),
+      s.enabled ? null : h("p", { class: "warning", role: "status" }, "Memory is disabled: runs neither retrieve nor write memory."),
+      task.state.error ? errorPanel(task.state.error, () => task.run(load)) : null,
+      h("form", { class: "filters", onSubmit: event => { event.preventDefault(); void task.run(load); } }, [
+        field("Repository", select(filters, "repo", [["", "All repositories"], ...repoOptions()])),
+        field("Status", select(filters, "status", [["", "All statuses"], ...["pending", "approved", "active", "rejected", "revoked"].map(v => [v, v])])),
+        button("Show memory", null, { type: "submit", disabled: task.state.busy })
+      ]),
+      !s.ready && !task.state.error ? loading("Loading memory…") : null,
+      s.ready && !s.entries.length ? empty("No memory entries match these filters.", "Pick another status, or add a lesson below.") : null,
+      s.entries.length ? h("ul", { class: "cards" }, s.entries.map(e => h("li", { key: e.id, class: "card" }, [
+        h("p", h("strong", `#${e.id} · ${e.repo} · ${e.kind} · ${e.status} · ${e.source}${e.run_id ? " · run " + e.run_id : ""}`)),
+        block(visible(e.kind === "lesson" ? (e.text || "(forgotten: text erased)") : e.summary), "Memory text"),
+        h("p", { class: "muted small mono" }, `Content hash ${e.content_hash}`),
+        h("div", { class: "actions" }, [
+          e.kind === "lesson" && e.status === "pending" ? button("Approve", () => decide(e, "approve"), { disabled: task.state.busy }) : null,
+          e.kind === "lesson" && e.status === "pending" ? button("Reject", () => decide(e, "reject"), { disabled: task.state.busy }) : null,
+          e.status !== "revoked" ? button("Forget", () => forget(e), { kind: "danger", disabled: task.state.busy }) : null
+        ])
+      ]))) : null,
+      h("form", { class: "panel", onSubmit: add }, [
+        h("h2", "Add an operator lesson (approved immediately)"),
+        field("Repository", select(lesson, "repo", repoOptions())),
+        field("Lesson (up to 600 bytes)", area(lesson, "text", { required: true, maxlength: 600 })),
+        button("Add lesson", null, { type: "submit", kind: "primary", disabled: task.state.busy || !lesson.text.trim() || !lesson.repo })
+      ])
+    ]);
+  }
+};
+// Repositories page (M24): allowlist cards, add/edit, audit and remove.
+import { block, button, empty, errorPanel, loading, panel } from "../ui.js";
+import { useTask } from "../composables/useTask.js";
+import { repoCard } from "./RepoCard.js";
+import { newRepoEditor, repoEditor, settingsFrom } from "./RepoEditor.js";
+
+const { h, reactive, onMounted } = window.Vue;
+
+export const RepoPage = {
+  props: { ctx: { type: Object, required: true } },
+  setup(props) {
+    const { api, toast, confirm } = props.ctx;
+    const s = reactive({ ready: false, list: [], container: false, editor: null, audit: null });
+    const task = useTask();
+
+    async function load() {
+      const result = await api.request("/api/repos");
+      s.list = result.repos; s.container = !!result.container; s.ready = true;
+    }
+    onMounted(() => task.run(load));
+    function save() {
+      const e = s.editor;
+      void task.run(async () => {
+        const settings = settingsFrom(e);
+        const result = e.mode === "add" ? await api.send("/api/repos", { name: e.name.trim(), settings })
+          : await api.send("/api/repos/" + e.name, { version: e.version, settings }, "PUT");
+        s.editor = null;
+        toast.push((e.mode === "add" ? "Repository added." : "Repository saved.") + (result.github ? " GitHub check: " + result.github.message : ""));
+        await load();
+      });
+    }
+    async function remove(r) {
+      const ok = await confirm.ask({ title: `Remove ${r.name}?`, confirmLabel: "Remove repository", danger: true,
+        message: "New runs for it stop immediately. This is refused while it has active runs; run history is kept." });
+      if (!ok) return;
+      await task.run(async () => {
+        try { await api.request("/api/repos/" + r.name, { method: "DELETE" }); }
+        finally { if (!api.state.locked) await load(); }
+        toast.push(`Repository ${r.name} removed. Run history is kept.`);
+      });
+    }
+    const audit = r => task.run(async () => { s.audit = { repo: r.name, rows: (await api.request(`/api/repos/${r.name}/audit`)).audit }; });
+    const handlers = { edit: r => { s.editor = newRepoEditor(r); }, remove, audit };
+
+    return () => h("div", [
+      h("h1", "Repositories"),
+      h("p", "Repositories from the config file are read-only here. Changes apply to new runs; a run in flight keeps the settings it started with."),
+      task.state.error ? errorPanel(task.state.error, () => task.run(load)) : null,
+      s.editor ? repoEditor(s.editor, s.container, task.state.busy, save, () => { s.editor = null; })
+        : button("Add repository", () => { s.editor = newRepoEditor(null); }, { kind: "primary", icon: "plus", disabled: task.state.busy || !s.ready }),
+      !s.ready && !task.state.error ? loading("Loading repositories…") : null,
+      s.ready && !s.list.length ? empty("No repositories are configured.", "Add one so patchbot may open pull requests against it.") : null,
+      s.list.length ? h("ul", { class: "cards" }, s.list.map(r => repoCard(r, handlers, task.state.busy))) : null,
+      s.audit ? panel("Audit: " + s.audit.repo, [s.audit.rows.length ? h("ol", s.audit.rows.map(a => h("li", { key: a.id }, [
+        h("strong", `${a.action} · ${a.actor} · ${a.channel} · ${a.at}`),
+        a.before ? h("details", [h("summary", "Before"), block(a.before, "Before")]) : null,
+        a.after ? h("details", [h("summary", "After"), block(a.after, "After")]) : null
+      ]))) : h("p", "No dashboard changes recorded."), button("Close", () => { s.audit = null; })]) : null
+    ]);
+  }
+};
+
+codex
+The rendered text, links, and asset allow-list look safe so far. I’m checking the approval request against the server contract: the dialog shows a spec hash, but the request sends an empty body.
+exec
+/bin/zsh -lc "rg -n 'approve|Approve' internal/server/runs* internal/server/actions* internal/runner/approval*; cat internal/server/sse.go; git show development:internal/web/assets/app.js | sed -n '20,100p;300,370p'; cat internal/web/assets/components/{ChangesView,ConfirmDialog,Modal,DiffView}.js; cat internal/web/web.go | head -65; rg -n 'approve|hash' internal/server/api.go" in /Users/pappumishra/Documents/selfproject/patchbot-m29-dashboard
+ succeeded in 0ms:
+zsh:1: no matches found: internal/server/runs*
+package server
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+	"unicode"
+
+	"github.com/aryanpappu/patchbot/internal/store"
+)
+
+func (s *Server) events(w http.ResponseWriter, r *http.Request) {
+	if !s.method(w, r, http.MethodGet) {
+		return
+	}
+	id, ok := s.runID(w, r)
+	if !ok {
+		return
+	}
+	value := r.Header.Get("Last-Event-ID")
+	if value == "" {
+		value = r.URL.Query().Get("after")
+	}
+	after := int64(0)
+	if value != "" {
+		var err error
+		after, err = strconv.ParseInt(value, 10, 64)
+		if err != nil || after < 0 {
+			s.writeError(w, 400, "invalid_request", "invalid event sequence")
+			return
+		}
+	}
+	controller := http.NewResponseController(w)
+	// Drop the request's read deadline once its headers/body have been read.
+	// The connection remains open for a stream longer than ReadTimeout.
+	_ = controller.SetReadDeadline(time.Time{})
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("X-Accel-Buffering", "no")
+	sub, unsubscribe := s.bus.subscribe(id)
+	defer unsubscribe()
+	heartbeat := time.NewTicker(s.opts.HeartbeatInterval)
+	defer heartbeat.Stop()
+	poll := time.NewTicker(s.opts.PollInterval)
+	defer poll.Stop()
+	write := func(frame string) bool {
+		if err := controller.SetWriteDeadline(time.Now().Add(s.opts.StreamWriteTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			return false
+		}
+		if _, err := fmt.Fprint(w, frame); err != nil {
+			return false
+		}
+		return controller.Flush() == nil
+	}
+	if !write(": connected\n\n") {
+		return
+	}
+	terminal := false
+	for {
+		select {
+		case <-sub.lagged:
+			return
+		case <-s.done:
+			return
+		case <-r.Context().Done():
+			return
+		default:
+		}
+		events, err := s.db.EventsAfter(r.Context(), id, after, 500)
+		if err != nil {
+			return
+		}
+		for _, event := range events {
+			select {
+			case <-heartbeat.C:
+				if !write(": heartbeat\n\n") {
+					return
+				}
+			default:
+			}
+			select {
+			case <-sub.lagged:
+				return
+			case <-s.done:
+				return
+			case <-r.Context().Done():
+				return
+			default:
+			}
+			payload, err := s.safeJSON(event.PayloadJSON)
+			if err != nil {
+				return
+			}
+			if !write(fmt.Sprintf("id: %d\nevent: %s\ndata: %s\n\n", event.Seq, eventName(event.Type), payload)) {
+				return
+			}
+			after = event.Seq
+		}
+		if len(events) > 0 {
+			continue
+		}
+		// Read again after observing a terminal state: its transaction could have
+		// committed between EventsAfter and GetRun, including the final event.
+		if terminal {
+			// EOF alone is never completion evidence: lag, replay and transport
+			// failures also close the stream. Only this fully drained path emits end.
+			select {
+			case <-sub.lagged:
+				return
+			case <-s.done:
+				return
+			case <-r.Context().Done():
+				return
+			default:
+			}
+			write(fmt.Sprintf("event: end\ndata: {\"last_seq\":%d}\n\n", after))
+			return
+		}
+		run, err := s.db.GetRun(r.Context(), id)
+		if err != nil {
+			return
+		}
+		if !run.Status.IsActive() && !s.manager.busy(id) {
+			terminal = true
+			continue
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-s.done:
+			return
+		case <-sub.lagged:
+			return
+		case <-sub.wake:
+		case <-poll.C:
+		case <-heartbeat.C:
+			if !write(": heartbeat\n\n") {
+				return
+			}
+		}
+	}
+}
+
+func eventName(name string) string {
+	if name == "" || strings.IndexFunc(name, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '.' && r != '_' && r != '-'
+	}) >= 0 {
+		return "message"
+	}
+	return name
+}
+
+// Test output already passes the runner's persistence redactor. Present the
+// recorded harness attempts as downloadable artifacts without copying them.
+func testArtifacts(steps []store.Step) []store.Artifact {
+	artifacts := []store.Artifact{}
+	for _, step := range steps {
+		if step.Kind != "test" || step.Phase != store.PhaseVerify || step.Status == "running" {
+			continue
+		}
+		artifacts = append(artifacts, store.Artifact{RunID: step.RunID, Kind: "test_output", Attempt: int64(len(artifacts) + 1), Content: step.OutputText, CreatedAt: step.StartedAt})
+	}
+	return artifacts
+}
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-iqWMZJGp' (errno=Operation not permitted)
+    try {
+      const parsed = new URL(url);
+      if (["http:", "https:"].includes(parsed.protocol)) {
+        return h("a", { href: parsed.href, target: "_blank", rel: "noopener noreferrer" }, label);
+      }
+    } catch { /* Invalid external links remain text. */ }
+    return h("span", label);
+  };
+  const button = (label, click, disabled = false) => h("button", { type: "button", onClick: click, disabled }, label);
+  const field = (label, control) => h("label", { class: "field" }, [h("span", label), control]);
+  const input = (object, key, attributes = {}) => h("input", {
+    ...attributes, value: object[key], onInput: event => { object[key] = event.target.value; }
+  });
+  const area = (object, key, attributes = {}) => h("textarea", {
+    rows: 4, ...attributes, value: object[key], onInput: event => { object[key] = event.target.value; }
+  });
+  const select = (object, key, options, change) => h("select", {
+    value: object[key], onChange: event => { object[key] = event.target.value; if (change) change(); }
+  }, options.map(([value, label]) => h("option", { value }, label)));
+  const chip = status => h("span", { class: "chip " + (statuses.includes(status) ? status : "") }, human(status));
+  const panel = (title, children) => h("section", { class: "panel" }, [h("h2", title), ...children]);
+  const lines = value => value.split("\n").map(line => line.trim()).filter(Boolean);
+  const specText = spec => (spec?.body_md || "").replace(/\n<!-- patchbot:spec-data [A-Za-z0-9+/=]+ -->\n$/, "");
+
+  // A linear replacement diff: common prefix/suffix stay as context; changed
+  // lines are shown in full. No quadratic work on model-generated documents.
+  function lineDiff(before, after) {
+    const a = before.split("\n"), b = after.split("\n");
+    let start = 0, end = 0;
+    while (start < a.length && start < b.length && a[start] === b[start]) start++;
+    while (end < a.length - start && end < b.length - start && a[a.length - end - 1] === b[b.length - end - 1]) end++;
+    if (start === a.length && start === b.length) return "No changes.";
+    return [
+      ...a.slice(Math.max(0, start - 3), start).map(line => "  " + line),
+      ...a.slice(start, a.length - end).map(line => "- " + line),
+      ...b.slice(start, b.length - end).map(line => "+ " + line),
+      ...b.slice(b.length - end, b.length - end + 3).map(line => "  " + line)
+    ].join("\n");
+  }
+
+  const app = createApp({
+    delimiters: ["[[", "]]"],
+    setup() {
+      let token = "";
+      try { token = sessionStorage.getItem(storageKey) || ""; } catch { /* The login form explains storage failures. */ }
+      const s = reactive({
+        locked: initial.auth_required && !token, tokenInput: "", busy: false, ready: false,
+        error: "", notice: "", providers: [], repos: [], models: [], modelWarning: "",
+        runs: [], cursor: "", awaiting: null, detail: initial.initial || null, artifacts: [], events: [],
+        streamStatus: "Connecting", version: "", compare: "", editor: null, notes: "",
+        memory: { enabled: true, entries: [] },
+        repoList: [], repoContainer: false, repoEditor: null, repoRemove: "", repoAudit: null
+      });
+      const query = new URLSearchParams(location.search);
+      const filters = reactive({ repo: query.get("repo") || "", issue: query.get("issue") || "", status: query.get("status") || "" });
+      const form = reactive({ repo: "", issue: "", mode: "fix", budget: "2", dry: true, provider: "", model: "", separate: false, refine: "" });
+      // "Write a new request" mode: key is the idempotency key of the current
+      // attempt; it changes only when the content does, so a retry is safe.
+      const draft = reactive({ write: false, title: "", body: "", start: true, key: "", print: "", created: null });
+      const memoryFilters = reactive({ repo: "", status: "pending" });
+      const memoryForm = reactive({ repo: "", text: "" });
+      let stopStream = null, refreshTimer = null, pollTimer = null, lastID = 0, modelRequest = 0;
+      let refreshing = null, disposed = false, redirectTimer = null;
+
+      function forgetToken() {
+        token = "";
+        try { sessionStorage.removeItem(storageKey); } catch { /* No persistent fallback. */ }
+        s.locked = true;
+        s.ready = false;
+        s.detail = null;
+        s.runs = []; s.events = []; s.artifacts = []; s.editor = null;
+        s.providers = []; s.repos = []; s.models = []; s.awaiting = null;
+        s.memory = { enabled: true, entries: [] };
+        s.repoList = []; s.repoEditor = null; s.repoAudit = null; s.repoRemove = "";
+        lastID = 0;
+        modelRequest++;
+        if (stopStream) stopStream.abort();
+      }
+      function headers(extra = {}) {
+        return token ? { ...extra, Authorization: "Bearer " + token } : extra;
+      }
+          await new Promise(resolve => setTimeout(resolve, delay));
+          delay = Math.min(delay * 2, 10000);
+        }
+      }
+      async function boot() {
+        const providers = await request("/api/providers");
+        s.providers = providers.providers; s.repos = providers.repos;
+        form.repo = s.repos[0] || "";
+        memoryForm.repo = s.repos[0] || "";
+        form.provider = providers.defaults.provider;
+        form.mode = providers.defaults.mode;
+        form.model = providers.defaults.code_model || "";
+        form.refine = providers.defaults.refine_model || "";
+        form.separate = !!form.refine && form.refine !== form.model;
+        form.budget = String(providers.defaults.max_cost_usd);
+        if (initial.page === "detail") {
+          await loadDetail();
+          form.provider = s.detail.run.provider; form.model = s.detail.run.code_model;
+          lastID = 0; s.events = [];
+          if (stopStream) stopStream.abort();
+          stopStream = new AbortController();
+          void follow(stopStream.signal);
+        } else if (initial.page === "runs") { await loadRuns(); await loadMemory(); }
+        else if (initial.page === "repos") await loadRepos();
+        s.ready = true;
+        if (initial.page !== "runs" && initial.page !== "repos") void loadModels();
+      }
+      const navigateRun = run => { location.assign(`/runs/${run.id}`); };
+      function start(event) {
+        event.preventDefault();
+        void work(async () => {
+          const budget = Number(form.budget), issue = Number(form.issue);
+          if (!Number.isSafeInteger(issue) || issue <= 0 || !Number.isFinite(budget) || budget <= 0 || !Number.isSafeInteger(Math.round(budget * 1000000))) {
+            throw new Error("Enter a positive issue number and budget.");
+          }
+          const result = await send("/api/runs", {
+            repo: form.repo, issue, mode: form.mode, provider: form.provider, code_model: form.model,
+            refine_model: form.separate ? form.refine : form.model,
+            max_cost_micros: Math.round(budget * 1000000), dry_run: form.dry
+          });
+          navigateRun(result.run);
+        });
+      }
+      const freshKey = () => {
+        if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+        return Array.from(window.crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
+      };
+      function submitIssue(event) {
+        event.preventDefault();
+        void work(async () => {
+          const budget = Number(form.budget);
+          if (!draft.title.trim()) throw new Error("Enter a title.");
+          if (draft.start && (!Number.isFinite(budget) || budget <= 0 || !Number.isSafeInteger(Math.round(budget * 1000000)))) {
+            throw new Error("Enter a positive budget.");
+          }
+          const payload = { repo: form.repo, title: draft.title, body: draft.body, start_run: draft.start };
+          if (draft.start) {
+            Object.assign(payload, { mode: form.mode, provider: form.provider, code_model: form.model,
+              refine_model: form.separate ? form.refine : form.model, max_cost_micros: Math.round(budget * 1000000), dry_run: form.dry });
+          }
+          // Same content keeps the key, so pressing the button again after a
+          // timeout cannot open a second issue.
+          const print = JSON.stringify(payload);
+          if (print !== draft.print || !draft.key) { draft.key = freshKey(); draft.print = print; }
+          let result;
+          try { result = await send("/api/issues", { ...payload, idempotency_key: draft.key }); }
+          catch (error) {
+            // The issue can exist even when starting its run failed.
+            if (error.body?.issue) draft.created = error.body.issue;
+            throw error;
+          }
+// The Changes tab: changed files and diff as text, test result and PR link.
+import { human } from "../format.js";
+import { block, chip, empty, link, panel } from "../ui.js";
+import { DiffView } from "./DiffView.js";
+
+const { h } = window.Vue;
+
+export function changesView(d, artifacts) {
+  const run = d.run;
+  const diff = artifacts.find(a => a.kind === "diff");
+  const tests = artifacts.filter(a => ["test_output", "baseline"].includes(a.kind));
+  const reviewed = (d.reviews && d.reviews.length) || run.phase === "review";
+  return h("div", [
+    panel("Pull request", [
+      run.prurl ? h("p", link(run.prurl, "Open the pull request")) : empty("No pull request yet.", run.dry_run ? "This is a dry run; nothing is published." : "It is opened after the code passes tests and review."),
+      ...artifacts.filter(a => ["pr_title", "pr_body"].includes(a.kind)).map(a => h("div", { key: a.kind }, [h("h3", human(a.kind)), block(a.content, human(a.kind))]))
+    ]),
+    panel("Diff", [diff ? h(DiffView, { diff: diff.content }) : empty("No diff recorded yet.", "The diff appears after the code step.")]),
+    panel("Test result", [
+      h("p", `Harness: ${run.tests_status || "not recorded"} · ${run.test_attempts} attempt${run.test_attempts === 1 ? "" : "s"}`),
+      ...tests.map(a => h("details", { key: a.kind + a.attempt, open: a.kind === "test_output" && run.tests_status === "failed" },
+        [h("summary", `${human(a.kind)} · attempt ${a.attempt}`), block(a.content, human(a.kind))]))
+    ]),
+    reviewed ? panel("Independent review", [
+      h("p", { class: "muted" }, "Advisory reviewer verdicts, each bound to the approved spec hash and the reviewed diff hash. A review never replaces approval or harness tests."),
+      ...(d.reviews || []).map(r => h("p", { key: r.id }, [chip(r.verdict), ` round ${r.round} · ${r.provider} / ${r.model}${r.reason ? " · " + r.reason : ""} · diff ${String(r.diff_hash).slice(0, 12)}`])),
+      ...artifacts.filter(a => a.kind === "review").map(a => h("details", { key: "r" + a.attempt }, [h("summary", `Review round ${a.attempt}`), block(a.content, "Review")]))
+    ]) : null
+  ]);
+}
+// Confirmation for destructive actions (Reject, Cancel, Forget, Remove repo)
+// and for Approve. The caller awaits ctx.confirm.ask(...).
+import { button } from "../ui.js";
+import { Modal } from "./Modal.js";
+
+const { h } = window.Vue;
+
+export const ConfirmDialog = {
+  props: { confirm: { type: Object, required: true } },
+  setup(props) {
+    return () => {
+      const c = props.confirm, s = c.state;
+      if (!s.open) return null;
+      return h(Modal, { label: s.title, onClose: () => c.answer(false) }, () => [
+        h("h2", s.title),
+        s.message ? h("p", s.message) : null,
+        s.details.length ? h("dl", { class: "facts" }, s.details.flatMap(([k, v]) => [h("dt", k), h("dd", { class: "mono" }, v)])) : null,
+        h("div", { class: "actions" }, [
+          button(s.confirmLabel, () => c.answer(true), { kind: s.danger ? "danger" : "primary" }),
+          h("button", { type: "button", class: "btn", "data-autofocus": "", onClick: () => c.answer(false) }, "Keep it as is")
+        ])
+      ]);
+    };
+  }
+};
+// Accessible modal frame: focus moves in on open, Tab is trapped, Escape and a
+// backdrop click close it, and focus returns to the opener on close.
+const { h, ref, onMounted, onBeforeUnmount } = window.Vue;
+
+const focusable = 'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+export const Modal = {
+  props: { label: { type: String, required: true } },
+  emits: ["close"],
+  setup(props, { slots, emit }) {
+    const root = ref(null);
+    let previous = null;
+    onMounted(() => {
+      previous = document.activeElement;
+      const target = root.value.querySelector("[data-autofocus]") || root.value.querySelector(focusable) || root.value;
+      target.focus();
+    });
+    onBeforeUnmount(() => {
+      if (previous && document.contains(previous) && previous.focus) previous.focus();
+      else document.getElementById("main")?.focus();
+    });
+    function onKeydown(event) {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); emit("close"); return; }
+      if (event.key !== "Tab") return;
+      const items = [...root.value.querySelectorAll(focusable)];
+      if (!items.length) { event.preventDefault(); return; }
+      const first = items[0], last = items[items.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === root.value)) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+    return () => h("div", { class: "backdrop", onClick: event => { if (event.target === event.currentTarget) emit("close"); } },
+      h("div", { ref: root, class: "modal", role: "dialog", "aria-modal": "true", "aria-label": props.label, tabindex: -1, onKeydown }, slots.default()));
+  }
+};
+// A unified diff as text lines grouped per file. Lines are text nodes in a
+// keyboard-scrollable panel; diffs over 500 lines sit behind "Show all".
+import { parseDiff } from "../format.js";
+import { button } from "../ui.js";
+
+const { h, reactive } = window.Vue;
+const LIMIT = 500;
+
+export const DiffView = {
+  props: { diff: { type: String, default: "" } },
+  setup(props) {
+    const local = reactive({ all: false });
+    return () => {
+      const files = parseDiff(props.diff);
+      const total = files.reduce((n, f) => n + f.lines.length, 0);
+      let budget = local.all ? Infinity : LIMIT;
+      return h("div", { class: "diff" }, [
+        files.length > 1 ? h("ul", { class: "filetree", "aria-label": "Changed files" }, files.map(f => h("li", { key: f.path }, [
+          h("span", { class: "mono" }, f.path), h("span", { class: "add" }, ` +${f.adds}`), h("span", { class: "del" }, ` -${f.dels}`)]))) : null,
+        h("div", { class: "output diff-lines mono", tabindex: 0, role: "region", "aria-label": "Diff" }, files.flatMap(f => {
+          const shown = f.lines.slice(0, Math.max(0, budget));
+          budget -= shown.length;
+          return shown.map((line, i) => h("div", { class: "dl " + line.kind, key: f.path + i }, line.text || " "));
+        })),
+        !local.all && total > LIMIT ? button(`Show all ${total} lines`, () => { local.all = true; }) : null
+      ]);
+    };
+  }
+};
+// Package web embeds the browser interface. Run data comes from the JSON API.
+package web
+
+import (
+	"embed"
+	"encoding/json"
+	"html/template"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+)
+
+// VueVersion pins the global production build used in both delivery modes.
+const VueVersion = "3.5.13"
+
+// VueURL is the only third-party script loaded by the page.
+const VueURL = "https://cdn.jsdelivr.net/npm/vue@" + VueVersion + "/dist/vue.global.prod.js"
+
+// VueIntegrity is the SRI hash of VueURL, checked against jsDelivr and unpkg on 2026-11-11.
+// make vendor-vue verifies it before installing the downloaded build.
+const VueIntegrity = "sha384-W/1Fp/LgAYO/oTn9Gs+PbeWuMuq1eQCnUMPCeg8POmMYchhzxctjEqtbiCIxDOON"
+
+//go:embed assets shell.html
+var files embed.FS
+
+var shell = template.Must(template.ParseFS(files, "shell.html"))
+
+// State contains bootstrap data. Initial and Preview stay empty when protected
+// run data must be fetched after browser authentication.
+type State struct {
+	Page         string          `json:"page"`
+	RunID        int64           `json:"run_id,omitempty"`
+	AuthRequired bool            `json:"auth_required"`
+	Initial      json.RawMessage `json:"initial,omitempty"`
+	Preview      string          `json:"preview,omitempty"`
+	// Email is the verified Cloudflare Access login, shown in the header.
+	Email string `json:"email,omitempty"`
+}
+
+// Render writes a page shell. State remains an ordinary Go value so html/template
+// performs JSON serialization and script-context escaping, including </script>.
+func Render(w io.Writer, local bool, state State) error {
+	src := VueURL
+	if local {
+		src = "/assets/vue.global.prod.js"
+	}
+	return shell.Execute(w, struct {
+		Source    string
+		Integrity string
+		State     State
+	}{src, VueIntegrity, state})
+}
+
+// CSP permits the app, styles and API on this origin and only the pinned CDN
+// origin for Vue. Render functions avoid a runtime template compiler/eval grant.
+func CSP(local bool) string {
+	scripts := "'self'"
+	if !local {
+		scripts += " https://cdn.jsdelivr.net"
+	}
+	return "default-src 'none'; script-src " + scripts + "; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+}
+
+// assetNames is the complete, fixed list of files served under /assets/. Nothing
+43:	for _, action := range []string{"approve", "revise", "reject", "cancel", "retry"} {
+401:		case "approve":
+
+exec
+/bin/zsh -lc "sed -n '355,440p' internal/server/api.go; rg -n 'func .*Approve|Expected.*Hash|SpecHash|spec_hash' internal/runner internal/server/api*; git show development:internal/web/assets/app.js | sed -n '380,415p'; nl -ba internal/web/assets/components/RunDetail.js | sed -n '65,80p'; cat internal/web/assets/components/RunList.js; cat internal/web/assets/components/Sidebar.js | tail -18" in /Users/pappumishra/Documents/selfproject/patchbot-m29-dashboard
+ succeeded in 0ms:
+		return
+	}
+	action := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+	var err error
+	status := http.StatusOK
+	switch action {
+	case "revise":
+		var input struct {
+			Notes string `json:"notes"`
+		}
+		if !s.decode(w, r, &input, false) {
+			return
+		}
+		if strings.TrimSpace(input.Notes) == "" {
+			s.writeError(w, 400, "invalid_request", "revision notes are required")
+			return
+		}
+		err = s.runner.Revise(r.Context(), id, input.Notes)
+		status = http.StatusAccepted
+	case "retry":
+		var input struct {
+			Provider string `json:"provider"`
+			Model    string `json:"model"`
+		}
+		if !s.decode(w, r, &input, true) {
+			return
+		}
+		if !validModels(input.Model) || (input.Provider != "" && s.cfg.Providers[input.Provider] == nil) {
+			s.writeError(w, 400, "invalid_request", "invalid provider or model")
+			return
+		}
+		var run store.Run
+		run, err = s.runner.Retry(r.Context(), id, input.Provider, input.Model)
+		if err != nil {
+			s.respondError(w, err)
+			return
+		}
+		w.Header().Set("Location", fmt.Sprintf("/api/runs/%d", run.ID))
+		s.writeJSON(w, http.StatusAccepted, map[string]any{"run": publicRun(run)})
+		return
+	default:
+		var input struct{}
+		if !s.decode(w, r, &input, true) {
+			return
+		}
+		switch action {
+		case "approve":
+			err = s.runner.ApproveAndExecute(r.Context(), id, s.actor(r))
+			status = http.StatusAccepted
+		case "reject":
+			err = s.runner.Reject(r.Context(), id)
+		case "cancel":
+			err = s.runner.Cancel(r.Context(), id)
+			if err == nil {
+				s.manager.cancel(id)
+			}
+		}
+	}
+	if err != nil {
+		s.respondError(w, err)
+		return
+	}
+	run, err := s.db.GetRun(r.Context(), id)
+	if err != nil {
+		s.respondError(w, err)
+		return
+	}
+	s.writeJSON(w, status, map[string]any{"run": publicRun(run)})
+}
+
+func publicArtifact(name string) bool {
+	switch name {
+	case "diff", "baseline", "test_output", "review", "pr_title", "pr_body":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) artifact(w http.ResponseWriter, r *http.Request) {
+	if !s.method(w, r, http.MethodGet) {
+		return
+	}
+	id, ok := s.runID(w, r)
+	if !ok {
+		return
+internal/server/api_test.go:17:func TestAPIStartApprovePR(t *testing.T) {
+internal/runner/lifecycle.go:103:func (r *Runner) Approve(ctx context.Context, id int64, approver string) error {
+internal/runner/lifecycle.go:109:func (r *Runner) ApproveAndExecute(ctx context.Context, id int64, approver string) error {
+internal/runner/lifecycle.go:156:	return r.db.DecideRun(ctx, run.Status, store.StatusApproved, store.Approval{RunID: id, SpecVersion: spec.Version, SpecHash: spec.Hash, Decision: "approve", Actor: r.redactor.Redact(actor), Channel: channel, CreatedAt: r.now(), Review: r.freezeReview(run)}, run.Generation, phase)
+internal/runner/lifecycle.go:192:		err = r.db.DecideRun(ctx, run.Status, store.StatusRunning, store.Approval{RunID: id, SpecVersion: spec.Version, SpecHash: spec.Hash, Decision: "revise", Actor: r.redactor.Redact(actor), Channel: channel, CreatedAt: r.now()}, run.Generation)
+internal/runner/lifecycle.go:282:	return r.db.DecideRun(ctx, run.Status, store.StatusRejected, store.Approval{RunID: id, SpecVersion: spec.Version, SpecHash: spec.Hash, Decision: "reject", Actor: r.redactor.Redact(r.actorFor(ctx)), Channel: r.actionChannel(), CreatedAt: r.now()}, run.Generation)
+internal/runner/review_test.go:80:func TestReviewApprovePublishes(t *testing.T) {
+internal/runner/review_test.go:104:	if len(reviews) != 1 || reviews[0].Verdict != "approve" || reviews[0].SpecHash != spec.Hash || len(reviews[0].DiffHash) != 64 || reviews[0].TreeID == "" {
+internal/runner/review_test.go:154:func TestReviewRequestChangesRepairThenApprove(t *testing.T) {
+internal/runner/review.go:164:	record := store.Review{RunID: run.ID, SpecVersion: st.spec.Version, SpecHash: st.spec.Hash, DiffHash: snap.hash, BaseSHA: run.BaseSHA, TreeID: snap.tree, Provider: st.sel.Provider, Model: st.sel.Model}
+internal/runner/review.go:187:	payload, _ := json.Marshal(map[string]any{"round": saved.Round, "verdict": saved.Verdict, "reason": saved.Reason, "spec_hash": saved.SpecHash, "diff_hash": saved.DiffHash, "model": saved.Model, "repairs": code.ReviewRepairs})
+internal/runner/review.go:223:	fmt.Fprintf(&b, "Reviewer: %s / %s\nSpec v%d SHA-256 %s\nDiff SHA-256 %s\nTree %s\n", review.Provider, review.Model, review.SpecVersion, review.SpecHash, review.DiffHash, review.TreeID)
+internal/runner/review.go:252:	fmt.Fprintf(&b, "Verdict: **%s** (round %d; %s / %s). Bound to spec SHA-256 `%s` and diff SHA-256 `%s`.\n", st.last.Verdict, st.last.Round, st.last.Provider, st.last.Model, st.last.SpecHash, st.last.DiffHash)
+internal/runner/phases.go:328:	approval.RunID, approval.SpecVersion, approval.SpecHash = run.ID, spec.Version, spec.Hash
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-0E2v6dkn' (errno=Operation not permitted)
+      function action(name, body = {}) {
+        if (!can(name) || s.busy) return;
+        void work(async () => {
+          let result;
+          try { result = await send(`/api/runs/${initial.run_id}/${name}`, body); }
+          finally { if (!s.locked) await loadDetail(true); }
+          if (name === "retry") { navigateRun(result.run); return; }
+          s.notice = human(name) + " accepted.";
+          s.notes = "";
+        });
+      }
+      function edit() {
+        if (!can("edit") || s.busy) return;
+        void work(async () => {
+          const match = s.detail.latest_spec.body_md.match(/\n<!-- patchbot:spec-data ([A-Za-z0-9+/=]+) -->\n$/);
+          if (!match) throw new Error("This specification has no editable structured fields.");
+          const draft = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(match[1]), c => c.charCodeAt(0))));
+          s.editor = { summary: draft.summary, files: draft.files || [] };
+          for (const key of ["acceptance_criteria", "risks", "test_plan", "open_questions"]) s.editor[key] = (draft[key] || []).join("\n");
+        });
+      }
+      function saveSpec(event) {
+        event.preventDefault();
+        if (!can("edit") || s.busy) return;
+        void work(async () => {
+          const draft = { summary: s.editor.summary, files: s.editor.files.map(file => ({ path: file.path, change: file.change })) };
+          for (const key of ["acceptance_criteria", "risks", "test_plan", "open_questions"]) draft[key] = lines(s.editor[key]);
+          try { await send(`/api/runs/${initial.run_id}/spec`, draft, "PUT"); }
+          finally { if (!s.locked) await loadDetail(true); }
+          s.editor = null; s.version = "";
+          s.notice = "New specification version saved. Any prior approval is cleared.";
+        });
+      }
+      function login(event) {
+        event.preventDefault();
+        void work(async () => {
+    65	      });
+    66	    }
+    67	    async function approve() {
+    68	      const spec = s.detail?.latest_spec;
+    69	      if (!can("approve") || !spec) return;
+    70	      const ok = await confirm.ask({ title: `Approve specification v${spec.version}?`, confirmLabel: `Approve v${spec.version} · ${shortHash(spec.hash)}`,
+    71	        message: "patchbot will start changing code for exactly this version. Editing it later clears the approval.",
+    72	        details: [["Version", String(spec.version)], ["Hash", shortHash(spec.hash)], ["SHA-256", spec.hash]] });
+    73	      if (ok) await act("approve");
+    74	    }
+    75	    async function reject() {
+    76	      if (!can("reject")) return;
+    77	      if (await confirm.ask({ title: "Reject this specification?", message: "The run stops. You can retry later to start over.", confirmLabel: "Reject", danger: true })) await act("reject");
+    78	    }
+    79	    async function cancel() {
+    80	      if (!can("cancel")) return;
+// All runs with filters and the API's opaque continuation cursor. Filters and
+// cursor survive reload in the URL; filter edits are debounced 300 ms and the
+// previous request is aborted.
+import { human, statuses } from "../format.js";
+import { button, empty, errorPanel, field, input, loading, select } from "../ui.js";
+import { useTask } from "../composables/useTask.js";
+import { runCard } from "./RunCard.js";
+
+const { h, reactive, onMounted, onUnmounted } = window.Vue;
+
+export const RunList = {
+  props: { ctx: { type: Object, required: true } },
+  setup(props) {
+    const { api } = props.ctx;
+    const query = new URLSearchParams(location.search);
+    const filters = reactive({ repo: query.get("repo") || "", issue: query.get("issue") || "", status: query.get("status") || "" });
+    const s = reactive({ ready: false, runs: [], cursor: "", first: query.get("cursor") || "", repos: [] });
+    const task = useTask();
+    let controller = null, debounce = null, timer = null;
+
+    async function load(cursor) {
+      if (controller) controller.abort();
+      controller = new AbortController();
+      const params = new URLSearchParams({ limit: "25" });
+      for (const key of ["repo", "issue", "status"]) if (filters[key]) params.set(key, filters[key]);
+      if (cursor) params.set("cursor", cursor);
+      const page = await api.request("/api/runs?" + params, { signal: controller.signal });
+      s.runs = page.runs; s.cursor = page.next_cursor; s.first = cursor; s.ready = true;
+      history.replaceState(null, "", "/runs" + (params.size > 1 ? "?" + params : ""));
+    }
+    const go = cursor => task.run(() => load(cursor).catch(error => { if (error.name !== "AbortError") throw error; }));
+    function filtered() { clearTimeout(debounce); debounce = setTimeout(() => void go(""), 300); }
+    onMounted(() => {
+      void go(s.first);
+      api.request("/api/providers").then(body => { s.repos = body.repos; }).catch(() => { /* Filter falls back to typing. */ });
+      timer = setInterval(() => { if (!task.state.busy && !api.state.locked) void go(s.first); }, 15000);
+    });
+    onUnmounted(() => { if (controller) controller.abort(); clearTimeout(debounce); clearInterval(timer); });
+
+    return () => h("div", [
+      h("h1", "Runs"),
+      h("form", { class: "filters", role: "search", onSubmit: event => { event.preventDefault(); clearTimeout(debounce); void go(""); } }, [
+        field("Repository", select(filters, "repo", [["", "All repositories"], ...s.repos.map(r => [r, r])], filtered)),
+        field("Issue", h("input", { type: "number", min: 1, step: 1, value: filters.issue, onInput: e => { filters.issue = e.target.value; filtered(); } })),
+        field("Status", select(filters, "status", [["", "All statuses"], ...statuses.map(v => [v, human(v)])], filtered))
+      ]),
+      task.state.error ? errorPanel(task.state.error, () => go(s.first)) : null,
+      !s.ready && !task.state.error ? loading("Loading runs…") : null,
+      s.ready && !s.runs.length ? empty("No runs match these filters.", "Clear a filter, or start a new request.", h("p", h("a", { class: "btn", href: "/runs/new" }, "New request"))) : null,
+      s.runs.length ? h("ul", { class: "cards" }, s.runs.map(run => runCard(run))) : null,
+      h("div", { class: "actions" }, [
+        button("First page", () => go(""), { disabled: task.state.busy || !s.first }),
+        button("Older runs", () => go(s.cursor), { disabled: task.state.busy || !s.cursor })
+      ])
+    ]);
+  }
+};
+            return h("li", { key: item.page }, h("a", { href: item.href, class: "navlink", "aria-current": item.page === current ? "page" : undefined }, [
+              icon(item.icon, 18), h("span", item.label),
+              n ? h("span", { class: "count" + (item.badge === "inbox" ? " alert" : ""), "aria-label": `${n} ${item.badge === "inbox" ? "waiting for you" : item.badge === "running" ? "running" : "pending"}` }, String(n)) : null
+            ]));
+          }))),
+          h("div", { class: "side-foot" }, [
+            ctx.session.state.email ? h("p", { class: "whoami" }, ["Signed in as ", h("strong", ctx.session.state.email)]) : null,
+            h("div", { class: "actions" }, [
+              button(dark ? "Light theme" : "Dark theme", ctx.theme.toggle, { icon: dark ? "sun" : "moon", kind: "quiet" }),
+              ctx.api.state.authRequired && !ctx.api.state.locked ? button("Lock this tab", ctx.api.forget, { kind: "quiet" }) : null,
+              button("Shortcuts", ctx.openHelp, { icon: "keyboard", kind: "quiet" })
+            ])
+          ])
+        ])
+      ]);
+    };
+  }
+};
+
+exec
+/bin/zsh -lc "sed -n '100,160p' internal/runner/lifecycle.go; rg -n 'can_edit|CanEdit|EditSpec' internal/server internal/runner; rg -n 'innerHTML|outerHTML|insertAdjacentHTML|v-html|setAttribute|src:|style:' internal/web/assets --glob '"'!vue*'"'; git status --short" in /Users/pappumishra/Documents/selfproject/patchbot-m29-dashboard
+ succeeded in 0ms:
+
+// Approve accepts only an approval-ready latest spec, under a named local actor.
+// Execute is separate so a server can dispatch coding without blocking an action.
+func (r *Runner) Approve(ctx context.Context, id int64, approver string) error {
+	return r.approve(ctx, id, approver, r.actionChannel(), nil, false)
+}
+
+// ApproveAndExecute reserves execution capacity before recording a decision.
+// The approval and asynchronous execution claim are committed together.
+func (r *Runner) ApproveAndExecute(ctx context.Context, id int64, approver string) error {
+	return r.approve(ctx, id, approver, r.actionChannel(), nil, true)
+}
+
+func (r *Runner) approve(ctx context.Context, id int64, actor, channel string, expected *store.Spec, execute bool) error {
+	if !execute {
+		return r.approveDecision(ctx, id, actor, channel, expected, store.PhaseRefine)
+	}
+	ctx, release, err := r.admit(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	phase := store.PhaseRefine
+	if r.opts.Dispatch != nil {
+		phase = store.PhaseClone
+	}
+	if err := r.approveDecision(ctx, id, actor, channel, expected, phase); err != nil {
+		return err
+	}
+	return r.dispatch(ctx, id, func(work context.Context) error { return r.execute(work, id) })
+}
+
+func (r *Runner) approveDecision(ctx context.Context, id int64, actor, channel string, expected *store.Spec, phase store.Phase) error {
+	lock := r.control(id)
+	lock.Lock()
+	defer lock.Unlock()
+	run, err := r.db.GetRun(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := r.requireActionState(ctx, run, "approve"); err != nil {
+		return err
+	}
+	spec, err := r.checkedSpec(ctx, run)
+	if err != nil {
+		return err
+	}
+	if expected != nil && (spec.Version != expected.Version || spec.Hash != expected.Hash) {
+		return store.ErrConflict
+	}
+	if err := r.checkActionSpec(spec, "approve"); err != nil {
+		return err
+	}
+	if strings.TrimSpace(actor) == "" {
+		return errors.New("approver name is required")
+	}
+	return r.db.DecideRun(ctx, run.Status, store.StatusApproved, store.Approval{RunID: id, SpecVersion: spec.Version, SpecHash: spec.Hash, Decision: "approve", Actor: r.redactor.Redact(actor), Channel: channel, CreatedAt: r.now(), Review: r.freezeReview(run)}, run.Generation, phase)
+}
+
+// Revise records notes, invalidates the previous decision and reruns refinement.
+func (r *Runner) Revise(ctx context.Context, id int64, notes string) error {
+internal/runner/runner_test.go:441:				if _, err := f.r.EditSpec(t.Context(), run.ID, edited); err != nil {
+internal/runner/recovery_test.go:166:				if _, err := f.r.EditSpec(t.Context(), run.ID, d); err != nil {
+internal/server/api.go:341:	spec, err := s.runner.EditSpec(r.Context(), id, draft)
+internal/runner/findings_test.go:78:						if _, err := other.EditSpec(t.Context(), run.ID, d); err != nil {
+internal/runner/findings_test.go:185:// Finding 4: cancellation wins after EditSpec validates its source state.
+internal/runner/findings_test.go:197:	if _, err := service.EditSpec(t.Context(), run.ID, draft()); !errors.Is(err, store.ErrConflict) {
+internal/server/README.md:54:  `capabilities`: `can_approve`, `can_edit`, `can_revise`, `can_reject`,
+internal/runner/capabilities.go:19:	CanEdit    bool `json:"can_edit"`
+internal/runner/capabilities.go:52:		CanApprove: allowed("approve"), CanEdit: allowed("edit"),
+internal/runner/lifecycle.go:219:// EditSpec creates a canonical UI version; an older approval cannot authorize it.
+internal/runner/lifecycle.go:220:func (r *Runner) EditSpec(ctx context.Context, id int64, draft tools.SpecDraft) (store.Spec, error) {
+internal/runner/lifecycle.go:255:	spec, err := r.db.EditSpec(ctx, store.SpecEdit{
+internal/runner/README.md:14:`EditSpec` appends a canonical UI version. Both invalidate the prior approval.
+internal/server/capabilities_test.go:28:	decision := runner.Capabilities{CanApprove: true, CanEdit: true, CanRevise: true, CanReject: true, CanCancel: true}
+internal/server/capabilities_test.go:29:	editable := runner.Capabilities{CanEdit: true, CanRevise: true, CanReject: true, CanCancel: true}
+internal/server/capabilities_test.go:115:					allowed := map[string]bool{"approve": capabilities.CanApprove, "edit": capabilities.CanEdit, "revise": capabilities.CanRevise, "reject": capabilities.CanReject, "cancel": capabilities.CanCancel, "retry": capabilities.CanRetry}[action]
+internal/server/capabilities_test.go:154:	if !f.capabilities(run.ID).CanEdit {
+internal/server/capabilities_test.go:164:	if c := f.capabilities(run.ID); c.CanEdit || c.CanRevise || !c.CanApprove {
+internal/server/capabilities_test.go:168:	if c := f.capabilities(run.ID); c.CanEdit || c.CanRevise || c.CanApprove || c.CanReject || !c.CanRetry {
+internal/web/assets/app.css:63:.sidebar ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+internal/web/assets/app.css:104:.cards { list-style: none; padding: 0; display: grid; gap: var(--space-3); }
+internal/web/assets/app.css:132:.stepper { list-style: none; display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); padding: 0; margin: var(--space-4) 0; }
+internal/web/assets/app.css:160:.checks { list-style: none; padding: 0; }
+internal/web/assets/app.css:172:.filetree { list-style: none; padding: 0; font-size: .875rem; }
+internal/web/assets/app.css:177:.events ol { list-style: none; padding: 0; margin: 0; }
+git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+git: error: couldn't create cache file '/tmp/xcrun_db-e2bLjwej' (errno=Operation not permitted)
+
+codex
+- **High — [RunDetail.js:73](/Users/pappumishra/Documents/selfproject/patchbot-m29-dashboard/internal/web/assets/components/RunDetail.js:73): Approval is not bound to the confirmed spec.** Open confirmation for v1, edit the spec to v2 in another tab, then confirm: the empty approval request authorizes the server’s latest spec, v2, despite the dialog promising v1’s hash. The underlying API gap predates this rewrite; the new confirmation does not enforce its guarantee. **Fix:** send the captured version/hash and atomically reject approval if either differs from the latest spec.
+
+No other concrete findings in the requested XSS surfaces, unlock flow, asset allow-list, CSP, or SSE/Last-Event-ID handling.
+tokens used
+51,647
+- **High — [RunDetail.js:73](/Users/pappumishra/Documents/selfproject/patchbot-m29-dashboard/internal/web/assets/components/RunDetail.js:73): Approval is not bound to the confirmed spec.** Open confirmation for v1, edit the spec to v2 in another tab, then confirm: the empty approval request authorizes the server’s latest spec, v2, despite the dialog promising v1’s hash. The underlying API gap predates this rewrite; the new confirmation does not enforce its guarantee. **Fix:** send the captured version/hash and atomically reject approval if either differs from the latest spec.
+
+No other concrete findings in the requested XSS surfaces, unlock flow, asset allow-list, CSP, or SSE/Last-Event-ID handling.
