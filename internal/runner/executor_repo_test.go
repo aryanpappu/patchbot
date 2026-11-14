@@ -11,10 +11,20 @@ import (
 
 	"github.com/aryanpappu/patchbot/internal/config"
 	"github.com/aryanpappu/patchbot/internal/execx"
+	"github.com/aryanpappu/patchbot/internal/repos"
 	"github.com/aryanpappu/patchbot/internal/secret"
 	"github.com/aryanpappu/patchbot/internal/store"
 	"github.com/aryanpappu/patchbot/internal/testpath"
 )
+
+func testRegistry(t *testing.T, cfg *config.Config, db store.Store) *repos.Registry {
+	t.Helper()
+	reg, err := repos.New(t.Context(), cfg, db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reg
+}
 
 func repoImage(c string) string { return "example.test/img:1@sha256:" + strings.Repeat(c, 64) }
 
@@ -114,7 +124,7 @@ func TestRunExecutorFreezesAndRecordsImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &Runner{cfg: cfg, db: db, redactor: secret.NewRedactor()}
+	r := &Runner{cfg: cfg, db: db, redactor: secret.NewRedactor(), repos: testRegistry(t, cfg, db)}
 	first, err := r.runExecutor(t.Context(), run)
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +175,7 @@ func TestRunExecutorRefusesToFreezeRedactableSettings(t *testing.T) {
 	}
 	red := secret.NewRedactor()
 	red.AddSecrets(secret.New(token))
-	r := &Runner{cfg: cfg, db: db, redactor: red}
+	r := &Runner{cfg: cfg, db: db, redactor: red, repos: testRegistry(t, cfg, db)}
 	if _, err := r.runExecutor(t.Context(), run); err == nil || strings.Contains(err.Error(), token) {
 		t.Fatalf("want a fail-closed error without the value, got %v", err)
 	}

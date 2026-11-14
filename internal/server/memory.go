@@ -35,7 +35,7 @@ func (s *Server) memoryList(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	// Only allowlisted repositories are listed; others cannot be decided either.
 	filter := store.MemoryFilter{Repo: strings.ToLower(strings.TrimSpace(query.Get("repo"))), Repos: s.allowlistedRepos(), Kind: query.Get("kind"), Limit: 500}
-	if filter.Repo != "" && s.cfg.Repos[filter.Repo] == nil {
+	if filter.Repo != "" && !s.repos.Has(filter.Repo) {
 		s.writeError(w, 400, "invalid_request", "require an allowlisted repo")
 		return
 	}
@@ -81,11 +81,7 @@ func memoryView(e store.MemoryEntry) view {
 }
 
 func (s *Server) allowlistedRepos() []string {
-	repos := make([]string, 0, len(s.cfg.Repos))
-	for name := range s.cfg.Repos {
-		repos = append(repos, strings.ToLower(name))
-	}
-	return repos
+	return s.repos.Names()
 }
 
 func (s *Server) memoryAdd(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +93,7 @@ func (s *Server) memoryAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo := strings.ToLower(strings.TrimSpace(input.Repo))
-	if s.cfg.Repos[repo] == nil {
+	if !s.repos.Has(repo) {
 		s.writeError(w, 400, "invalid_request", "require an allowlisted repo")
 		return
 	}
@@ -137,7 +133,7 @@ func (s *Server) memoryDecide(w http.ResponseWriter, r *http.Request) {
 	}
 	action := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
 	entry, err := memory.Decide(r.Context(), s.db, memory.DecideInput{ID: id, Action: action, Actor: s.actor(r), Channel: "ui", HashPrefix: input.ContentHash,
-		Allowed: func(repo string) bool { return s.cfg.Repos[repo] != nil }})
+		Allowed: func(repo string) bool { return s.repos.Has(repo) }})
 	switch {
 	case errors.Is(err, memory.ErrHashRequired):
 		s.writeError(w, 400, "invalid_request", memory.ErrHashRequired.Error())

@@ -32,8 +32,14 @@ type RepoExecutor struct {
 // RepoExecutor resolves the per-repository overrides. An unknown repo or ""
 // yields the [executor] values.
 func (c *Config) RepoExecutor(repo string) RepoExecutor {
+	return c.ExecutorFor(repo, c.Repos[repo])
+}
+
+// ExecutorFor resolves the overrides of an explicit repository entry (for
+// example a dashboard repository or a run-frozen copy); nil yields [executor].
+func (c *Config) ExecutorFor(repo string, r *Repo) RepoExecutor {
 	out := RepoExecutor{Image: c.Executor.Image, Path: slices.Clone(c.Executor.Path), ImageSource: "executor.image"}
-	if r := c.Repos[repo]; r != nil {
+	if r != nil {
 		if r.Image != "" {
 			out.Image, out.ImageSource = r.Image, fmt.Sprintf("repos.%q.image", repo)
 		}

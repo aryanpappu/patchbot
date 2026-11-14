@@ -18,6 +18,7 @@ import (
 
 	"github.com/aryanpappu/patchbot/internal/config"
 	"github.com/aryanpappu/patchbot/internal/memory"
+	"github.com/aryanpappu/patchbot/internal/repos"
 	"github.com/aryanpappu/patchbot/internal/secret"
 	"github.com/aryanpappu/patchbot/internal/store"
 	"github.com/aryanpappu/patchbot/internal/tools"
@@ -167,13 +168,14 @@ func (a *App) runMemory(args []string) int {
 }
 
 func (a *App) executeMemory(ctx context.Context, cfg *config.Config, db store.Store, redactor *secret.Redactor, cmd memoryCommand) error {
-	allowed := func(repo string) bool { return cfg.Repos[repo] != nil }
+	registry, err := repos.New(ctx, cfg, db, redactor.Redact)
+	if err != nil {
+		return err
+	}
+	allowed := registry.Has
 	switch cmd.action {
 	case "list":
-		repos := make([]string, 0, len(cfg.Repos))
-		for name := range cfg.Repos {
-			repos = append(repos, name)
-		}
+		repos := registry.Names()
 		repo := strings.ToLower(strings.TrimSpace(cmd.repo))
 		if repo != "" && !allowed(repo) {
 			return errors.New("repository is not in configuration allowlist")
@@ -201,7 +203,7 @@ func (a *App) executeMemory(ctx context.Context, cfg *config.Config, db store.St
 		return table.Flush()
 	case "add":
 		repo := strings.ToLower(strings.TrimSpace(cmd.repo))
-		if cfg.Repos[repo] == nil {
+		if !registry.Has(repo) {
 			return errors.New("repository is not in configuration allowlist")
 		}
 		entry, err := memory.AddLesson(ctx, db, cfg.Redactor(), memory.LessonInput{Repo: repo, Text: cmd.text, Source: store.MemorySourceOperator, Actor: cfg.Approval.LocalActor, Channel: "cli"})

@@ -21,6 +21,7 @@ import (
 	"github.com/aryanpappu/patchbot/internal/gitx"
 	"github.com/aryanpappu/patchbot/internal/llm"
 	"github.com/aryanpappu/patchbot/internal/llm/providers"
+	"github.com/aryanpappu/patchbot/internal/repos"
 	"github.com/aryanpappu/patchbot/internal/secret"
 	"github.com/aryanpappu/patchbot/internal/store"
 	"github.com/aryanpappu/patchbot/internal/tools"
@@ -55,8 +56,11 @@ type Options struct {
 	GitHubAPI    string
 	GitHubHTTP   *http.Client
 	Constructors llm.Constructors
-	Clone        func(context.Context, gitx.CloneOptions) (*gitx.Repo, error)
-	Executor     func(dir string, repo config.RepoExecutor) (execx.Executor, error)
+	// Repos is the effective repository allowlist. Nil builds one from the
+	// configuration and the dashboard repositories in the database.
+	Repos    *repos.Registry
+	Clone    func(context.Context, gitx.CloneOptions) (*gitx.Repo, error)
+	Executor func(dir string, repo config.RepoExecutor) (execx.Executor, error)
 	// ContainerSweep removes containers left by a previous process. Nil uses
 	// execx.SweepContainers when [executor] kind is container.
 	ContainerSweep    func(context.Context) (int, error)
@@ -90,6 +94,9 @@ type Runner struct {
 	tokens   github.RepoTokenSource
 	opts     Options
 	redactor *secret.Redactor
+	repos    *repos.Registry
+	// freezeMu makes the first freeze of a run's repository settings win.
+	freezeMu sync.Mutex
 	mu       sync.Mutex
 	active   map[int64]context.CancelFunc
 	controls map[int64]*sync.Mutex
@@ -143,6 +150,13 @@ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) 
 	}
 	r := &Runner{cfg: cfg, db: db, opts: opts, redactor: cfg.Redactor(), active: make(map[int64]context.CancelFunc), controls: make(map[int64]*sync.Mutex)}
 	r.redactor.Extend(opts.Redactor)
+	r.repos = opts.Repos
+	if r.repos == nil {
+		var err error
+		if r.repos, err = repos.New(ctx, cfg, db, r.redactor.Redact); err != nil {
+			return nil, err
+		}
+	}
 	if err := r.setupGitHub(ctx); err != nil {
 		return nil, err
 	}
@@ -239,7 +253,7 @@ func (r *Runner) prepare(req Request) (store.Run, error) {
 	if !repoPattern.MatchString(req.Repo) || req.Issue <= 0 {
 		return store.Run{}, errors.New("require --repo owner/name and a positive --issue")
 	}
-	if r.cfg.Repos[req.Repo] == nil {
+	if !r.repos.Has(req.Repo) {
 		return store.Run{}, errors.New("repository is not in configuration allowlist")
 	}
 	if req.Mode == "" {
@@ -329,6 +343,11 @@ func (r *Runner) start(ctx context.Context, run store.Run, reuse *store.Spec) (s
 	run, err = r.db.CreateRun(ctx, run)
 	if err != nil {
 		return run, err
+	}
+	// The run keeps the repository settings it starts with, whatever the
+	// dashboard changes while it is in flight.
+	if _, ferr := r.runRepo(ctx, run); ferr != nil {
+		return run, errors.Join(ferr, r.fail(ctx, run, ferr))
 	}
 	id := run.ID
 	initial := run

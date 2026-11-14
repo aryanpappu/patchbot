@@ -67,7 +67,8 @@
         error: "", notice: "", providers: [], repos: [], models: [], modelWarning: "",
         runs: [], cursor: "", awaiting: null, detail: initial.initial || null, artifacts: [], events: [],
         streamStatus: "Connecting", version: "", compare: "", editor: null, notes: "",
-        memory: { enabled: true, entries: [] }
+        memory: { enabled: true, entries: [] },
+        repoList: [], repoContainer: false, repoEditor: null, repoRemove: "", repoAudit: null
       });
       const query = new URLSearchParams(location.search);
       const filters = reactive({ repo: query.get("repo") || "", issue: query.get("issue") || "", status: query.get("status") || "" });
@@ -89,6 +90,7 @@
         s.runs = []; s.events = []; s.artifacts = []; s.editor = null;
         s.providers = []; s.repos = []; s.models = []; s.awaiting = null;
         s.memory = { enabled: true, entries: [] };
+        s.repoList = []; s.repoEditor = null; s.repoAudit = null; s.repoRemove = "";
         lastID = 0;
         modelRequest++;
         if (stopStream) stopStream.abort();
@@ -318,8 +320,9 @@
           stopStream = new AbortController();
           void follow(stopStream.signal);
         } else if (initial.page === "runs") { await loadRuns(); await loadMemory(); }
+        else if (initial.page === "repos") await loadRepos();
         s.ready = true;
-        if (initial.page !== "runs") void loadModels();
+        if (initial.page !== "runs" && initial.page !== "repos") void loadModels();
       }
       const navigateRun = run => { location.assign(`/runs/${run.id}`); };
       function start(event) {
@@ -417,6 +420,107 @@
           s.locked = false;
           await boot();
         });
+      }
+      // Repository management (M24). Commands are edited as one argv JSON array
+      // per line ("id: [\"prog\", \"arg\"]"), never as a shell string; the server
+      // validates everything again. Every value shown is a text node.
+      const argvText = commands => Object.keys(commands || {}).sort().map(id => id + ": " + JSON.stringify(commands[id])).join("\n");
+      function parseCommands(value) {
+        const commands = {};
+        for (const line of lines(value)) {
+          const cut = line.indexOf(":");
+          if (cut < 1) throw new Error("Write each command as: id: [\"program\", \"arg\", ...]");
+          let argv;
+          try { argv = JSON.parse(line.slice(cut + 1)); } catch { argv = null; }
+          if (!Array.isArray(argv) || !argv.length || !argv.every(a => typeof a === "string")) {
+            throw new Error("Command " + line.slice(0, cut).trim() + " must be a JSON array of strings (argv, no shell).");
+          }
+          commands[line.slice(0, cut).trim()] = argv;
+        }
+        return commands;
+      }
+      async function loadRepos() {
+        const result = await request("/api/repos");
+        s.repoList = result.repos; s.repoContainer = !!result.container;
+        s.repos = result.repos.map(r => r.name);
+      }
+      const newRepoEditor = (entry) => ({
+        mode: entry ? "edit" : "add", name: entry?.name || "", version: entry?.version || 0,
+        commands: argvText(entry?.settings.commands), test: entry?.settings.test_command || "",
+        protectedPaths: (entry?.settings.protected || []).join("\n"), image: entry?.settings.image || "",
+        path: (entry?.settings.path || []).join("\n")
+      });
+      function saveRepo(event) {
+        event.preventDefault();
+        const e = s.repoEditor;
+        void work(async () => {
+          const settings = { commands: parseCommands(e.commands), test_command: e.test.trim(), protected: lines(e.protectedPaths) };
+          // Blank image/PATH are omitted so the repository inherits [executor].
+          if (e.image.trim()) settings.image = e.image.trim();
+          if (lines(e.path).length) settings.path = lines(e.path);
+          let result;
+          if (e.mode === "add") result = await send("/api/repos", { name: e.name.trim(), settings });
+          else result = await send("/api/repos/" + e.name, { version: e.version, settings }, "PUT");
+          s.repoEditor = null;
+          s.notice = (e.mode === "add" ? "Repository added." : "Repository saved.") + (result.github ? " GitHub check: " + result.github.message : "");
+          await loadRepos();
+        });
+      }
+      function removeRepo(name) {
+        void work(async () => {
+          s.repoRemove = "";
+          try { await request("/api/repos/" + name, { method: "DELETE" }); }
+          finally { if (!s.locked) await loadRepos(); }
+          s.notice = "Repository " + name + " removed. Run history is kept.";
+        });
+      }
+      function showAudit(name) {
+        void work(async () => { s.repoAudit = { repo: name, rows: (await request(`/api/repos/${name}/audit`)).audit }; });
+      }
+      function repoEditorView() {
+        const e = s.repoEditor;
+        return h("form", { class: "panel", onSubmit: saveRepo }, [
+          h("h2", e.mode === "add" ? "Add repository" : "Edit " + e.name),
+          h("p", "Commands run without a shell, inside the sandbox, with no network. They decide what executes on run code, so review them like code."),
+          e.mode === "add" ? field("Repository (owner/name)", input(e, "name", { required: true, maxlength: 140, autocomplete: "off" })) : null,
+          field("Commands (one per line: id: JSON argv array)", area(e, "commands", { rows: 5, spellcheck: false })),
+          field("Test command ID", input(e, "test", { maxlength: 32 })),
+          field("Extra protected paths (one per line; .github/workflows is always protected)", area(e, "protectedPaths", { rows: 3, spellcheck: false })),
+          s.repoContainer ? field("Container image (name@sha256:digest)", input(e, "image", { maxlength: 512, spellcheck: false })) : null,
+          s.repoContainer ? field("Container PATH (one directory per line)", area(e, "path", { rows: 2, spellcheck: false })) : null,
+          h("div", { class: "actions" }, [h("button", { type: "submit", disabled: s.busy }, e.mode === "add" ? "Add repository" : "Save changes"),
+            button("Cancel", () => { s.repoEditor = null; })])
+        ]);
+      }
+      function reposView() {
+        return [h("h1", "Repositories"),
+          h("p", "Repositories from the config file are read-only here. Changes apply to new runs; a run in flight keeps the settings it started with."),
+          s.repoEditor ? repoEditorView() : button("Add repository", () => { s.repoEditor = newRepoEditor(null); }, s.busy),
+          s.repoList.length ? h("ul", { class: "runs" }, s.repoList.map(r => h("li", { key: r.name, class: "panel" }, [
+            h("h2", r.name), h("span", { class: "chip" }, r.source === "config" ? "config file (read-only)" : "dashboard · v" + r.version),
+            h("dl", { class: "counters" }, [
+              h("dt", "Commands"), h("dd", h("pre", { class: "output", tabindex: 0 }, argvText(r.settings.commands) || "none")),
+              h("dt", "Test command"), h("dd", r.settings.test_command || "default (test) if defined"),
+              h("dt", "Protected"), h("dd", [...(r.builtin_protected || []), ...(r.settings.protected || [])].join(", ")),
+              r.settings.image ? h("dt", "Image") : null, r.settings.image ? h("dd", r.settings.image) : null,
+              r.updated_by ? h("dt", "Last change") : null, r.updated_by ? h("dd", r.updated_by + " · " + r.updated_at) : null
+            ]),
+            h("div", { class: "actions" }, [
+              r.source === "dashboard" ? button("Edit", () => { s.repoEditor = newRepoEditor(r); }, s.busy) : null,
+              r.source === "dashboard" ? button("Remove", () => { s.repoRemove = r.name; }, s.busy) : null,
+              button("Audit", () => showAudit(r.name), s.busy)
+            ]),
+            s.repoRemove === r.name ? h("div", { class: "warning", role: "alertdialog", "aria-label": "Confirm removal" }, [
+              h("p", `Remove ${r.name}? New runs for it stop immediately. This is refused while it has active runs; history is kept.`),
+              h("div", { class: "actions" }, [button("Confirm removal", () => removeRepo(r.name), s.busy), button("Keep it", () => { s.repoRemove = ""; })])
+            ]) : null
+          ]))) : h("p", "No repositories are configured."),
+          s.repoAudit ? panel("Audit: " + s.repoAudit.repo, [s.repoAudit.rows.length ? h("ol", s.repoAudit.rows.map(a => h("li", { key: a.id }, [
+            h("strong", `${a.action} · ${a.actor} · ${a.channel} · ${a.at}`),
+            a.before ? h("details", [h("summary", "Before"), block(a.before)]) : null,
+            a.after ? h("details", [h("summary", "After"), block(a.after)]) : null
+          ]))) : h("p", "No dashboard changes recorded."), button("Close", () => { s.repoAudit = null; })]) : null
+        ];
       }
       function newView() {
         return [h("h1", "New run"),
@@ -601,7 +705,7 @@
           field("UI token", input(s, "tokenInput", { type: "password", required: true, autocomplete: "off", autofocus: true })),
           h("button", { type: "submit", disabled: s.busy }, "Unlock")
         ]) : [initial.auth_required ? button("Lock this tab", forgetToken) : null,
-          !s.ready ? h("p", { role: "status" }, "Loading…") : initial.page === "new" ? newView() : initial.page === "detail" ? detailView() : listView()
+          !s.ready ? h("p", { role: "status" }, "Loading…") : initial.page === "new" ? newView() : initial.page === "repos" ? reposView() : initial.page === "detail" ? detailView() : listView()
         ]
       ]);
     }

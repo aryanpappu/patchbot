@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,7 +10,9 @@ import (
 	"strings"
 
 	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/repos"
 	"github.com/aryanpappu/patchbot/internal/secret"
+	"github.com/aryanpappu/patchbot/internal/store"
 )
 
 const configUsage = `Usage: patchbot config <check|show> [--config FILE]
@@ -95,6 +98,7 @@ func (a *App) configShow(cfg *config.Config) int {
 		_, _ = fmt.Fprintf(a.Stderr, "patchbot config show: %s\n", cfg.Redactor().Redact(err.Error()))
 		return 1
 	}
+	a.showDashboardRepos(cfg)
 	// An invalid config is still shown, which helps to fix it, but the
 	// command says so and fails.
 	if err := cfg.Validate(); err != nil {
@@ -153,4 +157,23 @@ func (a *App) credentialWarnings() []string {
 		}
 	}
 	return warnings
+}
+
+// showDashboardRepos lists the repositories managed from the dashboard, which
+// are stored in the database and are not part of the file. They are printed as
+// comments so the output stays a valid config.
+func (a *App) showDashboardRepos(cfg *config.Config) {
+	recs, err := store.ReadDashboardRepos(context.Background(), cfg.DatabasePath())
+	if err != nil || len(recs) == 0 {
+		return
+	}
+	red := cfg.Redactor()
+	_, dashboard, problems := repos.Merge(cfg, recs)
+	_, _ = fmt.Fprintln(a.Stdout, "\n# Repositories managed in the dashboard (source: dashboard, stored in the database; edit them in the UI)")
+	for _, name := range dashboard {
+		_, _ = fmt.Fprintf(a.Stdout, "# repos.%q\n", red.Redact(name))
+	}
+	for name, perr := range problems {
+		_, _ = fmt.Fprintf(a.Stdout, "# repos.%q ignored: %s\n", red.Redact(name), red.Redact(strings.Join(strings.Fields(perr.Error()), " ")))
+	}
 }

@@ -237,7 +237,11 @@ func (r *Runner) EditSpec(ctx context.Context, id int64, draft tools.SpecDraft) 
 	}
 	draft = *(&tools.Submission{Spec: &draft}).Redacted(r.redactor).Spec
 	// Apply the refinement content and path rules to operator edits.
-	if err := validateDraft(ctx, run, r.cfg.Repos[run.Repo], draft); err != nil {
+	frozenRepo, err := r.runRepo(ctx, run)
+	if err != nil {
+		return store.Spec{}, err
+	}
+	if err := validateDraft(ctx, run, frozenRepo, draft); err != nil {
 		return store.Spec{}, errors.Join(ErrInvalidRequest, err)
 	}
 	issue, err := r.gh.GetIssue(ctx, ref(run.Repo), int(run.IssueNumber))

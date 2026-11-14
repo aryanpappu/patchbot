@@ -106,6 +106,13 @@ only the App ID and slug. `client_secret` and `webhook_secret` are discarded
 `form-action` to `https://github.com`. Setup is disabled once connected, and a
 public, unauthenticated visitor can learn only whether GitHub is connected.
 
+The dashboard can add and edit allowlisted repositories (M24), which changes what
+runs inside the sandbox: commands, test command, protected paths and image. This stays
+argv-only (no shell), network-less and behind the owner-only login; every change is
+validated like a config file, audited with the actor, and cannot remove the built-in
+`.github/workflows` protection. Treat dashboard access as the ability to choose what
+code runs on approved changes.
+
 In scope: file-tool jail escapes, command-policy bypass, leaks through logs,
 SSE, artifacts, errors or PR text, unsafe git publication, browser protection
 bypass and code execution without valid spec approval. Prompt injection that

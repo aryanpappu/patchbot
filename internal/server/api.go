@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -26,6 +25,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/{$}", s.page)
 	mux.HandleFunc("/runs", s.page)
 	mux.HandleFunc("/runs/new", s.page)
+	mux.HandleFunc("/repos", s.page)
 	mux.HandleFunc("/runs/{id}", s.page)
 	mux.HandleFunc("/assets/{name}", s.asset)
 	mux.HandleFunc("/api/session", s.session)
@@ -41,6 +41,7 @@ func (s *Server) routes() http.Handler {
 		mux.HandleFunc("/api/runs/{id}/"+action, s.action)
 	}
 	s.memoryRoutes(mux)
+	s.repoRoutes(mux)
 	mux.HandleFunc("/setup/github", s.githubSetupPage)
 	mux.HandleFunc(github.CallbackPath, s.githubSetupCallback)
 	mux.HandleFunc("/api/github/setup/start", s.githubSetupStart)
@@ -76,11 +77,7 @@ func (s *Server) providers(w http.ResponseWriter, r *http.Request) {
 		_, err := s.registry.Provider(name)
 		values = append(values, provider{name, cfg.Kind, cfg.DefaultModel, err == nil})
 	}
-	repos := make([]string, 0, len(s.cfg.Repos))
-	for name := range s.cfg.Repos {
-		repos = append(repos, name)
-	}
-	sort.Strings(repos)
+	repos := s.repos.Names()
 	s.writeJSON(w, 200, map[string]any{"providers": values, "repos": repos, "defaults": map[string]any{"provider": s.cfg.Defaults.Provider, "mode": s.cfg.Defaults.Mode, "refine_model": s.cfg.Model("refine"), "code_model": s.cfg.Model("code"), "max_cost_usd": s.cfg.Defaults.MaxCostUSD}})
 }
 
@@ -157,7 +154,7 @@ const startInvalid = "require an allowlisted repo, positive issue, valid mode, m
 
 // repoAllowed is the single allowlist check for requests naming a repository.
 // repo must already be trimmed and lower-cased.
-func (s *Server) repoAllowed(repo string) bool { return s.cfg.Repos[repo] != nil }
+func (s *Server) repoAllowed(repo string) bool { return s.repos.Allowed(repo) }
 
 // validStartOptions checks everything in a start request except repo and
 // issue. It returns a client-safe message, or "" when the request is valid.

@@ -22,6 +22,7 @@ import (
 	"github.com/aryanpappu/patchbot/internal/github"
 	"github.com/aryanpappu/patchbot/internal/llm"
 	"github.com/aryanpappu/patchbot/internal/llm/providers"
+	"github.com/aryanpappu/patchbot/internal/repos"
 	"github.com/aryanpappu/patchbot/internal/runner"
 	"github.com/aryanpappu/patchbot/internal/secret"
 	"github.com/aryanpappu/patchbot/internal/store"
@@ -49,6 +50,7 @@ type Server struct {
 	cfg             *config.Config
 	db              store.Store
 	runner          *runner.Runner
+	repos           *repos.Registry
 	models          *llm.ModelLister
 	registry        *llm.Registry
 	redactor        *secret.Redactor
@@ -177,6 +179,7 @@ func New(ctx context.Context, cfg *config.Config, db store.Store, opts Options) 
 		}
 		return nil, errors.New("could not initialize runner")
 	}
+	s.repos = s.runner.Repos()
 	configs, err := cfg.LLMProviders()
 	if err != nil {
 		if s.unsubscribe != nil {

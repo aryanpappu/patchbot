@@ -11,7 +11,7 @@
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
-  <header><a href="/runs">patchbot</a><nav aria-label="Main"><a href="/runs">Runs</a><a href="/runs/new">New run</a></nav>{{with .State.Email}}<span class="whoami">Signed in as {{.}}</span>{{end}}</header>
+  <header><a href="/runs">patchbot</a><nav aria-label="Main"><a href="/runs">Runs</a><a href="/runs/new">New run</a><a href="/repos">Repositories</a></nav>{{with .State.Email}}<span class="whoami">Signed in as {{.}}</span>{{end}}</header>
   <main id="main" tabindex="-1">
     <div id="app"><h1>patchbot</h1>{{with .State.Preview}}<pre class="output">{{.}}</pre>{{end}}<p role="status">Loading the run interface… If this remains visible, Vue could not load. Check the CDN connection and integrity pin, or run <code>make vendor-vue</code> and rebuild for local mode.</p></div>
     <noscript>JavaScript is required for the run interface.</noscript>

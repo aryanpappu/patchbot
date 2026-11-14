@@ -279,22 +279,42 @@ func (c *Config) validateExecutor(v *validator) {
 		v.addf("executor.path: %s", err)
 	}
 	for _, name := range sortedKeys(c.Repos) {
-		r := c.Repos[name]
-		at := fmt.Sprintf("repos.%q", name)
-		switch {
-		case r.Image == "" && e.Image == "":
-			v.addf("%s.image: required in container mode because executor.image is not set; pin it by digest (name@sha256:...)", at)
-		case r.Image != "":
-			if err := execx.ValidateImage(r.Image); err != nil {
-				v.addf("%s.image: %s", at, err)
-			}
-		}
-		if r.Path != nil {
-			if err := execx.ValidateContainerPath(r.Path); err != nil {
-				v.addf("%s.path: %s", at, err)
-			}
+		c.validateRepoExecutor(v, name, c.Repos[name])
+	}
+}
+
+// validateRepoExecutor checks a repository's container image and PATH in
+// container mode against the effective [executor] table.
+func (c *Config) validateRepoExecutor(v *validator, name string, r *Repo) {
+	e := c.Executor
+	at := fmt.Sprintf("repos.%q", name)
+	switch {
+	case r.Image == "" && e.Image == "":
+		v.addf("%s.image: required in container mode because executor.image is not set; pin it by digest (name@sha256:...)", at)
+	case r.Image != "":
+		if err := execx.ValidateImage(r.Image); err != nil {
+			v.addf("%s.image: %s", at, err)
 		}
 	}
+	if r.Path != nil {
+		if err := execx.ValidateContainerPath(r.Path); err != nil {
+			v.addf("%s.path: %s", at, err)
+		}
+	}
+}
+
+// ValidateRepo applies to one repository entry exactly the checks Validate
+// applies to a [repos."owner/name"] table: name format, command argv rules,
+// test_command, protected paths and, in container mode, image and PATH. The
+// dashboard uses it for repositories it stores, so both sources share one rule
+// set. Messages never contain a secret.
+func (c *Config) ValidateRepo(name string, r *Repo) error {
+	v := validator{redactor: c.Redactor()}
+	validateRepo(&v, name, r)
+	if c.Executor.Container() {
+		c.validateRepoExecutor(&v, name, r)
+	}
+	return errors.Join(v.errs...)
 }
 
 func (c *Config) validateProvider(v *validator, name string, p *Provider) {

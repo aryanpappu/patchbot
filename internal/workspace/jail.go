@@ -259,3 +259,7 @@ func isShortGitName(key string) bool {
 func isASCIILetter(c byte) bool {
 	return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')
 }
+
+// BuiltinProtected lists the paths NewPolicy always protects, whatever the
+// repository configuration says. They cannot be removed by any setting.
+func BuiltinProtected() []string { return []string{".github/workflows"} }
