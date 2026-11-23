@@ -36,6 +36,16 @@ jobs:
         with:
           version: v2.15.0
       - name: Test and build
-        run: make race build
+        shell: bash
+        run: |
+          set -o pipefail
+          make race build 2>&1 | tee "$RUNNER_TEMP/test.log"
+      - name: Report failing tests
+        if: failure()
+        shell: bash
+        run: |
+          # Surface failures as annotations so they show on the run summary.
+          grep -E -- '^\s*--- FAIL|^FAIL\s|^panic:|_test\.go:[0-9]+:' "$RUNNER_TEMP/test.log" | head -60 \
+            | while IFS= read -r line; do echo "::error title=go test::${line}"; done || true
       - name: Check vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
