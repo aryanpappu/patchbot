@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/aryanpappu/patchbot/internal/config"
+	"github.com/aryanpappu/patchbot/internal/gitx"
 	"github.com/aryanpappu/patchbot/internal/llm"
 	"github.com/aryanpappu/patchbot/internal/llm/fake"
 	"github.com/aryanpappu/patchbot/internal/runner"
@@ -148,5 +149,21 @@ func TestManualEscalate(t *testing.T) {
 	// The failed run already escalated; a second click must not start another run.
 	if _, err := f.r.Escalate(t.Context(), first.ID); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("second escalation: %v", err)
+	}
+}
+
+// A run that reaches its working-time limit is reported as run_timeout (an
+// escalation trigger), not as an internal error.
+func TestRunDeadlineIsRunTimeout(t *testing.T) {
+	f := newFixture(t, "true", specStep())
+	f.opts.Clone = func(context.Context, gitx.CloneOptions) (*gitx.Repo, error) { return nil, context.DeadlineExceeded }
+	r, err := runner.New(t.Context(), f.cfg, f.db, f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.r = r
+	run := startFailing(f)
+	if run.ErrorKind != "run_timeout" || !strings.Contains(run.ErrorMessage, "run time limit") {
+		t.Fatalf("kind=%q message=%q", run.ErrorKind, run.ErrorMessage)
 	}
 }

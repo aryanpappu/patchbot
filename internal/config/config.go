@@ -130,7 +130,7 @@ type Review struct {
 // tests_failed are error kinds of a failed run; tests_failed is a dry run that
 // finished with harness tests still failing (a real run has already opened a
 // draft pull request, which is the hand-off to a person).
-var EscalationTriggers = []string{"provider_unavailable", "provider_malformed", "provider_bad_request", "context_overflow", "budget_exhausted", "max_turns", "refine_incomplete", "tests_failed"}
+var EscalationTriggers = []string{"provider_unavailable", "provider_malformed", "provider_bad_request", "context_overflow", "budget_exhausted", "max_turns", "run_timeout", "refine_incomplete", "tests_failed"}
 
 // Escalation is the support-level ladder. When a run that used level N ends
 // with one of the On triggers, patchbot starts a retry at level N+1, reusing a

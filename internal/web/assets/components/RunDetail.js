@@ -147,7 +147,7 @@ export const RunDetail = {
         escalationLine(d.escalation),
         d.dashboard_issue ? h("p", { class: "meta" }, `Requested from the dashboard by ${d.dashboard_issue.requested_by}`) : null,
         task.state.error ? errorPanel(task.state.error) : null,
-        phaseStepper(run), budgetMeters(run),
+        phaseStepper(run), budgetMeters(run, (d.approvals || []).length > 0 || (d.spec_versions || []).length > 1),
         run.summary ? h("details", [h("summary", "Run summary"), block(run.summary, "Run summary")]) : null,
         tabList("Run sections", tabs, s.tab, pickTab),
         s.tab === "spec" ? tabPanel("spec", [h(QuestionsPanel, { d, busy: task.state.busy, onSubmit: answer }), h(SpecView, { d, editor: s.editor, busy: task.state.busy, canEdit: can("edit"), onEdit: edit, onSave: saveSpec, onDiscard: () => { s.editor = null; } })]) : null,

@@ -199,8 +199,8 @@ levels = [
   { provider = "anthropic", model = "claude-sonnet-5-5" },
 ]
 on = ["provider_unavailable", "provider_malformed", "provider_bad_request",
-      "context_overflow", "budget_exhausted", "max_turns", "refine_incomplete",
-      "tests_failed"]   # the default
+      "context_overflow", "budget_exhausted", "max_turns", "run_timeout",
+      "refine_incomplete", "tests_failed"]   # the default
 ```
 
 In `serve`, when a run whose provider and code model are on the ladder ends

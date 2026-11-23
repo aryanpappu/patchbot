@@ -411,6 +411,11 @@ func (r *Runner) fail(ctx context.Context, run store.Run, cause error) error {
 	if errors.Is(cause, agent.ErrApprovalDenied) {
 		kind = "approval_denied"
 	}
+	// The run's working-time limit surfaces as a bare deadline; name it.
+	if kind == "internal" && errors.Is(cause, context.DeadlineExceeded) {
+		kind = "run_timeout"
+		cause = fmt.Errorf("run time limit (limits.run_timeout) reached: %w", cause)
+	}
 	message := tools.CapOutput(r.redactor.Redact(cause.Error()), 2000)
 	err = r.transition(cleanup, &run, status, run.Phase, store.RunPatch{Outcome: &outcome, ErrorKind: &kind, ErrorMessage: &message})
 	if err == nil && status == store.StatusFailed && !run.DryRun && kind != "provider_auth" && r.cfg.Defaults.CommentOnFailure && !r.opts.DisableFailureComments {

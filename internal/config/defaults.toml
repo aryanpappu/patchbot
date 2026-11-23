@@ -45,7 +45,7 @@ salvage_draft = false        # draft PR marked as unreviewed when review fails
 [escalation]
 enabled = false
 levels = []                  # e.g. [{ provider = "gemini", model = "gemini-3.5-flash-lite" }, ...] lowest first
-on = ["provider_unavailable", "provider_malformed", "provider_bad_request", "context_overflow", "budget_exhausted", "max_turns", "refine_incomplete", "tests_failed"]
+on = ["provider_unavailable", "provider_malformed", "provider_bad_request", "context_overflow", "budget_exhausted", "max_turns", "run_timeout", "refine_incomplete", "tests_failed"]
 
 [log]
 level = "info"
