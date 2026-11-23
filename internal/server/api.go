@@ -40,7 +40,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/runs/{id}/spec", s.editSpec)
 	mux.HandleFunc("/api/runs/{id}/events", s.events)
 	mux.HandleFunc("/api/runs/{id}/artifacts/{name}", s.artifact)
-	for _, action := range []string{"approve", "revise", "reject", "cancel", "retry"} {
+	for _, action := range []string{"approve", "revise", "reject", "cancel", "retry", "answer", "escalate"} {
 		mux.HandleFunc("/api/runs/{id}/"+action, s.action)
 	}
 	s.memoryRoutes(mux)
@@ -317,7 +317,16 @@ func (s *Server) detailData(ctx context.Context, id int64) (map[string]any, erro
 	if len(specs) > 0 {
 		latest = &specs[len(specs)-1]
 	}
-	data := map[string]any{"run": publicRun(run), "capabilities": s.runner.ActionCapabilities(run, latest), "latest_spec": latest, "spec_versions": specs, "approvals": approvals, "steps": steps, "artifacts": publicArtifacts, "reviews": reviews}
+	questions, err := s.db.ListQuestions(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	escalation, err := s.runner.Escalation(ctx, run)
+	if err != nil {
+		return nil, err
+	}
+	data := map[string]any{"run": publicRun(run), "capabilities": s.runner.ActionCapabilities(run, latest), "latest_spec": latest, "spec_versions": specs, "approvals": approvals, "steps": steps, "artifacts": publicArtifacts, "reviews": reviews,
+		"questions": questions, "escalation": escalation}
 	// An issue opened from the dashboard is authored by the bot or PAT user; the
 	// requester is recorded here.
 	if issue, ok, err := s.db.DashboardIssueByNumber(ctx, run.Repo, run.IssueNumber); err == nil && ok {
@@ -392,6 +401,35 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Location", fmt.Sprintf("/api/runs/%d", run.ID))
 		s.writeJSON(w, http.StatusAccepted, map[string]any{"run": publicRun(run)})
 		return
+	case "answer":
+		var input struct {
+			SpecVersion int64    `json:"spec_version"`
+			SpecHash    string   `json:"spec_hash"`
+			Answers     []string `json:"answers"`
+		}
+		if !s.decode(w, r, &input, false) {
+			return
+		}
+		if input.SpecVersion <= 0 || input.SpecHash == "" || len(input.Answers) == 0 || len(input.Answers) > 50 {
+			s.writeError(w, 400, "invalid_request", "spec_version, spec_hash and answers are required")
+			return
+		}
+		err = s.runner.AnswerQuestions(r.Context(), id, s.actor(r), input.SpecVersion, input.SpecHash, input.Answers)
+		status = http.StatusAccepted
+	case "escalate":
+		var input struct{}
+		if !s.decode(w, r, &input, true) {
+			return
+		}
+		var run store.Run
+		run, err = s.runner.Escalate(r.Context(), id)
+		if err != nil {
+			s.respondError(w, err)
+			return
+		}
+		w.Header().Set("Location", fmt.Sprintf("/api/runs/%d", run.ID))
+		s.writeJSON(w, http.StatusAccepted, map[string]any{"run": publicRun(run)})
+		return
 	case "approve":
 		var input struct {
 			SpecVersion int64  `json:"spec_version"`
@@ -435,7 +473,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 
 func publicArtifact(name string) bool {
 	switch name {
-	case "diff", "baseline", "test_output", "review", "pr_title", "pr_body":
+	case "diff", "baseline", "test_output", "review", "pr_title", "pr_body", "escalation_note":
 		return true
 	default:
 		return false

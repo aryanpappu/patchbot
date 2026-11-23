@@ -432,6 +432,12 @@ func (r *Runner) Retry(ctx context.Context, id int64, provider, model string) (s
 	if err := r.requireActionState(ctx, old, "retry"); err != nil {
 		return store.Run{}, err
 	}
+	return r.retry(ctx, old, provider, model)
+}
+
+// retry starts the new run for Retry and escalation; the caller checked old's state.
+func (r *Runner) retry(ctx context.Context, old store.Run, provider, model string) (store.Run, error) {
+	id := old.ID
 	request := Request{Repo: old.Repo, Issue: old.IssueNumber, Mode: old.Mode, Provider: provider, Model: model, DryRun: old.DryRun}
 	if request.Provider == "" {
 		request.Provider = old.Provider

@@ -177,6 +177,44 @@ imported. Use revise or the UI editor. `serve` checks waiting runs every 60 seco
 by default; `runs --sync` checks once. Waiting runs expire after 14 days and allow
 at most five revisions. Refine mode ends after approval without coding.
 
+When refinement cannot decide something, the spec lists open questions and the
+run waits as `needs_info` (approval is refused until they are resolved). The run
+page shows one answer box per question; `POST /api/runs/{id}/answer` with
+`spec_version`, `spec_hash` and `answers` (one per question, in order, 1 to 4000
+characters each) records the answers in the `questions` table and requests a
+new spec version with the questions and answers as revision notes. It is a
+revise, so the same expiry and revision limits apply. `/revise` on GitHub still
+works as before.
+
+## Support-level escalation (opt-in)
+
+`[escalation]` defines a ladder of provider/model levels, lowest first:
+
+```toml
+[escalation]
+enabled = true
+levels = [
+  { provider = "gemini", model = "gemini-3.5-flash-lite" },
+  { provider = "gemini", model = "gemini-3.5-flash" },
+  { provider = "anthropic", model = "claude-sonnet-5-5" },
+]
+on = ["provider_unavailable", "provider_malformed", "provider_bad_request",
+      "context_overflow", "budget_exhausted", "max_turns", "refine_incomplete",
+      "tests_failed"]   # the default
+```
+
+In `serve`, when a run whose provider and code model are on the ladder ends
+with one of the `on` triggers, patchbot starts a retry one level up. The retry
+reuses a still-valid approved spec, so it goes straight to coding; otherwise it
+refines again and waits for approval as usual. `tests_failed` only applies to
+dry runs: a real run has already opened a draft PR, which is the hand-off to a
+person. A run on the top level, or not on the ladder, is left for a person with
+an `escalation_note`. Each step is recorded in the audit log (`escalated` on
+the old run, `escalation` on the new one; migration 0012), and the run page
+shows "Support level N of M" with links. Failed runs below the top also get an
+**Escalate** button (`POST /api/runs/{id}/escalate`). Escalation never skips the
+approval gate, and authentication failures and cancellations never escalate.
+
 ## Repository memory
 
 patchbot remembers two kinds of per-repository entries, keyed by the canonical

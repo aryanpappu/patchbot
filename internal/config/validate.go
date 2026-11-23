@@ -44,6 +44,7 @@ func (c *Config) Validate() error {
 	c.validateFixed(&v)
 	c.validateExecutor(&v)
 	c.validateGitHub(&v)
+	c.validateEscalation(&v)
 	w := c.Webhook
 	v.check(envNameRE.MatchString(w.SecretEnv), "webhook.secret_env: must name an environment variable")
 	v.check(strings.HasPrefix(w.Path, "/") && w.Path != "/" && path.Clean(w.Path) == w.Path && !strings.ContainsAny(w.Path, "{} ?#\\"), "webhook.path: must be a clean literal path starting with /")
@@ -59,6 +60,27 @@ func (c *Config) Validate() error {
 		validateRepo(&v, name, c.Repos[name])
 	}
 	return errors.Join(v.errs...)
+}
+
+// validateEscalation checks the ladder names configured providers and valid,
+// distinct rungs, and that every trigger is known.
+func (c *Config) validateEscalation(v *validator) {
+	e := c.Escalation
+	for _, trigger := range e.On {
+		v.check(slices.Contains(EscalationTriggers, trigger), "escalation.on: %q is not one of %s", trigger, strings.Join(EscalationTriggers, ", "))
+	}
+	if !e.Enabled {
+		return
+	}
+	v.check(len(e.Levels) >= 2, "escalation.levels: enabled escalation needs at least 2 levels")
+	v.check(len(e.Levels) <= 6, "escalation.levels: at most 6 levels")
+	seen := map[EscalationLevel]bool{}
+	for i, level := range e.Levels {
+		v.check(c.Providers[level.Provider] != nil, "escalation.levels[%d].provider: %q is not a [providers] table", i, level.Provider)
+		v.check(validModelID(level.Model), "escalation.levels[%d].model: %q is not a valid model ID", i, level.Model)
+		v.check(!seen[level], "escalation.levels[%d]: duplicate level", i)
+		seen[level] = true
+	}
 }
 
 // validateGitHub checks [github] statically. The key file's type, mode and

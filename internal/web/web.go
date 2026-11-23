@@ -72,7 +72,7 @@ var assetNames = []string{
 	"components/ConfirmDialog.js", "components/DiffView.js", "components/HelpDialog.js", "components/Inbox.js",
 	"components/LogStream.js", "components/MemoryView.js", "components/Modal.js", "components/ModelFields.js",
 	"components/NewRequest.js", "components/PhaseStepper.js", "components/RepoCard.js", "components/RepoEditor.js",
-	"components/RepoPage.js", "components/RunCard.js", "components/RunDetail.js", "components/RunList.js",
+	"components/QuestionsPanel.js", "components/RepoPage.js", "components/RunCard.js", "components/RunDetail.js", "components/RunList.js",
 	"components/Sidebar.js", "components/SpecEditor.js", "components/SpecView.js", "components/Tabs.js",
 	"components/Toast.js", "components/Unlock.js",
 	"composables/useApi.js", "composables/useBadges.js", "composables/useConfirm.js", "composables/useKeyboard.js",

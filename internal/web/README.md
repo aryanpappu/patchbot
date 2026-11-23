@@ -37,7 +37,10 @@ quadratic matching on potentially large generated text.
 
 Button status rules mirror M13: Approve for awaiting_approval; Edit, Revise and
 Reject for awaiting_approval, needs_info or approved with a spec; Cancel for
-active runs; Retry for failed, cancelled or rejected. The API remains
+active runs; Retry for failed, cancelled or rejected; Escalate for a retryable
+run below the top of the escalation ladder; the answer form for needs_info runs
+with open questions (`can_answer`). Questions and earlier answers are rendered as
+text nodes only. The API remains
 responsible for freshness, expiry, revision caps and racing lifecycle changes.
 Errors are visible alerts. Saving never silently discards an open editor.
 Retries choose a provider and a live-listed or typed model ID and navigate to

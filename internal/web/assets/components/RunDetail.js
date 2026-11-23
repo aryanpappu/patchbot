@@ -9,6 +9,7 @@ import { budgetMeters } from "./BudgetMeters.js";
 import { changesView } from "./ChangesView.js";
 import { LogStream } from "./LogStream.js";
 import { phaseStepper } from "./PhaseStepper.js";
+import { QuestionsPanel } from "./QuestionsPanel.js";
 import { newEditor } from "./SpecEditor.js";
 import { SpecView } from "./SpecView.js";
 import { tabList, tabPanel } from "./Tabs.js";
@@ -59,7 +60,7 @@ export const RunDetail = {
         let result;
         try { result = await api.send(`/api/runs/${id}/${name}`, body); }
         finally { if (!api.state.locked) await loadDetail(true); }
-        if (name === "retry") { navigate(result.run); return; }
+        if (name === "retry" || name === "escalate") { navigate(result.run); return; }
         toast.push(human(name) + " accepted.");
         s.notes = ""; s.reviseOpen = false;
       });
@@ -102,6 +103,15 @@ export const RunDetail = {
       });
     }
     const retry = () => act("retry", { provider: providers.form.provider, model: providers.form.model });
+    // Send the answers for exactly the spec version the panel showed.
+    const answer = (answers, spec) => act("answer", { spec_version: spec.version, spec_hash: spec.hash, answers });
+    async function escalate() {
+      const next = s.detail?.escalation?.next;
+      if (!can("escalate") || !next) return;
+      if (await confirm.ask({ title: "Escalate to the next level?", confirmLabel: `Start run on ${next.model}`,
+        message: "A new run starts with the next model on the escalation ladder. A still-valid approved specification is reused.",
+        details: [["Provider", next.provider], ["Model", next.model]] })) await act("escalate");
+    }
     function pickTab(tab) { s.tab = tab; try { history.replaceState(null, "", "#" + tab); } catch { /* Hash is a convenience. */ } }
 
     onMounted(() => {
@@ -134,16 +144,27 @@ export const RunDetail = {
         h("div", { class: "actions" }, [chip(run.status), run.dry_run ? h("span", { class: "tag" }, "Dry run") : null, run.prurl ? link(run.prurl, "Open pull request") : null]),
         h("p", { class: "meta" }, `run ${run.id} · ${run.mode} · ${run.provider} · refine: ${run.refine_model} · code: ${run.code_model}`),
         run.retry_of ? h("p", ["Retry of ", h("a", { href: runHref(run.retry_of) }, `run ${run.retry_of}`)]) : null,
+        escalationLine(d.escalation),
         d.dashboard_issue ? h("p", { class: "meta" }, `Requested from the dashboard by ${d.dashboard_issue.requested_by}`) : null,
         task.state.error ? errorPanel(task.state.error) : null,
         phaseStepper(run), budgetMeters(run),
         run.summary ? h("details", [h("summary", "Run summary"), block(run.summary, "Run summary")]) : null,
         tabList("Run sections", tabs, s.tab, pickTab),
-        s.tab === "spec" ? tabPanel("spec", [h(SpecView, { d, editor: s.editor, busy: task.state.busy, canEdit: can("edit"), onEdit: edit, onSave: saveSpec, onDiscard: () => { s.editor = null; } })]) : null,
+        s.tab === "spec" ? tabPanel("spec", [h(QuestionsPanel, { d, busy: task.state.busy, onSubmit: answer }), h(SpecView, { d, editor: s.editor, busy: task.state.busy, canEdit: can("edit"), onEdit: edit, onSave: saveSpec, onDiscard: () => { s.editor = null; } })]) : null,
         s.tab === "log" ? tabPanel("log", [h(LogStream, { stream })]) : null,
         s.tab === "changes" ? tabPanel("changes", [changesView(d, s.artifacts)]) : null,
-        h(ActionBar, { d, s, busy: task.state.busy, providers, onApprove: approve, onReject: reject, onCancel: cancel, onRevise: () => act("revise", { notes: s.notes }), onRetry: retry })
+        h(ActionBar, { d, s, busy: task.state.busy, providers, onApprove: approve, onReject: reject, onCancel: cancel, onRevise: () => act("revise", { notes: s.notes }), onRetry: retry, onEscalate: escalate })
       ]);
     };
   }
 };
+
+// "Level 2 of 3 · escalated from run 7 (tests_failed) · escalated to run 9"
+function escalationLine(e) {
+  if (!e?.enabled || (!e.level && !e.from && !e.to)) return null;
+  const parts = [];
+  if (e.level) parts.push(`Support level ${e.level} of ${e.levels}`);
+  if (e.from) parts.push(" · escalated from ", h("a", { href: runHref(e.from) }, `run ${e.from}`), e.trigger ? ` (${e.trigger})` : "");
+  if (e.to) parts.push(" · escalated to ", h("a", { href: runHref(e.to) }, `run ${e.to}`));
+  return h("p", { class: "meta" }, parts);
+}

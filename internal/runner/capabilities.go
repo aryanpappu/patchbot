@@ -21,6 +21,10 @@ type Capabilities struct {
 	CanReject  bool `json:"can_reject"`
 	CanCancel  bool `json:"can_cancel"`
 	CanRetry   bool `json:"can_retry"`
+	// CanAnswer: the run waits on open questions that can be answered in the dashboard.
+	CanAnswer bool `json:"can_answer"`
+	// CanEscalate: a retry one level up the escalation ladder is possible.
+	CanEscalate bool `json:"can_escalate"`
 }
 
 var errRunExpired = errors.New("run expired")
@@ -48,10 +52,13 @@ func (r *Runner) ActionCapabilities(run store.Run, spec *store.Spec) Capabilitie
 		}
 		return action != "approve" || strings.TrimSpace(r.cfg.Approval.LocalActor) != ""
 	}
+	_, _, hasNext := r.nextLevel(run)
 	return Capabilities{
 		CanApprove: allowed("approve"), CanEdit: allowed("edit"),
 		CanRevise: allowed("revise"), CanReject: allowed("reject"),
 		CanCancel: allowed("cancel"), CanRetry: allowed("retry"),
+		CanAnswer:   run.Status == store.StatusNeedsInfo && allowed("revise") && spec != nil && len(OpenQuestions(*spec)) > 0,
+		CanEscalate: r.escalatable(run) && hasNext,
 	}
 }
 

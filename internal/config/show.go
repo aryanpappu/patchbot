@@ -232,6 +232,12 @@ func formatValue(v reflect.Value, r *secret.Redactor) (string, bool) {
 			quoted[i] = strconv.Quote(r.Redact(item))
 		}
 		return "[" + strings.Join(quoted, ", ") + "]", true
+	case []EscalationLevel:
+		levels := make([]string, len(x))
+		for i, level := range x {
+			levels[i] = fmt.Sprintf("{ provider = %s, model = %s }", strconv.Quote(r.Redact(level.Provider)), strconv.Quote(r.Redact(level.Model)))
+		}
+		return "[" + strings.Join(levels, ", ") + "]", true
 	default:
 		return strconv.Quote(r.Redact(fmt.Sprint(x))), true
 	}

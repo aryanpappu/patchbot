@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Add answers to refinement questions and support-level escalation (M30). A
+  `needs_info` run shows one answer box per open question; `POST
+  /api/runs/{id}/answer` records the answers (bound to the spec version and
+  hash) and revises the spec with them. Opt-in `[escalation]` retries a run one
+  level up a provider/model ladder when it ends with a configured trigger
+  (provider errors, `max_turns`, exhausted budget, incomplete refinement, or a
+  dry run whose tests still fail), reusing a still-valid approved spec; manual
+  `POST /api/runs/{id}/escalate`. Migration 0012 rebuilds `actions` for the new
+  audit kinds.
+- Fix GitHub App mode reporting no push permission (every fix run failed
+  preflight) and Gemini replay rejecting tool calls whose arguments the agent
+  loop had re-encoded with sorted keys.
+
 - Redesign the dashboard (M29): `app.js` is split into native ES modules
   (`main.js`, `components/*`, `composables/use*`, `ui.js`, `format.js`) served from
   a fixed asset list (shared by token mode and Cloudflare Access mode, no

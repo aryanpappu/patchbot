@@ -400,7 +400,13 @@ func (r *Runner) RecoverStale(ctx context.Context) error {
 
 func (r *Runner) dispatch(ctx context.Context, id int64, work func(context.Context) error) error {
 	if r.opts.Dispatch != nil {
-		return r.opts.Dispatch(ctx, id, work)
+		// Escalation runs after the work has released the run, so the retry
+		// can take the issue lock and its own queue slot.
+		return r.opts.Dispatch(ctx, id, func(work2 context.Context) error {
+			err := work(work2)
+			r.afterRun(work2, id)
+			return err
+		})
 	}
 	return work(ctx)
 }

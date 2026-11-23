@@ -426,6 +426,11 @@ func (c *Config) apply(layer *Config, md toml.MetaData, source Source) error {
 		}
 	}
 	for _, key := range md.Keys() {
+		// escalation.levels is one array value; its element fields are
+		// copied with it, not looked up one by one.
+		if len(key) > 2 && key[0] == "escalation" && key[1] == "levels" {
+			continue
+		}
 		if md.Type(key...) == "Hash" {
 			if err := ensureTable(dst, key); err != nil {
 				return fmt.Errorf("key %s: %w", key, err)

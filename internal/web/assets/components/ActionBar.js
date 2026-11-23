@@ -7,13 +7,13 @@ import { modelFields } from "./ModelFields.js";
 const { h } = window.Vue;
 
 export const ActionBar = {
-  props: { d: Object, s: Object, busy: Boolean, providers: Object, onApprove: Function, onReject: Function, onCancel: Function, onRevise: Function, onRetry: Function },
+  props: { d: Object, s: Object, busy: Boolean, providers: Object, onApprove: Function, onReject: Function, onCancel: Function, onRevise: Function, onRetry: Function, onEscalate: Function },
   setup(props) {
     return () => {
       const { d, s, busy } = props, can = d.capabilities || {};
       const spec = d.latest_spec;
       const stop = busy || !!s.editor;
-      if (!["approve", "revise", "reject", "cancel", "retry"].some(k => can["can_" + k])) return null;
+      if (!["approve", "revise", "reject", "cancel", "retry", "escalate"].some(k => can["can_" + k])) return null;
       return h("div", { class: "actionbar", role: "region", "aria-label": "Run actions" }, [
         s.reviseOpen && can.can_revise ? h("form", { class: "revise", onSubmit: event => { event.preventDefault(); props.onRevise(); } }, [
           field("Revision notes (what should change?)", area(s, "notes", { id: "revise-notes", required: true, rows: 3 })),
@@ -29,6 +29,7 @@ export const ActionBar = {
           can.can_revise ? button("Revise", () => { s.reviseOpen = !s.reviseOpen; if (s.reviseOpen) s.retryOpen = false; }, { disabled: stop, pressed: s.reviseOpen, title: "Ask for changes (r)" }) : null,
           can.can_reject ? button("Reject", props.onReject, { kind: "danger", disabled: stop }) : null,
           can.can_cancel ? button("Cancel run", props.onCancel, { kind: "danger quiet", disabled: busy }) : null,
+          can.can_escalate && d.escalation?.next && !d.escalation?.to ? button(`Escalate to ${d.escalation.next.model}`, props.onEscalate, { kind: "primary", icon: "check", disabled: busy, title: "Retry one level up the escalation ladder" }) : null,
           can.can_retry ? button("Retry…", () => { s.retryOpen = !s.retryOpen; if (s.retryOpen) s.reviseOpen = false; }, { disabled: busy, pressed: s.retryOpen }) : null
         ])
       ]);

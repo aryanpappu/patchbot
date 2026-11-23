@@ -206,12 +206,15 @@ type Review struct {
 
 // Question stores a question and, optionally, its answer and provenance.
 type Question struct {
-	ID, RunID                         int64
-	Body                              string
-	Answer, AnsweredBy, AnswerChannel *string
-	CommentID                         *int64
-	CreatedAt                         time.Time
-	AnsweredAt                        *time.Time
+	ID            int64      `json:"id"`
+	RunID         int64      `json:"run_id"`
+	Body          string     `json:"body"`
+	Answer        *string    `json:"answer"`
+	AnsweredBy    *string    `json:"answered_by"`
+	AnswerChannel *string    `json:"answer_channel"`
+	CommentID     *int64     `json:"comment_id"`
+	CreatedAt     time.Time  `json:"created_at"`
+	AnsweredAt    *time.Time `json:"answered_at"`
 }
 
 // PostedComment records one GitHub comment patchbot itself published. Comment

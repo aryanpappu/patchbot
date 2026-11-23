@@ -153,6 +153,10 @@ progress.hot { accent-color: var(--err); }
 .actionbar { position: sticky; bottom: 0; z-index: 5; background: var(--surface); border-top: 2px solid var(--edge); margin: var(--space-4) calc(var(--space-5) * -1) 0; padding: var(--space-2) var(--space-5); }
 .actionbar .bar { margin: var(--space-2) 0; }
 .revise { padding-top: var(--space-2); border-bottom: 1px solid var(--edge); }
+.questions { border: 1px solid var(--edge); border-radius: var(--radius); padding: var(--space-4); margin-bottom: var(--space-4); }
+.questions h2 { margin-top: 0; font-size: 1.1rem; }
+.questions textarea { width: 100%; }
+.questions dd { margin-bottom: var(--space-2); overflow-wrap: anywhere; color: var(--muted); }
 
 /* Spec */
 .spec-sec h3 { margin-bottom: var(--space-1); }

@@ -33,19 +33,21 @@ const (
 
 // Config is the effective configuration.
 type Config struct {
-	Defaults  Defaults             `toml:"defaults"`
-	Limits    Limits               `toml:"limits"`
-	Approval  Approval             `toml:"approval"`
-	Review    Review               `toml:"review"`
-	Log       Log                  `toml:"log"`
-	Webhook   Webhook              `toml:"webhook"`
-	Server    Server               `toml:"server"`
-	Data      Data                 `toml:"data"`
-	Memory    Memory               `toml:"memory"`
-	Executor  Executor             `toml:"executor"`
-	GitHub    GitHub               `toml:"github"`
-	Providers map[string]*Provider `toml:"providers"`
-	Repos     map[string]*Repo     `toml:"repos"`
+	Defaults Defaults `toml:"defaults"`
+	Limits   Limits   `toml:"limits"`
+	Approval Approval `toml:"approval"`
+	Review   Review   `toml:"review"`
+	// Escalation retries a failed run one level up a ladder of models.
+	Escalation Escalation           `toml:"escalation"`
+	Log        Log                  `toml:"log"`
+	Webhook    Webhook              `toml:"webhook"`
+	Server     Server               `toml:"server"`
+	Data       Data                 `toml:"data"`
+	Memory     Memory               `toml:"memory"`
+	Executor   Executor             `toml:"executor"`
+	GitHub     GitHub               `toml:"github"`
+	Providers  map[string]*Provider `toml:"providers"`
+	Repos      map[string]*Repo     `toml:"repos"`
 
 	// path is the config file that was read, or "" when none was found.
 	path string
@@ -122,6 +124,28 @@ type Review struct {
 	// SalvageDraft publishes a clearly marked draft PR when review does not
 	// pass. When false such a run fails without publishing.
 	SalvageDraft bool `toml:"salvage_draft"`
+}
+
+// EscalationTriggers are the run endings that may escalate. All but
+// tests_failed are error kinds of a failed run; tests_failed is a dry run that
+// finished with harness tests still failing (a real run has already opened a
+// draft pull request, which is the hand-off to a person).
+var EscalationTriggers = []string{"provider_unavailable", "provider_malformed", "provider_bad_request", "context_overflow", "budget_exhausted", "max_turns", "refine_incomplete", "tests_failed"}
+
+// Escalation is the support-level ladder. When a run that used level N ends
+// with one of the On triggers, patchbot starts a retry at level N+1, reusing a
+// still-valid approved spec. A run whose provider and code model are not on
+// the ladder, or that is already on the top level, is left for a person.
+type Escalation struct {
+	Enabled bool              `toml:"enabled"`
+	Levels  []EscalationLevel `toml:"levels"`
+	On      []string          `toml:"on"`
+}
+
+// EscalationLevel is one rung: a provider table name and a model ID.
+type EscalationLevel struct {
+	Provider string `toml:"provider" json:"provider"`
+	Model    string `toml:"model" json:"model"`
 }
 
 // Log configures logging.

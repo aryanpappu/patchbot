@@ -34,6 +34,12 @@ func TestValidateAccepts(t *testing.T) {
 		file string
 	}{
 		{"minimal", validBase},
+		{"escalation ladder", validBase + `
+[escalation]
+enabled = true
+levels = [{ provider = "anthropic", model = "claude-haiku-5-5" }, { provider = "anthropic", model = "claude-sonnet-5-5" }]
+on = ["max_turns", "tests_failed"]
+`},
 		{"full provider set", validBase + `
 [providers.gemini]
 kind = "gemini"
@@ -108,6 +114,11 @@ func TestValidateRejects(t *testing.T) {
 		{"review reserve too large", validBase + "[review]\nreserve_fraction = 0.6", "review.reserve_fraction: must be between 0 and 0.5"},
 		{"review reserve nan", validBase + "[review]\nreserve_fraction = nan", "review.reserve_fraction: must be between 0 and 0.5"},
 		{"review bad model", validBase + "[review]\nmodel = \"a b\"", `review.model: "a b" is not a valid model ID`},
+		{"escalation one level", validBase + "[escalation]\nenabled = true\nlevels = [{ provider = \"anthropic\", model = \"m\" }]", "escalation.levels: enabled escalation needs at least 2 levels"},
+		{"escalation unknown provider", validBase + "[escalation]\nenabled = true\nlevels = [{ provider = \"anthropic\", model = \"m\" }, { provider = \"nope\", model = \"m\" }]", `escalation.levels[1].provider: "nope" is not a [providers] table`},
+		{"escalation bad model", validBase + "[escalation]\nenabled = true\nlevels = [{ provider = \"anthropic\", model = \"m\" }, { provider = \"anthropic\", model = \"a b\" }]", `escalation.levels[1].model: "a b" is not a valid model ID`},
+		{"escalation duplicate", validBase + "[escalation]\nenabled = true\nlevels = [{ provider = \"anthropic\", model = \"m\" }, { provider = \"anthropic\", model = \"m\" }]", "escalation.levels[1]: duplicate level"},
+		{"escalation unknown trigger", validBase + "[escalation]\non = [\"provider_auth\"]", `escalation.on: "provider_auth" is not one of`},
 		{"negative timeout", validBase + "[limits]\nrun_timeout = \"-1m\"", "limits.run_timeout: must be greater than 0"},
 		{"model output above stored output", validBase + "[limits]\ncmd_output_bytes = 9\ncmd_store_bytes = 8", "limits.cmd_output_bytes (9) is above limits.cmd_store_bytes (8)"},
 		{"zero revisions", validBase + "[approval]\nmax_revisions = 0", "approval.max_revisions: must be greater than 0"},
