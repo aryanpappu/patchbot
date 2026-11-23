@@ -65,10 +65,16 @@ func detailed(t *testing.T, r *tools.Registry, name, raw string) tools.Result {
 func TestRunCmdIsolationAndOutput(t *testing.T) {
 	t.Parallel()
 	env := commandEnv(t)
+	// The policy pins the resolved executable; some distributions ship
+	// /usr/bin/true as a symlink (for example to gnutrue).
+	wantArgv0, err := filepath.EvalSymlinks("/usr/bin/true")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var homes []string
 	e := &commandExecutor{result: execx.Result{ExitCode: 2, TimedOut: true, Output: "HEAD private-command-secret " + strings.Repeat("a", 300000) + " TAIL"}}
 	e.check = func(spec execx.Spec) {
-		if spec.Dir != env.WS.Dir() || spec.OutputCap != 256<<10 || spec.Timeout != execx.DefaultTimeout || spec.Redactor == nil || spec.Argv[0] != "/usr/bin/true" {
+		if spec.Dir != env.WS.Dir() || spec.OutputCap != 256<<10 || spec.Timeout != execx.DefaultTimeout || spec.Redactor == nil || spec.Argv[0] != wantArgv0 {
 			t.Errorf("wrong execution spec: %+v", spec)
 		}
 		vars := map[string]string{}
