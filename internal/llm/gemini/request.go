@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
+	"reflect"
 	"strings"
 
 	"github.com/aryanpappu/patchbot/internal/llm"
@@ -199,10 +201,25 @@ func checkReplay(part llm.Part) (string, error) {
 	return "", nil
 }
 
+// sameJSON reports whether a and b hold the same JSON value. Object key order
+// and whitespace are ignored: the agent loop re-encodes tool arguments (keys
+// sorted) while the replayed Gemini part keeps the provider's original bytes.
+// Numbers compare by their literal text, so no precision is lost.
 func sameJSON(a, b []byte) bool {
-	var ca, cb bytes.Buffer
-	if json.Compact(&ca, a) != nil || json.Compact(&cb, b) != nil {
-		return false
+	va, errA := decodeJSONValue(a)
+	vb, errB := decodeJSONValue(b)
+	return errA == nil && errB == nil && reflect.DeepEqual(va, vb)
+}
+
+func decodeJSONValue(data []byte) (any, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	var value any
+	if err := dec.Decode(&value); err != nil {
+		return nil, err
 	}
-	return bytes.Equal(ca.Bytes(), cb.Bytes())
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, errors.New("trailing data after JSON value")
+	}
+	return value, nil
 }

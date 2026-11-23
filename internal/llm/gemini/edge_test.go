@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -545,5 +546,47 @@ func TestInjectedClientStillGetsContextDeadline(t *testing.T) {
 	}
 	if _, err := p.ListModels(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The agent loop re-encodes tool arguments with sorted keys while the replayed
+// part keeps Gemini's original bytes; replay must accept the reordering, send
+// the original bytes, and still refuse a changed value.
+func TestReplayIgnoresArgumentKeyOrder(t *testing.T) {
+	meta := json.RawMessage(`{"functionCall":{"id":"c1","name":"lookup","args":{"q":"app","depth":3}}}`)
+	for _, tc := range []struct {
+		name, args string
+		ok         bool
+	}{
+		{"reordered", `{"depth":3,"q":"app"}`, true},
+		{"changed number", `{"depth":4,"q":"app"}`, false},
+		{"extra key", `{"depth":3,"q":"app","x":1}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var sent []byte
+			p := newTestProvider(t, func(w http.ResponseWriter, r *http.Request) {
+				sent, _ = io.ReadAll(r.Body)
+				if _, err := w.Write(fixture(t, "text")); err != nil {
+					t.Error(err)
+				}
+			})
+			call := llm.Call("c1", "lookup", json.RawMessage(tc.args))
+			call.ProviderMeta = meta
+			req := baseRequest()
+			req.Messages = append(req.Messages,
+				llm.Message{Role: llm.RoleAssistant, Origin: p.Name(), Parts: []llm.Part{call}},
+				llm.Message{Role: llm.RoleTool, Parts: []llm.Part{llm.Result("c1", "lookup", "ok", false)}})
+			_, err := p.Chat(context.Background(), req)
+			if !tc.ok {
+				assertKind(t, err, llm.ErrBadRequest)
+				return
+			}
+			if err != nil {
+				t.Fatalf("replay with reordered keys: %v", err)
+			}
+			if !bytes.Contains(sent, meta) {
+				t.Error("replay did not send Gemini's original part bytes")
+			}
+		})
 	}
 }
