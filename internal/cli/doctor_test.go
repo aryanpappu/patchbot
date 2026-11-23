@@ -26,7 +26,7 @@ import (
 )
 
 func TestDoctorOfflineOnlineAndFailures(t *testing.T) {
-	root, bin := testpath.Dir(t), t.TempDir()
+	root, bin := testpath.Dir(t), testpath.Dir(t)
 	for name, output := range map[string]string{"go": "go version go1.27.3 test/arch", "git": "git version 2.50.1", "repo-test": "test"} {
 		// #nosec G306 -- operator-owned executable fixture needs its owner execute bit.
 		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nprintf '%s\\n' '"+output+"'\n"), 0o700); err != nil {
@@ -226,7 +226,7 @@ func TestDoctorAndConfigWarnAboutEveryShortCredential(t *testing.T) {
 }
 
 func TestDoctorCloudflareAccess(t *testing.T) {
-	root, bin := testpath.Dir(t), t.TempDir()
+	root, bin := testpath.Dir(t), testpath.Dir(t)
 	for name, output := range map[string]string{"go": "go version go1.27.3 test/arch", "git": "git version 2.50.1", "repo-test": "test"} {
 		// #nosec G306 -- operator-owned executable fixture needs its owner execute bit.
 		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nprintf '%s\\n' '"+output+"'\n"), 0o700); err != nil {
