@@ -21,6 +21,13 @@ func (c *HTTPClient) call(ctx context.Context, repo RepoRef, parts []string, met
 func (c *HTTPClient) GetRepo(ctx context.Context, ref RepoRef) (Repo, error) {
 	var repo Repo
 	_, err := c.call(ctx, ref, nil, http.MethodGet, nil, &repo, http.StatusOK)
+	if err == nil && c.repoTokens != nil {
+		// GitHub omits "permissions" for installation tokens. In App mode this
+		// request was authenticated with a token minted for exactly this
+		// repository and verified to hold RunPermissions (contents: write), so
+		// a successful read proves push access.
+		repo.Permissions.Push = RunPermissions["contents"] == "write"
+	}
 	return repo, operationError("GetRepo", err)
 }
 

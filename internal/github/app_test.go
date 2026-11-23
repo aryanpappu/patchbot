@@ -486,6 +486,25 @@ func TestConcurrentReposNeverShareATokenAndIsolationHolds(t *testing.T) {
 	}
 }
 
+// GitHub omits "permissions" from GET /repos for installation tokens; App mode
+// must still report push access, or every fix run fails preflight.
+func TestAppGetRepoReportsPushWithoutPermissionsField(t *testing.T) {
+	t.Parallel()
+	_, server := newFakeApp(t)
+	app := newTestApp(t, server, AppOptions{})
+	client, err := NewWithRepoTokens(server.Client(), server.URL, app, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := client.GetRepo(t.Context(), repoA)
+	if err != nil {
+		t.Fatalf("GetRepo: %v", err)
+	}
+	if !repo.Permissions.Push {
+		t.Fatal("App-mode GetRepo reported no push permission")
+	}
+}
+
 func TestUnauthorizedInvalidatesAndRemintsOnce(t *testing.T) {
 	t.Parallel()
 	fake, server := newFakeApp(t)
